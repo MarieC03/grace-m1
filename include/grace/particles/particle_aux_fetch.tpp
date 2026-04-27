@@ -175,6 +175,7 @@ void fetch_at_positions(
     auto dx_v     = geom_dev.dx;
     auto src_v    = specs_dev.source;
     auto idx_v    = specs_dev.idx;
+    const int n_local_quads = static_cast<int>(bbox_v.extent(0));
 
     Kokkos::parallel_for("particle_fetch_fulfill",
         Kokkos::RangePolicy<exec_space>(0, n_recv),
@@ -184,16 +185,37 @@ void fetch_at_positions(
             out_r.orig_rank = in.orig_rank;
             out_r.orig_idx  = in.orig_idx;
 
-            const int q = in.quad_local;
+            const double x = in.pos[0];
+            const double y = in.pos[1];
+            const double z = in.pos[2];
+
+            // Owner-side local-quad resolution. The requester only knows the
+            // owner_rank; the local_quad index is meaningful only on the owner.
+            // Trust the requester's `quad_local` hint if it actually contains
+            // the point (e.g. self-fetches where quad_local was cached); else
+            // brute-force scan through the local bbox table. v1 linear scan;
+            // optimize when N_local_quads × N_recv becomes a profile spike.
+            int q = in.quad_local;
+            bool valid = (q >= 0 && q < n_local_quads
+                && x >= bbox_v(q, 0) && x < bbox_v(q, 3)
+                && y >= bbox_v(q, 1) && y < bbox_v(q, 4)
+                && z >= bbox_v(q, 2) && z < bbox_v(q, 5));
+            if (!valid) {
+                q = -1;
+                for (int qi = 0; qi < n_local_quads; ++qi) {
+                    if (x >= bbox_v(qi, 0) && x < bbox_v(qi, 3) &&
+                        y >= bbox_v(qi, 1) && y < bbox_v(qi, 4) &&
+                        z >= bbox_v(qi, 2) && z < bbox_v(qi, 5)) {
+                        q = qi;
+                        break;
+                    }
+                }
+            }
             if (q < 0) {
                 for (int f = 0; f < N_FIELDS; ++f) out_r.values[f] = 0.0;
                 resp(r) = out_r;
                 return;
             }
-
-            const double x = in.pos[0];
-            const double y = in.pos[1];
-            const double z = in.pos[2];
             const double xlo    = bbox_v(q, 0);
             const double ylo    = bbox_v(q, 1);
             const double zlo    = bbox_v(q, 2);
