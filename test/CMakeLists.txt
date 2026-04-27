@@ -87,7 +87,8 @@ add_grace_test(interp_on_sphere_test test_interpolation_on_shere.cpp)
 
 if( GRACE_ENABLE_PARTICLES )
 add_grace_test(particle_owner_search_test test_particle_owner_search.cpp)
-add_grace_test(particle_aux_fetch_test test_particle_aux_fetch.cpp)
+add_grace_test(particle_aux_fetch_test    test_particle_aux_fetch.cpp)
+add_grace_test(particle_advance_test      test_particle_advance.cpp)
 endif()
 
 target_compile_options(exchange_test PRIVATE -g -gdwarf-4)
@@ -157,6 +158,8 @@ add_test(NAME particle_owner_search_test COMMAND
         mpirun -n 2 ./particle_owner_search_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
 add_test(NAME particle_aux_fetch_test COMMAND
         mpirun -n 2 ./particle_aux_fetch_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
+add_test(NAME particle_advance_test COMMAND
+        mpirun -n 2 ./particle_advance_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
 endif()
 ##add_custom_command(
 #        TARGET

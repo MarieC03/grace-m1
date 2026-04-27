@@ -29,15 +29,25 @@
 namespace grace {
 namespace particles {
 
-/// Source array for a fetched scalar cell-centered field.
+/// Source for a fetched scalar cell-centered field.
+///
+/// STATE/AUX read directly from the named state or aux variable index.
+/// DERIVED_V_X/Y/Z and DERIVED_W are GRMHD-specific: the owner computes the
+/// 3-velocity and Lorentz factor from interpolated Z^i and γ_ij in a single
+/// per-request pass (cached across the four derived outputs). var_idx is
+/// ignored for DERIVED_*.
 enum class field_source : uint8_t {
-    STATE = 0,
-    AUX   = 1,
+    STATE        = 0,
+    AUX          = 1,
+    DERIVED_V_X  = 2,
+    DERIVED_V_Y  = 3,
+    DERIVED_V_Z  = 4,
+    DERIVED_W    = 5,
 };
 
 struct fetch_field_spec_t {
     field_source source;
-    int          var_idx;
+    int          var_idx; // ignored for DERIVED_*
 };
 
 /// Fetch N_FIELDS scalar cell-centered fields at each particle's position via

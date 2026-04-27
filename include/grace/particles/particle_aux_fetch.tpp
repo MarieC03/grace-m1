@@ -12,6 +12,7 @@
 #include <grace/particles/particle_distributor.hh>
 #include <grace/particles/particle_owner_search.hh>
 #include <grace/data_structures/variables.hh>
+#include <grace/data_structures/variable_indices.hh>
 #include <grace/amr/amr_functions.hh>
 #include <grace/utils/grace_utils.hh>
 
@@ -245,28 +246,84 @@ void fetch_at_positions(
             const double w011 = (1.0-fx)*     fy *     fz ;
             const double w111 =      fx *     fy *     fz ;
 
+            // Local trilinear interp helper. Inlined per call site below; the
+            // 8 view reads at fixed (vidx, q) are all stride-1 in i.
+            auto trilin_state = [&](int vidx) -> double {
+                return  w000 * state_view(vi  , vj  , vk  , vidx, q)
+                      + w100 * state_view(vi+1, vj  , vk  , vidx, q)
+                      + w010 * state_view(vi  , vj+1, vk  , vidx, q)
+                      + w110 * state_view(vi+1, vj+1, vk  , vidx, q)
+                      + w001 * state_view(vi  , vj  , vk+1, vidx, q)
+                      + w101 * state_view(vi+1, vj  , vk+1, vidx, q)
+                      + w011 * state_view(vi  , vj+1, vk+1, vidx, q)
+                      + w111 * state_view(vi+1, vj+1, vk+1, vidx, q);
+            };
+            auto trilin_aux = [&](int vidx) -> double {
+                return  w000 * aux_view(vi  , vj  , vk  , vidx, q)
+                      + w100 * aux_view(vi+1, vj  , vk  , vidx, q)
+                      + w010 * aux_view(vi  , vj+1, vk  , vidx, q)
+                      + w110 * aux_view(vi+1, vj+1, vk  , vidx, q)
+                      + w001 * aux_view(vi  , vj  , vk+1, vidx, q)
+                      + w101 * aux_view(vi+1, vj  , vk+1, vidx, q)
+                      + w011 * aux_view(vi  , vj+1, vk+1, vidx, q)
+                      + w111 * aux_view(vi+1, vj+1, vk+1, vidx, q);
+            };
+
+            // Lazy derived-field cache: computed once per request when the
+            // first DERIVED_* field is encountered, reused by the others.
+            // Computes v^i = Z^i / W where W = sqrt(1 + γ_ij Z^i Z^j).
+            bool   have_derived = false;
+            double dvx = 0.0, dvy = 0.0, dvz = 0.0, dW = 1.0;
+            auto ensure_derived = [&]() {
+                if (have_derived) return;
+                have_derived = true;
+                const double Zx = trilin_aux(grace::variables::ZVECX_);
+                const double Zy = trilin_aux(grace::variables::ZVECY_);
+                const double Zz = trilin_aux(grace::variables::ZVECZ_);
+#ifdef GRACE_ENABLE_COWLING_METRIC
+                // γ_ij is in the state array directly.
+                const double gxx = trilin_state(grace::variables::GXX_);
+                const double gxy = trilin_state(grace::variables::GXY_);
+                const double gxz = trilin_state(grace::variables::GXZ_);
+                const double gyy = trilin_state(grace::variables::GYY_);
+                const double gyz = trilin_state(grace::variables::GYZ_);
+                const double gzz = trilin_state(grace::variables::GZZ_);
+#elif defined(GRACE_ENABLE_Z4C_METRIC) || defined(GRACE_ENABLE_BSSN_METRIC)
+                // γ_ij = γ̃_ij / χ.
+                const double chi  = trilin_state(grace::variables::CHI_);
+                const double inv_chi = (chi > 0.0) ? 1.0 / chi : 1.0;
+                const double gxx = trilin_state(grace::variables::GTXX_) * inv_chi;
+                const double gxy = trilin_state(grace::variables::GTXY_) * inv_chi;
+                const double gxz = trilin_state(grace::variables::GTXZ_) * inv_chi;
+                const double gyy = trilin_state(grace::variables::GTYY_) * inv_chi;
+                const double gyz = trilin_state(grace::variables::GTYZ_) * inv_chi;
+                const double gzz = trilin_state(grace::variables::GTZZ_) * inv_chi;
+#else
+                // No 3+1 metric available — assume flat γ_ij = δ_ij.
+                const double gxx = 1.0, gyy = 1.0, gzz = 1.0;
+                const double gxy = 0.0, gxz = 0.0, gyz = 0.0;
+#endif
+                const double Z2 = gxx*Zx*Zx + gyy*Zy*Zy + gzz*Zz*Zz
+                                + 2.0*(gxy*Zx*Zy + gxz*Zx*Zz + gyz*Zy*Zz);
+                dW = Kokkos::sqrt(1.0 + Z2);
+                const double inv_W = 1.0 / dW;
+                dvx = Zx * inv_W;
+                dvy = Zy * inv_W;
+                dvz = Zz * inv_W;
+            };
+
             for (int f = 0; f < N_FIELDS; ++f) {
                 const int src  = src_v(f);
                 const int vidx = idx_v(f);
                 double v;
-                if (src == 0) {
-                    v =   w000 * state_view(vi  , vj  , vk  , vidx, q)
-                        + w100 * state_view(vi+1, vj  , vk  , vidx, q)
-                        + w010 * state_view(vi  , vj+1, vk  , vidx, q)
-                        + w110 * state_view(vi+1, vj+1, vk  , vidx, q)
-                        + w001 * state_view(vi  , vj  , vk+1, vidx, q)
-                        + w101 * state_view(vi+1, vj  , vk+1, vidx, q)
-                        + w011 * state_view(vi  , vj+1, vk+1, vidx, q)
-                        + w111 * state_view(vi+1, vj+1, vk+1, vidx, q);
-                } else {
-                    v =   w000 * aux_view(vi  , vj  , vk  , vidx, q)
-                        + w100 * aux_view(vi+1, vj  , vk  , vidx, q)
-                        + w010 * aux_view(vi  , vj+1, vk  , vidx, q)
-                        + w110 * aux_view(vi+1, vj+1, vk  , vidx, q)
-                        + w001 * aux_view(vi  , vj  , vk+1, vidx, q)
-                        + w101 * aux_view(vi+1, vj  , vk+1, vidx, q)
-                        + w011 * aux_view(vi  , vj+1, vk+1, vidx, q)
-                        + w111 * aux_view(vi+1, vj+1, vk+1, vidx, q);
+                switch (src) {
+                    case 0: v = trilin_state(vidx); break;
+                    case 1: v = trilin_aux  (vidx); break;
+                    case 2: ensure_derived(); v = dvx; break;
+                    case 3: ensure_derived(); v = dvy; break;
+                    case 4: ensure_derived(); v = dvz; break;
+                    case 5: ensure_derived(); v = dW;  break;
+                    default: v = 0.0; break;
                 }
                 out_r.values[f] = v;
             }
