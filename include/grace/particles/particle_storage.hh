@@ -58,7 +58,7 @@ constexpr int n_tracer_sample_scalars =
     1 /*alpha*/ + 3 /*beta*/ + 3 /*v*/ + 1 /*W*/
     + 1 /*rho*/ + 1 /*temp*/ + 1 /*ye*/ + 1 /*entropy*/
     + 1 /*press*/ + 1 /*eps*/ + 3 /*B*/;
-static_assert(n_tracer_sample_scalars == 16,
+static_assert(n_tracer_sample_scalars == 17,
               "Update aux-fetch N_FIELDS instantiation if this changes.");
 
 /// SoA tracer container. Trivially resizable; lifetime managed by caller.
