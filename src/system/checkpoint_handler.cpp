@@ -54,7 +54,7 @@
 #include <grace/physics/b_field_injection.hh>
 #ifdef GRACE_ENABLE_PARTICLES
 #include <grace/particles/particles_module.hh>
-#include <grace/particles/particles_checkpoint.hh>
+#include <grace/particles/particle_checkpoint.hh>
 #endif
 #endif
 #ifdef GRACE_ENABLE_Z4C_METRIC

@@ -6,7 +6,7 @@
 #ifdef GRACE_ENABLE_PARTICLES
 
 #include <grace/particles/particle_compact.hh>
-#include <grace/utils/particle_utilities.hh>
+#include <grace/particles/particle_utilities.hh>
 
 #include <Kokkos_Core.hpp>
 
