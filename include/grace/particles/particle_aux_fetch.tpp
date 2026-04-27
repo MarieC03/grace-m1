@@ -277,27 +277,27 @@ void fetch_at_positions(
             auto ensure_derived = [&]() {
                 if (have_derived) return;
                 have_derived = true;
-                const double Zx = trilin_aux(grace::variables::ZVECX_);
-                const double Zy = trilin_aux(grace::variables::ZVECY_);
-                const double Zz = trilin_aux(grace::variables::ZVECZ_);
+                const double Zx = trilin_aux(ZVECX_);
+                const double Zy = trilin_aux(ZVECY_);
+                const double Zz = trilin_aux(ZVECZ_);
 #ifdef GRACE_ENABLE_COWLING_METRIC
                 // γ_ij is in the state array directly.
-                const double gxx = trilin_state(grace::variables::GXX_);
-                const double gxy = trilin_state(grace::variables::GXY_);
-                const double gxz = trilin_state(grace::variables::GXZ_);
-                const double gyy = trilin_state(grace::variables::GYY_);
-                const double gyz = trilin_state(grace::variables::GYZ_);
-                const double gzz = trilin_state(grace::variables::GZZ_);
+                const double gxx = trilin_state(GXX_);
+                const double gxy = trilin_state(GXY_);
+                const double gxz = trilin_state(GXZ_);
+                const double gyy = trilin_state(GYY_);
+                const double gyz = trilin_state(GYZ_);
+                const double gzz = trilin_state(GZZ_);
 #elif defined(GRACE_ENABLE_Z4C_METRIC) || defined(GRACE_ENABLE_BSSN_METRIC)
                 // γ_ij = γ̃_ij / χ.
-                const double chi  = trilin_state(grace::variables::CHI_);
+                const double chi  = trilin_state(CHI_);
                 const double inv_chi = (chi > 0.0) ? 1.0 / chi : 1.0;
-                const double gxx = trilin_state(grace::variables::GTXX_) * inv_chi;
-                const double gxy = trilin_state(grace::variables::GTXY_) * inv_chi;
-                const double gxz = trilin_state(grace::variables::GTXZ_) * inv_chi;
-                const double gyy = trilin_state(grace::variables::GTYY_) * inv_chi;
-                const double gyz = trilin_state(grace::variables::GTYZ_) * inv_chi;
-                const double gzz = trilin_state(grace::variables::GTZZ_) * inv_chi;
+                const double gxx = trilin_state(GTXX_) * inv_chi;
+                const double gxy = trilin_state(GTXY_) * inv_chi;
+                const double gxz = trilin_state(GTXZ_) * inv_chi;
+                const double gyy = trilin_state(GTYY_) * inv_chi;
+                const double gyz = trilin_state(GTYZ_) * inv_chi;
+                const double gzz = trilin_state(GTZZ_) * inv_chi;
 #else
                 // No 3+1 metric available — assume flat γ_ij = δ_ij.
                 const double gxx = 1.0, gyy = 1.0, gzz = 1.0;

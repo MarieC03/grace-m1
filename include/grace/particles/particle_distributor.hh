@@ -22,6 +22,7 @@
 #ifdef GRACE_ENABLE_PARTICLES
 
 #include <grace/data_structures/memory_defaults.hh>
+#include <grace/utils/grace_utils.hh>
 
 #include <Kokkos_Core.hpp>
 
@@ -130,6 +131,13 @@ template <typename T>
 {
     static_assert(std::is_trivially_copyable_v<T>,
                   "particles::migrate_async<T>: T must be trivially copyable.");
+    // Defense in depth: we treat src/dst as flat byte buffers via .data().
+    // Any non-contiguous view (e.g. a strided subview into a wider parent)
+    // would silently corrupt the transfer.
+    ASSERT(src.span_is_contiguous(),
+           "particles::migrate_async: src view is not contiguous.");
+    ASSERT(dst.span_is_contiguous(),
+           "particles::migrate_async: dst view is not contiguous.");
     return plan.migrate_async_raw(static_cast<const void*>(src.data()),
                                   sizeof(T),
                                   static_cast<void*>(dst.data()));
