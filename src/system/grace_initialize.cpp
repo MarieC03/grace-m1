@@ -58,10 +58,10 @@
 #include <grace/IO/diagnostics/co_tracker.hh>
 #ifdef GRACE_ENABLE_Z4C_METRIC
 #include <grace/IO/diagnostics/apparent_horizon.hh>
+#endif
 
 #ifdef GRACE_ENABLE_PARTICLES
 #include <grace/particles/particles_module.hh>
-#endif
 #endif
 
 #include <grace/amr/grace_amr.hh>
