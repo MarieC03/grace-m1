@@ -191,22 +191,25 @@ void assert_no_regime3_drift(const tracer_container_t<>& tr,
                              Kokkos::View<double*[3], grace::default_space> src_pos,
                              double min_quad_width)
 {
-    const std::size_t n = tr.size();
-    if (n == 0) return;
     // Threshold = 0.5 * min_quad_width per axis. Generous enough that
     // tracers in legitimate Regime 1 (sub-cell drift) never trip.
+    const std::size_t n = tr.size();
     const double thr = 0.5 * min_quad_width;
     auto dst_pos = tr.pos;
     int n_violations = 0;
-    Kokkos::parallel_reduce("regime3_drift_check",
-        Kokkos::RangePolicy<grace::default_execution_space>(0, n),
-        KOKKOS_LAMBDA(const int i, int& acc) {
-            const double dx = dst_pos(i, 0) - src_pos(i, 0);
-            const double dy = dst_pos(i, 1) - src_pos(i, 1);
-            const double dz = dst_pos(i, 2) - src_pos(i, 2);
-            if (Kokkos::fabs(dx) > thr || Kokkos::fabs(dy) > thr ||
-                Kokkos::fabs(dz) > thr) ++acc;
-        }, n_violations);
+    if (n > 0) {
+        Kokkos::parallel_reduce("regime3_drift_check",
+            Kokkos::RangePolicy<grace::default_execution_space>(0, n),
+            KOKKOS_LAMBDA(const int i, int& acc) {
+                const double dx = dst_pos(i, 0) - src_pos(i, 0);
+                const double dy = dst_pos(i, 1) - src_pos(i, 1);
+                const double dz = dst_pos(i, 2) - src_pos(i, 2);
+                if (Kokkos::fabs(dx) > thr || Kokkos::fabs(dy) > thr ||
+                    Kokkos::fabs(dz) > thr) ++acc;
+            }, n_violations);
+    }
+    // Allreduce must run on every rank, regardless of local n: a sibling
+    // rank with non-empty tr would otherwise hang here.
     int global_violations = 0;
     MPI_Allreduce(&n_violations, &global_violations, 1, MPI_INT, MPI_SUM,
                   MPI_COMM_WORLD);
@@ -266,29 +269,52 @@ void apply_position_bcs(tracer_container_t<>& tr, const position_bcs_t& b) {
 /// Mark tracers whose position no longer maps to any rank as
 /// PARTICLE_OUTSIDE_DOMAIN before rebalancing. They get dropped by the
 /// distributor (export rank -1) and surface as removable on the next
-/// compact() pass.
-void flag_outside_domain(tracer_container_t<>& tr,
-                         Kokkos::View<int*, grace::default_space> export_ranks)
+/// compact() pass. Returns the local count of tracers flagged on this call,
+/// for diagnostic logging.
+std::size_t flag_outside_domain(tracer_container_t<>& tr,
+                                Kokkos::View<int*, grace::default_space> export_ranks)
 {
     const std::size_t n = tr.size();
-    if (n == 0) return;
+    if (n == 0) return 0;
     auto status = tr.status;
-    Kokkos::parallel_for("flag_outside_domain",
+    int n_flagged = 0;
+    Kokkos::parallel_reduce("flag_outside_domain",
         Kokkos::RangePolicy<grace::default_execution_space>(0, n),
-        KOKKOS_LAMBDA(const int i) {
-            if (export_ranks(i) < 0) status(i) = PARTICLE_OUTSIDE_DOMAIN;
-        });
+        KOKKOS_LAMBDA(const int i, int& acc) {
+            if (export_ranks(i) < 0) {
+                status(i) = PARTICLE_OUTSIDE_DOMAIN;
+                ++acc;
+            }
+        }, n_flagged);
+    return static_cast<std::size_t>(n_flagged);
 }
 
 void rebalance(tracer_container_t<>& tr, const std::string& strategy) {
-    if (tr.size() == 0) return;
+    // No early return on tr.size()==0: migrate_topology builds a
+    // distribution_plan_t which posts MPI_Alltoall, and a sibling rank with
+    // non-empty tr must not be left waiting alone.
     Kokkos::View<int*, grace::default_space> export_ranks;
     if (strategy == "quad_owner") {
         export_ranks = compute_export_ranks_quad_owner(tr);
     } else {
         ERROR("Unknown particle rebalance strategy: " << strategy);
     }
-    flag_outside_domain(tr, export_ranks);
+    const std::size_t local_culled = flag_outside_domain(tr, export_ranks);
+
+    // Diagnostic: aggregate cull rate across ranks. Useful for catching
+    // pathological tracer loss (e.g. find_owner_partition rejecting
+    // legitimate interior positions) without spamming per-step output.
+    // Logged only when something was actually culled. Allreduce is
+    // collective-safe — every rank enters with its local_culled (0 if none).
+    long long local_ll = static_cast<long long>(local_culled);
+    long long global_culled = 0;
+    MPI_Allreduce(&local_ll, &global_culled, 1, MPI_LONG_LONG, MPI_SUM,
+                  MPI_COMM_WORLD);
+    if (global_culled > 0) {
+        GRACE_INFO("Particles: rebalance culled {} tracer(s) globally "
+                   "(out-of-domain).", global_culled);
+    }
+
     migrate_topology(MPI_COMM_WORLD, tr, export_ranks);
 }
 
@@ -359,8 +385,8 @@ void particles_module_t::on_regrid() {
     _impl->min_quad_width = compute_min_quad_width();
 
     auto& tr = _impl->tracers;
-    if (tr.size() == 0) return;
-    // Every tracer's owner_local_quad is now invalid; rebalance re-resolves.
+    // No early return on tr.size()==0: rebalance is collective. A sibling
+    // rank may have surviving tracers and would hang waiting for us.
     rebalance(tr, _impl->rebalance_strategy);
     // Samples are stale-or-zero post-rebalance; the next advance_step fetches
     // fresh ones at the top of the next evolve() call, before any tracer
@@ -393,14 +419,15 @@ void particles_module_t::advance_step(double dt) {
     // Without this, tracers that drift into other ranks' quads still fetch
     // correctly (owner_rank gets refreshed inside compute_export_ranks_*),
     // but the data lives on the wrong rank — bad load balance once the fluid
-    // clusters. Subsumes the old refresh_owners path.
-    if (tr.size() > 0 && _impl->rebalance_every > 0 &&
+    // clusters. Subsumes the old refresh_owners path. Schedule decision is
+    // uniform across ranks (iter is global), so this is collective-safe.
+    if (_impl->rebalance_every > 0 &&
         iter % static_cast<size_t>(_impl->rebalance_every) == 0) {
         rebalance(tr, _impl->rebalance_strategy);
     }
 
-    // Compaction: drop dead tracers (OUTSIDE_DOMAIN, etc.). Cheap when there
-    // are no culls — the scan exits in O(n) without reallocating.
+    // Compaction: drop dead tracers (OUTSIDE_DOMAIN, etc.). Local-only — no
+    // collectives — so a per-rank tr.size()==0 short-circuit is fine here.
     if (tr.size() > 0 && _impl->compact_every > 0 &&
         iter % static_cast<size_t>(_impl->compact_every) == 0) {
         const std::size_t culled = compact(tr);
@@ -410,17 +437,21 @@ void particles_module_t::advance_step(double dt) {
         }
     }
 
-    if (tr.size() == 0) return;
-
     // Snapshot pre-push positions for the Regime-3 drift assertion. Cheap
     // — one device-side copy — and lets us catch CFL violations or buggy
-    // dt scaling before they corrupt trajectories silently.
+    // dt scaling before they corrupt trajectories silently. Allocating a
+    // size-0 view is fine; needed because advance_substep is collective and
+    // every rank must enter it whether or not it owns tracers.
     Kokkos::View<double*[3], grace::default_space>
         src_pos_snapshot("regime3_src_pos", tr.size());
-    Kokkos::deep_copy(src_pos_snapshot, tr.pos);
+    if (tr.size() > 0) {
+        Kokkos::deep_copy(src_pos_snapshot, tr.pos);
+    }
 
+    // Collective: fluid fetch + RHS push. Must be entered by every rank.
     advance_substep(MPI_COMM_WORLD, dt, /*dtfact=*/1.0, tr.pos, tr.pos, tr);
 
+    // Collective: contains an Allreduce.
     assert_no_regime3_drift(tr, src_pos_snapshot, _impl->min_quad_width);
 
     // Apply position-only BCs after the push so the next step's rebalance
@@ -431,6 +462,8 @@ void particles_module_t::advance_step(double dt) {
 
     if (_impl->output_every > 0 &&
         iter % static_cast<size_t>(_impl->output_every) == 0) {
+        // Collective MPI-IO; every rank participates regardless of local
+        // tr.size(). The schedule check uses the global iter so it's uniform.
         write_particle_snapshot(tr, _impl->output_directory,
                                 _impl->output_basename);
     }

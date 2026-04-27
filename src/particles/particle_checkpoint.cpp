@@ -208,7 +208,14 @@ void save_particles_to_checkpoint(hid_t file_id, hid_t dxpl) {
     }
 
     // Mirror the persistent fields (no samples).
-    auto h_pos    = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.pos);
+    // Position MUST be staged through a LayoutRight host buffer: device
+    // default layout on CUDA/HIP is LayoutLeft, but write_dataset_2d treats
+    // the buffer as row-major [N,3]. Without the explicit LayoutRight stage
+    // x/y/z get written column-interleaved and the reader sees scrambled
+    // coordinates. Kokkos::deep_copy performs the layout transpose.
+    Kokkos::View<double*[3], Kokkos::LayoutRight, Kokkos::HostSpace>
+        h_pos("h_pos_ckpt", tr.size());
+    Kokkos::deep_copy(h_pos, tr.pos);
     auto h_id     = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.id);
     auto h_status = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.status);
 
@@ -307,7 +314,11 @@ bool load_particles_from_checkpoint(hid_t file_id) {
     const slice_t s = equal_slice(static_cast<hsize_t>(n_global_ll), rank, nproc);
     tr.resize(static_cast<std::size_t>(s.count));
 
-    auto h_pos    = Kokkos::create_mirror_view(tr.pos);
+    // Stage Position into an explicit LayoutRight host buffer for the same
+    // reason as the writer above: the on-disk layout is row-major [N,3],
+    // and reading directly into a LayoutLeft mirror would scramble x/y/z.
+    Kokkos::View<double*[3], Kokkos::LayoutRight, Kokkos::HostSpace>
+        h_pos("h_pos_ckpt", tr.size());
     auto h_id     = Kokkos::create_mirror_view(tr.id);
     auto h_status = Kokkos::create_mirror_view(tr.status);
 

@@ -46,9 +46,10 @@ void migrate_topology(MPI_Comm                                       comm,
                       tracer_container_t<>&                          tr,
                       Kokkos::View<int*, grace::default_space>       export_ranks)
 {
-    const std::size_t n_in = tr.size();
-    if (n_in == 0) return;
-
+    // No early return on n_in == 0: distribution_plan_t's ctor posts
+    // MPI_Alltoall, and migrate(...) posts MPI_Ialltoallv. Both are
+    // collective and must be entered by every rank, even those with empty
+    // input. The distributor handles all-zero counts correctly.
     distribution_plan_t plan(comm, export_ranks);
     const std::size_t n_out = plan.total_num_import();
 
@@ -58,14 +59,13 @@ void migrate_topology(MPI_Comm                                       comm,
     nu.resize(n_out);
     nu.set_id_counter(tr.id_counter()); // counter is rank-local, survives migration
 
-    if (n_out > 0 || n_in > 0) {
-        migrate(plan, tr.pos,    nu.pos);
-        migrate(plan, tr.id,     nu.id);
-        migrate(plan, tr.status, nu.status);
-        // owner_rank/owner_local_quad and samples intentionally not migrated:
-        // owner_rank gets set to self below; owner_local_quad is re-resolved
-        // from position; samples get refilled by next fetch.
-    }
+    // Always enter the migrate calls — Ialltoallv is collective.
+    migrate(plan, tr.pos,    nu.pos);
+    migrate(plan, tr.id,     nu.id);
+    migrate(plan, tr.status, nu.status);
+    // owner_rank/owner_local_quad and samples intentionally not migrated:
+    // owner_rank gets set to self below; owner_local_quad is re-resolved
+    // from position; samples get refilled by next fetch.
 
     // Post-migration topology fix-up: owner_rank = self, owner_local_quad
     // resolved from positions on the receiver side.

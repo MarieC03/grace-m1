@@ -253,12 +253,28 @@ void write_particle_snapshot(const tracer_container_t<>& tr,
 
     // Mirror device views to host. For O(N) tracers, this dominates only
     // briefly; collective HDF5 then writes from host buffers.
-    auto h_pos      = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.pos);
+    //
+    // 2-D vector fields (pos, beta, v, B) MUST be staged through explicit
+    // LayoutRight host buffers: the device default layout on CUDA/HIP is
+    // LayoutLeft, but HDF5 (and the [N,3] dimensions in the XMF) interpret
+    // the buffer as row-major. Using create_mirror_view_and_copy preserves
+    // the device layout, which would silently scramble x/y/z into diagonal
+    // patterns at the visualization stage. Kokkos::deep_copy handles the
+    // cross-layout transpose for us.
+    using h_vec_t = Kokkos::View<double*[3], Kokkos::LayoutRight, Kokkos::HostSpace>;
+    h_vec_t h_pos ("h_pos",  tr.size());
+    h_vec_t h_beta("h_beta", tr.size());
+    h_vec_t h_v   ("h_v",    tr.size());
+    h_vec_t h_B   ("h_B",    tr.size());
+    Kokkos::deep_copy(h_pos,  tr.pos);
+    Kokkos::deep_copy(h_beta, tr.sample_beta);
+    Kokkos::deep_copy(h_v,    tr.sample_v);
+    Kokkos::deep_copy(h_B,    tr.sample_B);
+
+    // 1-D fields are layout-agnostic; the simple mirror is fine.
     auto h_id       = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.id);
     auto h_status   = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.status);
     auto h_alpha    = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_alpha);
-    auto h_beta     = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_beta);
-    auto h_v        = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_v);
     auto h_W        = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_W);
     auto h_rho      = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_rho);
     auto h_temp     = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_temp);
@@ -266,7 +282,6 @@ void write_particle_snapshot(const tracer_container_t<>& tr,
     auto h_entropy  = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_entropy);
     auto h_press    = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_press);
     auto h_eps      = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_eps);
-    auto h_B        = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, tr.sample_B);
 
     // Open file with parallel access.
     herr_t err;
