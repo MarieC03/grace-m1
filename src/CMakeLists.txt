@@ -27,3 +27,7 @@ add_subdirectory(evolution)
 add_subdirectory(physics)
 
 add_subdirectory(config)
+
+if( GRACE_ENABLE_CABANA )
+add_subdirectory(particles)
+endif()

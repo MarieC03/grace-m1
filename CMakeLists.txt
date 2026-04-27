@@ -169,6 +169,8 @@ target_link_libraries(grace PRIVATE
         $<$<BOOL:${GRACE_ENABLE_LORENE}>:LORENE::LORENE>
         # TwoPunctures
         $<$<BOOL:${GRACE_ENABLE_TWO_PUNCTURES}>:TwoPunctures::TwoPunctures>
+        # Cabana
+        $<$<BOOL:${GRACE_ENABLE_CABANA}>:Cabana::Core>
         )
 if ( GRACE_ENABLE_VTK )
     vtk_module_autoinit(

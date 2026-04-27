@@ -57,7 +57,8 @@ function(register_grace_object target_name)
         $<$<BOOL:${GRACE_ENABLE_VTK}>:VTK::VTK>
         $<$<BOOL:${GRACE_ENABLE_PROFILING}>:GRACE_GPUProfiling>
         $<$<BOOL:${GRACE_ENABLE_LORENE}>:LORENE::LORENE>
-        $<$<BOOL:${GRACE_ENABLE_TWO_PUNCTURES}>:TwoPunctures::TwoPunctures>)
+        $<$<BOOL:${GRACE_ENABLE_TWO_PUNCTURES}>:TwoPunctures::TwoPunctures>
+        $<$<BOOL:${GRACE_ENABLE_CABANA}>:Cabana::Core>)
     # Register the object files of the target into the grace_objects interface library
     target_sources(grace_objects INTERFACE $<TARGET_OBJECTS:${target_name}>)
 endfunction()
