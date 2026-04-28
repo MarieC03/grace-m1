@@ -279,7 +279,7 @@ std::vector<double> adm_integrals::compute() {
     result.reserve(sphere_indices.size());
     for (auto const& sidx : sphere_indices) {
         refresh_interpolator(sidx);
-        double const local_M = compute_local(sidx);
+        double local_M = compute_local(sidx);
         double global_M = 0.0;
         parallel::mpi_allreduce(&local_M, &global_M, 1, MPI_SUM);
         result.push_back(global_M);

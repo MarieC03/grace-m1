@@ -126,9 +126,24 @@ void fill_state_with_polynomial_and_nan_fence(
 }
 
 //---------------------------------------------------------------------
-// Build a list of cell-centred query points spanning one row along the
-// x axis of a single quadrant: cells {0, ..., nx-1}. Drives the bias
-// path at both edges when valid_gz < stencil_half.
+// Build a list of query points spanning one row along the x axis of a
+// single quadrant -- cells {0, ..., nx-1}, drives the bias path at both
+// edges when valid_gz < stencil_half.
+//
+// Queries are intentionally placed AWAY from the cell centre (and away
+// from cell-corner / cell-face values that coincide with stencil knots)
+// so the interpolator's basis-function evaluation is non-trivial:
+//
+//   - Lagrange: at a knot, all but one barycentric weight collapse to
+//     zero, so the test would only verify "data at the knot equals the
+//     polynomial at the knot" -- vacuously true by construction.
+//   - Hermite cubic: a query at u=0 or u=1 picks only one tensor-product
+//     knot value (psi_a(0)=1, phi_a(0)=0 etc.); the cubic basis is never
+//     exercised.
+//
+// The offset (sx, sy, sz) is a fraction of dx in [-0.5, +0.5]. The same
+// offset is applied at every cell. A second test pass with a sign-flipped
+// offset covers the other Hermite-half dispatch.
 //---------------------------------------------------------------------
 struct query_set_t {
     std::vector<grace::point_host_t> points;
@@ -136,7 +151,8 @@ struct query_set_t {
     std::vector<grace::intersected_cell_descriptor_t> icells;
 };
 
-query_set_t build_x_row_queries(size_t test_q) {
+query_set_t build_x_row_queries(size_t test_q,
+                                std::array<double,3> const& cell_offset) {
     using namespace grace;
     DECLARE_GRID_EXTENTS;
     auto& coord_system = coordinate_system::get();
@@ -145,17 +161,34 @@ query_set_t build_x_row_queries(size_t test_q) {
     size_t const j0 = ny / 2;
     size_t const k0 = nz / 2;
 
+    double const dx = coord_system.get_spacing(test_q);
+
     for (size_t i = 0; i < nx; ++i) {
+        // Cell centre, then shift by the requested fraction-of-dx offset.
         auto pc = coord_system.get_physical_coordinates(
             {i, j0, k0}, test_q, {0.5, 0.5, 0.5}, /*use_ghostzones=*/false
         );
+        pc[0] += cell_offset[0] * dx;
+        pc[1] += cell_offset[1] * dx;
+        pc[2] += cell_offset[2] * dx;
+
         size_t const pidx = qs.points.size();
         qs.points.push_back({pidx, {pc[0], pc[1], pc[2]}});
         qs.ipoints.push_back(pidx);
+        // Cell descriptor is unchanged: shifting by < dx/2 keeps the
+        // query in the same cell that the search would have placed it.
         qs.icells.push_back({i, j0, k0, test_q});
     }
     return qs;
 }
+
+// Off-centre offsets used by the tests below. Picked irrationally so the
+// queries don't accidentally land on any special point (cell centre,
+// face, or corner) of the stencil. The two variants flip the sign on
+// each axis so Hermite's left-half / right-half dispatch is both
+// exercised.
+constexpr std::array<double,3> offset_pos = { 0.27, -0.19,  0.31};
+constexpr std::array<double,3> offset_neg = {-0.27,  0.19, -0.31};
 
 }  // namespace
 
