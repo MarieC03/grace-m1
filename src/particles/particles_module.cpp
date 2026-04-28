@@ -264,14 +264,14 @@ void seed_density_weighted(tracer_container_t<>& tr,
             const double w011 = (1.0-fx)*     fy *     fz ;
             const double w111 =      fx *     fy *     fz ;
             cand_rho(i) =
-                  w000 * aux_view(vi  , vj  , vk  , grace::variables::RHO_, q)
-                + w100 * aux_view(vi+1, vj  , vk  , grace::variables::RHO_, q)
-                + w010 * aux_view(vi  , vj+1, vk  , grace::variables::RHO_, q)
-                + w110 * aux_view(vi+1, vj+1, vk  , grace::variables::RHO_, q)
-                + w001 * aux_view(vi  , vj  , vk+1, grace::variables::RHO_, q)
-                + w101 * aux_view(vi+1, vj  , vk+1, grace::variables::RHO_, q)
-                + w011 * aux_view(vi  , vj+1, vk+1, grace::variables::RHO_, q)
-                + w111 * aux_view(vi+1, vj+1, vk+1, grace::variables::RHO_, q);
+                  w000 * aux_view(vi  , vj  , vk  , RHO_, q)
+                + w100 * aux_view(vi+1, vj  , vk  , RHO_, q)
+                + w010 * aux_view(vi  , vj+1, vk  , RHO_, q)
+                + w110 * aux_view(vi+1, vj+1, vk  , RHO_, q)
+                + w001 * aux_view(vi  , vj  , vk+1, RHO_, q)
+                + w101 * aux_view(vi+1, vj  , vk+1, RHO_, q)
+                + w011 * aux_view(vi  , vj+1, vk+1, RHO_, q)
+                + w111 * aux_view(vi+1, vj+1, vk+1, RHO_, q);
         });
     Kokkos::fence();
 

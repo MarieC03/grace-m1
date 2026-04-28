@@ -161,16 +161,27 @@ query_set_t build_x_row_queries(size_t test_q,
     size_t const j0 = ny / 2;
     size_t const k0 = nz / 2;
 
-    double const dx = coord_system.get_spacing(test_q);
+    // Shift queries off cell-centre by `cell_offset` *fraction* of physical dx.
+    // coord_system.get_spacing returns logical (1/nx within a tree); multiply
+    // by tree extent to get physical dx. We assume isotropic-tree brick (the
+    // Cartesian default), which is what the tests run on.
+    double const dx_logical = coord_system.get_spacing(test_q);
+    int64_t const itree     = grace::amr::get_quadrant_owner(test_q);
+    auto    const tree_ext  = grace::amr::get_tree_spacing(itree);
+    std::array<double,3> dx_phys{{
+        dx_logical * tree_ext[0],
+        dx_logical * tree_ext[1],
+        dx_logical * tree_ext[2]
+    }};
 
     for (size_t i = 0; i < nx; ++i) {
         // Cell centre, then shift by the requested fraction-of-dx offset.
         auto pc = coord_system.get_physical_coordinates(
             {i, j0, k0}, test_q, {0.5, 0.5, 0.5}, /*use_ghostzones=*/false
         );
-        pc[0] += cell_offset[0] * dx;
-        pc[1] += cell_offset[1] * dx;
-        pc[2] += cell_offset[2] * dx;
+        pc[0] += cell_offset[0] * dx_phys[0];
+        pc[1] += cell_offset[1] * dx_phys[1];
+        pc[2] += cell_offset[2] * dx_phys[2];
 
         size_t const pidx = qs.points.size();
         qs.points.push_back({pidx, {pc[0], pc[1], pc[2]}});
