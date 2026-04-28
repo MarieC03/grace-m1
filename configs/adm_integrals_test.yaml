@@ -70,7 +70,7 @@ system: {
 evolution: {
   time_stepper: "rk3",
   cfl_factor: 0.1,
-  final_time: 0
+  final_time: 10
 }
 
 grmhd: {

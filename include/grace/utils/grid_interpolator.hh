@@ -506,20 +506,14 @@ struct grid_interpolator_t<poly_kind::hermite, Degree> {
             qs.dx = dx;
 
             // For each axis pick the half (which neighbouring cell-centre
-            // pair brackets the query) and compute u in [0,1].
+            // pair would bracket the query in the unbiased stencil).
+            // s_local in [-0.5, 0.5] is the query offset from the cell
+            // centre, in units of dx.
+            std::array<double,3> s_local_arr;
             for (int idir = 0; idir < 3; ++idir) {
-                // s_local in [-0.5, 0.5] is the offset from cell centre, in
-                // units of dx.
                 double const s_local = (point_coords[idir] - cell_centre[idir]) / dx;
-                if (s_local >= 0.0) {
-                    // Right half: Hermite cell = [center(ijk), center(ijk+1)]
-                    qs.half[idir] = 1;
-                    qs.u[idir]    = s_local;        // already in [0, 0.5]
-                } else {
-                    // Left half: Hermite cell = [center(ijk-1), center(ijk)]
-                    qs.half[idir] = 0;
-                    qs.u[idir]    = s_local + 1.0;  // shift into [0.5, 1.0]
-                }
+                s_local_arr[idir] = s_local;
+                qs.half[idir] = (s_local >= 0.0) ? 1 : 0;
             }
 
             // Bias: keep the 4-wide stencil within the valid ghost-zone
@@ -535,13 +529,16 @@ struct grid_interpolator_t<poly_kind::hermite, Degree> {
             //     b_max  = nx + _valid_gz - 2 - cell_d - half_d
             //
             // Pick the smallest |bias| in that range. NB: when bias != 0
-            // the Hermite cell (between stencil indices 1 and 2) shifts
-            // away from the cell-pair containing the query, so the query
-            // coordinate u may fall outside [0,1] and the evaluation
-            // becomes extrapolation. This is unavoidable near a domain
-            // edge with a tight _valid_gz; for the common case
-            // (_valid_gz == ngz) the legal range always contains 0 and no
-            // such extrapolation occurs.
+            // the Hermite cell (between stencil indices p=1 and p=2)
+            // shifts away from the cell-pair that originally bracketed
+            // the query; the per-query u below is corrected for this
+            // shift and falls outside [0,1] -- the kernel evaluates the
+            // tensor-product cubic at that extrapolated coordinate.
+            // Polynomial-exactness for inputs of per-axis-degree <= 2 is
+            // preserved because central FD is exact for quadratics and
+            // the resulting cubic Hermite IS the input polynomial
+            // identically; for higher-degree inputs the bias path adds
+            // an extrapolation error on top of the usual FD error.
             std::array<long,3> nxyz{{
                 static_cast<long>(nx),
                 static_cast<long>(ny),
@@ -563,6 +560,23 @@ struct grid_interpolator_t<poly_kind::hermite, Degree> {
                 if (b_min > 0)      b = b_min;
                 else if (b_max < 0) b = b_max;
                 qs.bias[idir] = static_cast<int>(b);
+            }
+
+            // Bias-aware u: the Hermite cell's left endpoint sits at the
+            // cell-centre at (cell.i + half + bias - 1), so the query in
+            // normalized cell-local coords is
+            //
+            //     u = (qx - (cx + (half + bias - 1) * dx)) / dx
+            //       = s_local + 1 - half - bias
+            //
+            // which reduces to the unbiased formulas (s_local for half=1,
+            // s_local + 1 for half=0) when bias=0 and otherwise lies in
+            // [-1.5, +1.5] (i.e. extrapolation up to one cell to either
+            // side of the chosen Hermite cell).
+            for (int idir = 0; idir < 3; ++idir) {
+                qs.u[idir] = s_local_arr[idir] + 1.0
+                             - static_cast<double>(qs.half[idir])
+                             - static_cast<double>(qs.bias[idir]);
             }
 
             states[i] = qs;
