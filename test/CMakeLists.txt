@@ -162,7 +162,7 @@ add_test(NAME grid_interpolator_test COMMAND
 if(GRACE_ENABLE_Z4C_METRIC)
     add_test(NAME adm_integrals_test COMMAND
             mpirun -n 1 ./adm_integrals_test --grace-parfile ./configs/adm_integrals_test.yaml )
-
+endif()
 if( GRACE_ENABLE_PARTICLES )
 add_test(NAME particle_owner_search_test COMMAND
         mpirun -n 2 ./particle_owner_search_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
