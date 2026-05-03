@@ -1,7 +1,22 @@
 # GRMHD is the only evolved-equations module GRACE currently supports.
 # (Burgers and scalar-advection were dropped years ago; their source
 # files no longer exist.)  Optional add-ons sit alongside it.
-option(GRACE_ENABLE_M1 "Enable M1 radiation transport" OFF)
+#option(GRACE_ENABLE_GRMHD "Enable GRMHD equation module" ON)
+
+# M1 neutrino transport
+option(GRACE_ENABLE_M1 "Enable M1 neutrino transport" OFF)
+option(M1_NU_THREESPECIES "Enable 3-species neutrino M1 scheme" OFF)
+option(M1_NU_FIVESPECIES "Enable 5-species neutrino M1 scheme" OFF)
+# --- enforce hierarchy: 5-species implies 3-species implies M1 ---
+if(M1_NU_FIVESPECIES)
+    set(M1_NU_THREESPECIES ON)
+    set(GRACE_ENABLE_M1 ON)
+    message(STATUS "M1 with 5-Species enabled.")
+endif()
+if(M1_NU_THREESPECIES)
+    set(GRACE_ENABLE_M1 ON)
+    message(STATUS "M1 with 3-Species enabled.")
+endif()
 option(GRACE_FREEZE_HYDRO "Freeze hydrodynamics evolution" OFF)
 
 # First-Order Flux Correction.  Stage-3 flagger + stage-4 donor-cell/LLF
@@ -42,4 +57,3 @@ message(STATUS "EMF scheme: ${GRACE_EMF_SCHEME}")
 if( GRACE_ENABLE_FUKA )
     message(STATUS "FUKA module enabled.")
 endif()
-
