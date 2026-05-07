@@ -145,9 +145,13 @@ add_test(NAME bc_test_unigrid_spherical COMMAND
         mpirun -n 2 ./bc_test_unigrid --grace-parfile ./configs/regrid_test_spherical.yaml )
 add_test(NAME bc_test_cartesian COMMAND 
         mpirun -n 2 ./bc_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
-add_test(NAME bc_test_spherical COMMAND 
+add_test(NAME bc_test_spherical COMMAND
         mpirun -n 2 ./bc_test --grace-parfile ./configs/regrid_test_spherical.yaml )
-add_test(NAME scalar_reductions_test COMMAND 
+add_test(NAME emf_reflux_test_cartesian COMMAND
+        mpirun -n 2 ./emf_reflux_test --grace-parfile ./configs/regrid_test_cartesian.yaml )
+add_test(NAME emf_reflux_test_spherical COMMAND
+        mpirun -n 2 ./emf_reflux_test --grace-parfile ./configs/regrid_test_spherical.yaml )
+add_test(NAME scalar_reductions_test COMMAND
         mpirun -n 1 ./scalar_reductions_test --grace-parfile ./configs/scalar_reductions_test.yaml )
 add_test(NAME pwpoly_test COMMAND 
         mpirun -n 1 ./eos_test --grace-parfile ./configs/pwpoly_test_config.yaml )
