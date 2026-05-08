@@ -122,7 +122,6 @@ void set_m1_eas(
     } else if ( eas_kind == "neutrino_analytic" || eas_kind == "neutrino_weakhub" ) {
         static bool weakhub_initialized = false;
         if (!weakhub_initialized && eas_kind == "neutrino_weakhub") {
-            Kokkos::printf("NNOOOOOOTTT GOOD THAT I AM HERE");
             weakhub::initialize_weakhub_from_params();
             weakhub_initialized = true;
         }

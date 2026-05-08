@@ -116,7 +116,8 @@ void compute_auxiliary_quantities(
     #ifdef GRACE_ENABLE_M1 
     m1_excision_params_t m1_excision_params = get_m1_excision_params() ; 
     m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ; 
-    m1_equations_system_t m1_eq_system(state,sstate,aux,m1_atmo_params,m1_excision_params) ; 
+    m1_backreaction_params_t backreaction_params = get_m1_backreaction_params();
+    m1_equations_system_t m1_eq_system(state,sstate,aux,m1_atmo_params,m1_excision_params,backreaction_params) ; 
     #endif 
     #ifdef GRACE_ENABLE_BSSN_METRIC
     bssn_system_t bssn_eq_system(state,aux,sstate) ; 

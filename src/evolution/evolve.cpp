@@ -432,7 +432,13 @@ void compute_fluxes(
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ; 
     //**************************************************************************************************/
     #ifdef GRACE_ENABLE_M1
-    m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    //m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    // PPL needs atmo params
+    m1_excision_params_t m1_excision_params = get_m1_excision_params() ; 
+    m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ; 
+    m1_backreaction_params_t backreaction_params = get_m1_backreaction_params();
+    m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux,m1_atmo_params,m1_excision_params,backreaction_params) ; 
+
     // normalize 
     auto m1_norm_policy = 
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
@@ -1427,6 +1433,11 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     auto& aux  = variable_list::get().getaux() ; 
 
     #ifdef GRACE_ENABLE_M1 
+
+    auto backreaction_params = get_m1_backreaction_params() ;
+    bool const do_backreaction = backreaction_params.do_backreaction 
+                              && (t >= backreaction_params.t_backreact) ;
+
     auto policy = 
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(0,0,0),0}
@@ -1457,10 +1468,12 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             );
             #endif 
             
-            #ifdef M1_NU_THREESPECIES
-            m1_eq_system.add_backreaction<eos_t>(
+            #ifdef M1_NU_THREESPECIES // ! NOTE is also active for FIVESPECIES
+            if ( do_backreaction ) {
+                m1_eq_system.add_backreaction<eos_t>(
                 q, VEC(i,j,k), _idx, new_state
-            );
+                );
+            }
             #endif
         }
     ) ; 

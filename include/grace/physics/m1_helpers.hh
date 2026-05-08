@@ -376,7 +376,7 @@ struct m1_closure_t {
 
         // KEN removed the clamp. It can be negative and zero
         // vdotF = fmax(FD[0] * vU[0] + FD[1] * vU[1] + FD[2] * vU[2], f_floor) ; 
-        vdotF = FD[0] * vU[0] + FD[1] * vU[1] + FD[2] * vU[2] ; 
+        vdotF = fmax(FD[0]*vU[0] + FD[1]*vU[1] + FD[2]*vU[2], f_floor) ;
 
         vD = metric.lower(vU) ; 
         v2 = metric.square_vec(vU) ; 
@@ -430,6 +430,20 @@ get_m1_atmo_params() {
     m1_atmo_params.eps_max = grace::get_param<double>("m1", "atmosphere", "eps_max") ; 
     return m1_atmo_params ; 
 }
+
+struct m1_backreaction_params_t {
+    bool do_backreaction ;
+    double t_backreact ;
+};
+
+static m1_backreaction_params_t 
+get_m1_backreaction_params() {
+    m1_backreaction_params_t m1_backreaction_params ; 
+    m1_backreaction_params.do_backreaction = grace::get_param<bool>("m1", "backreaction", "enabled") ;
+    m1_backreaction_params.t_backreact = grace::get_param<double>("m1", "backreaction", "t_start") ;
+    return m1_backreaction_params ; 
+}
+
 
 }
 
