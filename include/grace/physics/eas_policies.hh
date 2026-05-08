@@ -283,13 +283,13 @@ struct neutrinos_eas_op
         pair_annihilation(grace::get_param<bool>("m1", "eas", "pair_annihilation")),
         apply_temp_correction(grace::get_param<bool>("m1", "eas", "temperature_correction")),
         //KEN turned off weakhub
-        //use_weakhub(parse_use_weakhub_host()),
+        use_weakhub(parse_use_weakhub_host()),
         betaeq_mode(parse_betaeq_mode_host()),
-        tau_kind(parse_tau_kind_host())
+        tau_kind(parse_tau_kind_host()),
         // betaeq_mode(BETAEQ_OFF),
         // tau_kind(TAU_NONE),
         //KEN turned off weakhub
-        //weakhub(grace::weakhub::get_device_handle())
+        weakhub(grace::weakhub::get_device_handle())
     {
     // Host-only parsing: strings are not device-friendly.
     // TODO: parser optimize
@@ -365,8 +365,7 @@ struct neutrinos_eas_op
         tau_policy_analytic_density tau_ana{};
         nu_rates_all_out all{};
     
-        //if (use_weakhub && weakhub.valid) {
-        if (false) {
+        if (use_weakhub && weakhub.valid) {
             switch (tau_kind) {
             case TAU_LOCAL_SPHERICAL:
             all = compute_all_species_weakhub(weakhub, rho, T, Ye, Ymu, mass_scale, plasmon_decay, bremsstrahlung, pair_annihilation, xyz, spherical_tau, apply_temp_correction);

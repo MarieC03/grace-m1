@@ -81,10 +81,12 @@ struct m1_equations_system_t
                         , grace::staggered_variable_arrays_t stag_state_
                         , grace::var_array_t aux_ 
                         , m1_atmo_params_t _atmo_pars 
-                        , m1_excision_params_t _excision_pars )
+                        , m1_excision_params_t _excision_pars 
+                        , m1_backreaction_params_t _backreaction_pars)
     : base_t(state_,stag_state_,aux_)
     , atmo_params(_atmo_pars)
     , excision_params(_excision_pars)
+    , backreaction_params(_backreaction_pars)
     {} ;
 
     /**
@@ -340,7 +342,7 @@ struct m1_equations_system_t
                 : metric.alp() <= excision_params.alp_ex ; 
         double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ; 
         double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ; 
-        if ( cl.E < E_atmo * (1. + 1.e-3 ) ) 
+        if ( cl.E < E_atmo * (1. + 1.e-3 ) || prims[NRADL] < E_atmo * (1. + 1.e-3 )) 
         {
             double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ; 
             this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * atmo_state[0]; 
@@ -363,13 +365,13 @@ struct m1_equations_system_t
         } 
         // Finally check epsilon, if out of range 
         // we adjust **only** Nrad
-        if ( epsilon < atmo_params.eps_min ) {
-            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ; 
-        } else if ( epsilon > atmo_params.eps_max ) {
-            // avoid subnormal 
-            double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ; 
-            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * n ; 
-        }
+        //if ( epsilon < atmo_params.eps_min ) {
+        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ; 
+        //} else if ( epsilon > atmo_params.eps_max ) {
+        //    // avoid subnormal 
+        //    double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ; 
+        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * n ; 
+        //}
         
     }
 
@@ -445,7 +447,7 @@ struct m1_equations_system_t
         } ; 
         /**************************************************************************************************/
         // call rootfinder 
-        unsigned long maxiter = 30 ; 
+        unsigned long maxiter = 100 ; 
         int err = 0; 
         utils::rootfind_nd_newton_raphson<4>(
             func, dfunc, U, maxiter, 1e-15, err
@@ -572,14 +574,21 @@ struct m1_equations_system_t
             }
         
             // ── Energy positivity check ──────────────────────────────────────────
-            bool const energy_good = ( state_new(VEC(i,j,k),TAU_,q) + dE > 0. ) ;
-        
-            if ( energy_good ) {
-                state_new(VEC(i,j,k),TAU_,q) += dE  ;
-                state_new(VEC(i,j,k),SX_,q)  += dSx ;
-                state_new(VEC(i,j,k),SY_,q)  += dSy ;
-                state_new(VEC(i,j,k),SZ_,q)  += dSz ;
-            } else {
+            double const tau_old = state_new(VEC(i,j,k),TAU_,q) ;
+            bool const energy_good = ( tau_old + dE > 0. ) ;
+
+            double const factor_tau = ( dE < 0.0 ) ? ( -tau_old / dE ) : 1.0 ;
+            double const limiting_factor_E = energy_good ? 1.0 :
+                                             ( factor_tau >= 0.0 && factor_tau <= 1.0 ) ? factor_tau * (1.0 - 1e-10) :
+                                             1.0 ;
+
+            // Apply scaled backreaction to hydro
+            state_new(VEC(i,j,k),TAU_,q) += limiting_factor_E * dE  ;
+            state_new(VEC(i,j,k),SX_,q)  += limiting_factor_E * dSx ;
+            state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
+            state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
+            
+            if ( !energy_good ) {
                 // revert all radiation species to old state
                 #pragma unroll
                 for( int ispec = 0; ispec < n_species; ++ispec ) {
@@ -590,7 +599,8 @@ struct m1_equations_system_t
                 }
             }
         #endif
-        
+
+        // We define dN in sense Ye. Old - New. Less nrad_e more ye.
         #ifdef M1_NU_THREESPECIES
         const double dN1 = this->_state(VEC(i,j,k),NRAD1_,q)
            - state_new(VEC(i,j,k),NRAD1_,q) ;
@@ -601,16 +611,30 @@ struct m1_equations_system_t
         double yemax = eos.get_c2p_ye_max();
         double yemin = eos.get_c2p_ye_min();
         double const D        = state_new(VEC(i,j,k),DENS_,q) ;
-        double const dye_new  = state_new(VEC(i,j,k),YESTAR_,q) + dN1 - dN2 ;
+        double const dye_old  = state_new(VEC(i,j,k),YESTAR_,q) ; 
+        double const ye_old   = dye_old / D ;
+        double const dye_new  = dye_old + dN1 - dN2 ;
         double const ye_new   = dye_new / D ;
         bool const number_e_good = ( ye_new >= yemin && ye_new <= yemax ) ;
+
+        double const factor_max = (yemax - ye_old) * D / (dye_new - dye_old) ;
+        double const factor_min = (yemin - ye_old) * D / (dye_new - dye_old) ;
+
+        // Pick the tightest limiting factor, defaulting to 1 if in bounds
+        double const limiting_factor = (factor_max >= 0.0 && factor_max <= 1.0) ? factor_max * (1.0 - 1e-10) :
+                                          (factor_min >= 0.0 && factor_min <= 1.0) ? factor_min * (1.0 - 1e-10) :
+                                          1.0 ;
         
         if ( number_e_good ) {
             state_new(VEC(i,j,k),YESTAR_,q) = dye_new ;
         }
         else {
-            state_new(VEC(i,j,k),NRAD1_,q) = this->_state(VEC(i,j,k),NRAD1_,q);
-            state_new(VEC(i,j,k),NRAD2_,q) = this->_state(VEC(i,j,k),NRAD2_,q);
+            // Scale back the neutrino number updates by the limiting factor
+            state_new(VEC(i,j,k),NRAD1_,q) = this->_state(VEC(i,j,k),NRAD1_,q)
+                                                - limiting_factor * dN1 ;
+            state_new(VEC(i,j,k),NRAD2_,q) = this->_state(VEC(i,j,k),NRAD2_,q)
+                                                - limiting_factor * dN2 ;
+            state_new(VEC(i,j,k),YESTAR_,q) = dye_old + limiting_factor * (dye_new - dye_old) ;
         }
         #endif
         
@@ -618,18 +642,31 @@ struct m1_equations_system_t
         const double dN3 = this->_state(VEC(i,j,k),NRAD3_,q)
            - state_new(VEC(i,j,k),NRAD3_,q) ;
         const double dN4 = this->_state(VEC(i,j,k),NRAD4_,q)
-           - state_new(VEC(i,j,k),NRAD4_,q) ;        
-        // Ymu bounds check — adjust eos_ymumin/big_ymu as appropriate
-        double const dymu_new = state_new(VEC(i,j,k),YMUSTAR_,q) + dN3 - dN4 ;
-        double const ymu_new  = dymu_new / D ;
-        bool const number_mu_good = ( ymu_new >= eos_ymumin && ymu_new <= big_ymu ) ;
+           - state_new(VEC(i,j,k),NRAD4_,q) ;
+        
+        double const ymumax     = eos.get_c2p_ymu_max() ;
+        double const ymumin     = eos.get_c2p_ymu_min() ;
+        double const dymu_old   = state_new(VEC(i,j,k),YMUSTAR_,q) ;
+        double const ymu_old    = dymu_old / D ;
+        double const dymu_new   = dymu_old + (dN3 - dN4) ;
+        double const ymu_new    = dymu_new / D ;
+        bool const number_mu_good = ( ymu_new >= ymumin && ymu_new <= ymumax ) ;
+        
+        double const fac_max_mu = (ymumax - ymu_old) * D / (dymu_new - dymu_old) ;
+        double const fac_min_mu = (ymumin - ymu_old) * D / (dymu_new - dymu_old) ;
+        
+        double const limiting_factor_mu = (fac_max_mu >= 0.0 && fac_max_mu <= 1.0) ? fac_max_mu * (1.0 - 1e-10) :
+                                           (fac_min_mu >= 0.0 && fac_min_mu <= 1.0) ? fac_min_mu * (1.0 - 1e-10) :
+                                           1.0 ;
         
         if ( number_mu_good ) {
             state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_new ;
-        }
-        else {
-            state_new(VEC(i,j,k),NRAD3_,q) = this->_state(VEC(i,j,k),NRAD3_,q);
-            state_new(VEC(i,j,k),NRAD4_,q) = this->_state(VEC(i,j,k),NRAD4_,q);
+        } else {
+            state_new(VEC(i,j,k),NRAD3_,q)   = this->_state(VEC(i,j,k),NRAD3_,q)
+                                              - limiting_factor_mu * dN3 ;
+            state_new(VEC(i,j,k),NRAD4_,q)   = this->_state(VEC(i,j,k),NRAD4_,q)
+                                              - limiting_factor_mu * dN4 ;
+            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old + limiting_factor_mu * (dymu_new - dymu_old) ;
         }
         #endif
     }
@@ -704,6 +741,8 @@ struct m1_equations_system_t
     m1_atmo_params_t atmo_params;
     //! Parameters for excision
     m1_excision_params_t excision_params; 
+    //! Parameters for backreaction
+    m1_backreaction_params_t backreaction_params;
     /***********************************************************************/
     /***********************************************************************/
     /**

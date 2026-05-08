@@ -98,7 +98,7 @@ m1:
     use_analytic:
       type: bool
       default: true
-      descriptio: >
+      description: >
           "Needed right now. Planned to remove"
 
     beta_decay:
@@ -202,3 +202,20 @@ m1:
       range: "(0,*)"
       description: > 
         Cross section for rates
+  backreaction: 
+    type: schema 
+    description: >
+      Parameters controlling emission absorption and scattering rates
+
+    enabled:
+      type: bool
+      default: true
+      description: >
+        Parameter disabling backreaction
+
+    t_start:
+      type: double
+      default: -1
+      range: "[-1,*)"
+      description: >
+        If enabled sets, the time backreaction starts

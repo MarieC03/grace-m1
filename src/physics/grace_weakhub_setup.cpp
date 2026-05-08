@@ -54,15 +54,9 @@ namespace {
 
 bool weakhub_enabled_from_params() {
     bool use_weakhub = false;
-    try { use_weakhub = get_param<bool>("m1","eas","use_weakhub"); } catch(...) {}
-    try {
-        const auto kind = get_param<std::string>("m1","eas","kind");
-        if (kind == "neutrino_weakhub") use_weakhub = true;
-        if (kind == "neutrino_analytic") use_weakhub = false;
-    } catch(...) {}
-    bool use_analytic = false;
-    try { use_analytic = get_param<bool>("m1","eas","use_analytic"); } catch(...) {}
-    if (use_analytic) use_weakhub = false;
+    const auto kind = get_param<std::string>("m1","eas","kind");
+    if (kind == "neutrino_weakhub") use_weakhub = true;
+    if (kind == "neutrino_analytic") use_weakhub = false;
     return use_weakhub;
 }
 

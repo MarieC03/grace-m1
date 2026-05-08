@@ -103,7 +103,8 @@ void compute_auxiliary_quantities(
     #ifdef GRACE_ENABLE_M1 
     m1_excision_params_t m1_excision_params = get_m1_excision_params() ; 
     m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ; 
-    m1_equations_system_t m1_eq_system(state,sstate,aux,m1_atmo_params,m1_excision_params) ; 
+    m1_backreaction_params_t backreaction_params = get_m1_backreaction_params();
+    m1_equations_system_t m1_eq_system(state,sstate,aux,m1_atmo_params,m1_excision_params,backreaction_params) ; 
     #endif 
     auto& coord_system = grace::coordinate_system::get() ; 
     auto dev_coords = coord_system.get_device_coord_system() ; 
