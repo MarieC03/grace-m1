@@ -39,6 +39,7 @@
 #include <grace/IO/diagnostics/diagnostic_base.hh>
 #include <grace/IO/spherical_surfaces.hh>
 
+#include <grace/data_structures/variable_indices.hh>
 
 #include <array>
 #include <vector>
@@ -93,6 +94,82 @@ struct outflows:
         spherical_surface_iface const& detector 
     )  ;
 }; 
+
+
+#ifdef GRACE_ENABLE_M1
+// ---------------------------------------------------------------------------
+/**
+ * @brief Radiation energy and number luminosity through spherical detectors.
+ *
+ * For each registered detector sphere the diagnostic integrates
+ *   L_E^(s) = ∫ (FRADX_s * x/r + FRADY_s * y/r + FRADZ_s * z/r) r² dΩ
+ * per neutrino species s.  The conserved flux variables FRADX/Y/Z already
+ * carry the factor sqrt(g), so the integral is in code-unit energy flux.
+ *
+ * Uses the same "outflows" parameter block (detector_names) as the mass
+ * outflow diagnostic.
+ */
+// ---------------------------------------------------------------------------
+struct m1_outflows :
+    public diagnostic_base_t<m1_outflows>
+{
+    using base_t = diagnostic_base_t<m1_outflows>;
+
+    // Local index into ivals (state variables interpolated to sphere)
+    enum loc_var_idx_t : int {
+        FX1L=0, FY1L, FZ1L,
+#if defined(M1_NU_THREESPECIES)
+        FX2L, FY2L, FZ2L,
+        FX3L, FY3L, FZ3L,
+#elif defined(M1_NU_FIVESPECIES)
+        FX2L, FY2L, FZ2L,
+        FX3L, FY3L, FZ3L,
+        FX4L, FY4L, FZ4L,
+        FX5L, FY5L, FZ5L,
+#endif
+        NUM_VARS
+    };
+
+    // No aux variables needed
+    enum loc_aux_idx_t : int { NUM_AUX = 0 };
+
+    // One luminosity entry per species
+#if defined(M1_NU_THREESPECIES)
+    static constexpr size_t n_fluxes = 3;
+#elif defined(M1_NU_FIVESPECIES)
+    static constexpr size_t n_fluxes = 5;
+#else
+    static constexpr size_t n_fluxes = 1;
+#endif
+
+    static std::vector<std::string> flux_names;
+
+    m1_outflows()
+        : base_t("outflows")   // reuse outflows detector list
+    {
+        // Radiation flux components per species (state array indices)
+        this->var_interp_idx = {FRADX1_, FRADY1_, FRADZ1_
+#if defined(M1_NU_THREESPECIES) || defined(M1_NU_FIVESPECIES)
+            , FRADX2_, FRADY2_, FRADZ2_
+            , FRADX3_, FRADY3_, FRADZ3_
+#endif
+#ifdef M1_NU_FIVESPECIES
+            , FRADX4_, FRADY4_, FRADZ4_
+            , FRADX5_, FRADY5_, FRADZ5_
+#endif
+        };
+        this->aux_interp_idx = {};
+    }
+
+    std::array<double, n_fluxes>
+    compute_local_fluxes(
+        Kokkos::View<double**> ivals_d,
+        Kokkos::View<double**> ivals_aux_d,
+        spherical_surface_iface const& detector
+    );
+};
+#endif /* GRACE_ENABLE_M1 */
+
 
 }
 
