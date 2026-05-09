@@ -47,6 +47,16 @@ namespace grace {
 
 std::vector<std::string> outflows::flux_names = {"Mdot_unbound_geo", "Mdot_unbound_bern", "Mdot_tot"} ; 
 
+#ifdef GRACE_ENABLE_M1
+#if defined(M1_NU_THREESPECIES)
+std::vector<std::string> m1_outflows::flux_names = {"Lrad_nue", "Lrad_nuebar", "Lrad_nux"};
+#elif defined(M1_NU_FIVESPECIES)
+std::vector<std::string> m1_outflows::flux_names = {"Lrad_nue", "Lrad_nuebar", "Lrad_numu", "Lrad_numubar", "Lrad_nux"};
+#else
+std::vector<std::string> m1_outflows::flux_names = {"Lrad_nu1"};
+#endif
+#endif 
+
 std::array<double,outflows::n_fluxes> 
 outflows::compute_local_fluxes(
     Kokkos::View<double**> ivals_d, 
@@ -177,5 +187,92 @@ outflows::compute_local_fluxes(
     return flux_loc;
 }
 
+#ifdef GRACE_ENABLE_M1
+// ---------------------------------------------------------------------------
+// m1_outflows::compute_local_fluxes
+// ---------------------------------------------------------------------------
+std::array<double, m1_outflows::n_fluxes>
+m1_outflows::compute_local_fluxes(
+    Kokkos::View<double**> ivals_d,
+    Kokkos::View<double**> /*ivals_aux_d*/,
+    spherical_surface_iface const& detector)
+{
+    GRACE_VERBOSE("Computing M1 radiation luminosity on sphere {}", detector.name);
+
+    auto npoints = detector.intersecting_points_h.size();
+    std::array<double, n_fluxes> flux_loc{};
+    flux_loc.fill(0.0);
+
+    if (npoints == 0) return flux_loc;
+
+    // Mirror the interpolated state to host
+    auto ivals = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), ivals_d);
+
+    const double r = detector.radius;
+
+    for (int i = 0; i < static_cast<int>(npoints); ++i) {
+        auto ip = detector.intersecting_points_h[i];
+
+        const double x = detector.points_h[ip].second[0];
+        const double y = detector.points_h[ip].second[1];
+        const double z = detector.points_h[ip].second[2];
+        const double r_inv = (r > 0.0) ? (1.0 / r) : 0.0;
+
+        // Unit outward radial normal in Cartesian coordinates
+        const double nx = x * r_inv;
+        const double ny = y * r_inv;
+        const double nz = z * r_inv;
+
+        const double domega = detector.weights_h[ip];
+
+        // Species 0 (nu_e / single-species)
+        {
+            const double Fx = ivals(i, loc_var_idx_t::FX1L);
+            const double Fy = ivals(i, loc_var_idx_t::FY1L);
+            const double Fz = ivals(i, loc_var_idx_t::FZ1L);
+            flux_loc[0] += r * r * domega * (Fx * nx + Fy * ny + Fz * nz);
+        }
+
+#ifdef M1_NU_THREESPECIES
+        // Species 1 (anti-nu_e)
+        {
+            const double Fx = ivals(i, loc_var_idx_t::FX2L);
+            const double Fy = ivals(i, loc_var_idx_t::FY2L);
+            const double Fz = ivals(i, loc_var_idx_t::FZ2L);
+            flux_loc[1] += r * r * domega * (Fx * nx + Fy * ny + Fz * nz);
+        }
+        // Species 2 (nu_x / heavy leptons)
+        {
+            const double Fx = ivals(i, loc_var_idx_t::FX3L);
+            const double Fy = ivals(i, loc_var_idx_t::FY3L);
+            const double Fz = ivals(i, loc_var_idx_t::FZ3L);
+            flux_loc[2] += r * r * domega * (Fx * nx + Fy * ny + Fz * nz);
+        }
+#endif
+
+#ifdef M1_NU_FIVESPECIES
+        // Species 3 (nu_mu)
+        {
+            const double Fx = ivals(i, loc_var_idx_t::FX4L);
+            const double Fy = ivals(i, loc_var_idx_t::FY4L);
+            const double Fz = ivals(i, loc_var_idx_t::FZ4L);
+            flux_loc[3] += r * r * domega * (Fx * nx + Fy * ny + Fz * nz);
+        }
+        // Species 4 (anti-nu_mu)
+        {
+            const double Fx = ivals(i, loc_var_idx_t::FX5L);
+            const double Fy = ivals(i, loc_var_idx_t::FY5L);
+            const double Fz = ivals(i, loc_var_idx_t::FZ5L);
+            flux_loc[4] += r * r * domega * (Fx * nx + Fy * ny + Fz * nz);
+        }
+#endif
+    }
+
+    const int sym_mult = scalar_symmetry_multiplier();
+    for (auto& f : flux_loc) f *= sym_mult;
+
+    return flux_loc;
+}
+#endif /* GRACE_ENABLE_M1 */
 
 }
