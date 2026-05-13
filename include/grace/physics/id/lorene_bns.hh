@@ -312,15 +312,15 @@ struct lorene_bns_id_t {
                 // ID for this to be self-consistent.
                 double h, csnd2 ;
                 id.temp = temp_atm ;
-                id.press = _eos.press_eps_csnd2_entropy__temp_rho_ye_impl(
-                    id.eps, csnd2, id.entropy, id.temp, id.rho, id.ye, eos_err
+                id.press = _eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                    id.eps, csnd2, id.entropy, id.temp, id.rho, id.ye, id.ymu, eos_err
                 ) ;
             } else {
                 // get pressure and the rest assuming eps from
                 // the ID is good enough
                 double h, csnd2 ;
                 id.press = _eos.press_h_csnd2_temp_entropy__eps_rho_ye(
-                    h, csnd2, id.temp, id.entropy, id.eps, id.rho, id.ye, eos_err
+                    h, csnd2, id.temp, id.entropy, id.eps, id.rho, id.ye, id.ymu, eos_err
                 ) ;
             }
 
