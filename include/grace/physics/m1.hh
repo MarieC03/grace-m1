@@ -1,28 +1,28 @@
 /**
  * @file m1.hh
  * @author Carlo Musolino (carlo.musolino@aei.mpg.de)
- * @brief 
+ * @brief
  * @date 2025-11-26
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 #ifndef GRACE_PHYSICS_M1_HH
 #define GRACE_PHYSICS_M1_HH
@@ -51,18 +51,18 @@
 #include <type_traits>
 
 namespace grace {
-//**************************************************************************************************/ 
+//**************************************************************************************************/
 //**************************************************************************************************
 /**
  * @brief M1 equations system.
- * \ingroup physics 
+ * \ingroup physics
  */
 //**************************************************************************************************/
 struct m1_equations_system_t
     : public hrsc_evolution_system_t<m1_equations_system_t>
 {
     private:
-    //! Base class type 
+    //! Base class type
     using base_t = hrsc_evolution_system_t<m1_equations_system_t>;
     #ifdef M1_NU_FIVESPECIES
     static constexpr std::array<int,5> ye_coupling_sign {1,-1,1,-1,0} ;
@@ -75,13 +75,13 @@ struct m1_equations_system_t
                         , grace::staggered_variable_arrays_t stag_state_
                         , grace::var_array_t aux_ )
     : base_t(state_,stag_state_,aux_)
-    {} ; 
+    {} ;
 
     m1_equations_system_t(grace::var_array_t state_
                         , grace::staggered_variable_arrays_t stag_state_
-                        , grace::var_array_t aux_ 
-                        , m1_atmo_params_t _atmo_pars 
-                        , m1_excision_params_t _excision_pars 
+                        , grace::var_array_t aux_
+                        , m1_atmo_params_t _atmo_pars
+                        , m1_excision_params_t _excision_pars
                         , m1_backreaction_params_t _backreaction_pars)
     : base_t(state_,stag_state_,aux_)
     , atmo_params(_atmo_pars)
@@ -91,7 +91,7 @@ struct m1_equations_system_t
 
     /**
      * @brief Compute M1 fluxes in direction \f$x^1\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -103,22 +103,22 @@ struct m1_equations_system_t
      * @param fluxes Flux array.
      */
     template< typename recon_t, int ispec >
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_x_flux( int const q 
-                       , VEC( const int i 
-                       ,      const int j 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_x_flux( int const q
+                       , VEC( const int i
+                       ,      const int j
                        ,      const int k)
                        , grace::flux_array_t const  fluxes
                        , grace::flux_array_t const  vbar
                        , grace::scalar_array_t<GRACE_NSPACEDIM> const dx
-                       , double const dt 
-                       , double const dtfact ) const 
+                       , double const dt
+                       , double const dtfact ) const
     {
         getflux<0,ispec,recon_t>(VEC(i,j,k),q,fluxes,dx,dt,dtfact);
     }
     /**
      * @brief Compute M1 fluxes in direction \f$x^2\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -130,22 +130,22 @@ struct m1_equations_system_t
      * @param fluxes Flux array.
      */
     template< typename recon_t, int ispec >
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_y_flux( int const q 
-                       , VEC( const int i 
-                       ,      const int j 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_y_flux( int const q
+                       , VEC( const int i
+                       ,      const int j
                        ,      const int k)
                        , grace::flux_array_t const  fluxes
                        , grace::flux_array_t const  vbar
                        , grace::scalar_array_t<GRACE_NSPACEDIM> const dx
-                       , double const dt 
+                       , double const dt
                        , double const dtfact ) const
     {
         getflux<1,ispec,recon_t>(VEC(i,j,k),q,fluxes,dx,dt,dtfact);
     }
     /**
      * @brief Compute M1 fluxes in direction \f$x^3\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -157,24 +157,24 @@ struct m1_equations_system_t
      * @param fluxes Flux array.
      */
     template< typename recon_t, int ispec >
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_z_flux( int const q 
-                       , VEC( const int i 
-                       ,      const int j 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_z_flux( int const q
+                       , VEC( const int i
+                       ,      const int j
                        ,      const int k)
                        , grace::flux_array_t const  fluxes
                        , grace::flux_array_t const  vbar
                        , grace::scalar_array_t<GRACE_NSPACEDIM> const dx
-                       , double const dt 
+                       , double const dt
                        , double const dtfact ) const
     {
         getflux<2,ispec,recon_t>(VEC(i,j,k),q,fluxes,dx,dt,dtfact);
     }
-    
+
 
     /**
      * @brief Compute geometric source terms for M1 equations.
-     * 
+     *
      * @tparam thread_team_t Thread team type.
      * @param team Thread team.
      * @param i Cell index in \f$x^1\f$ direction.
@@ -186,15 +186,15 @@ struct m1_equations_system_t
      * @param dtfact Timestep factor.
      */
     template< int ispec >
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_source_terms( const int q 
-                         , VEC( const int i 
-                         ,      const int j 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_source_terms( const int q
+                         , VEC( const int i
+                         ,      const int j
                          ,      const int k)
                          , grace::scalar_array_t<GRACE_NSPACEDIM> const idx
                          , grace::var_array_t const state_new
-                         , double const dt 
-                         , double const dtfact ) const 
+                         , double const dt
+                         , double const dtfact ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
@@ -203,79 +203,79 @@ struct m1_equations_system_t
         /**************************************************************************************************/
         /* Read in the metric                                                                             */
         /**************************************************************************************************/
-        metric_array_t metric ; 
-        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;     
+        metric_array_t metric ;
+        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
         /**************************************************************************************************/
         /**************************************************************************************************/
-        // construct closure and get pressure 
-        m1_prims_array_t prims ; 
-        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ; 
-        prims[ERADL] /= metric.sqrtg() ; 
-        prims[NRADL] /= metric.sqrtg() ; 
-        prims[FXL]   /= metric.sqrtg() ; 
-        prims[FYL]   /= metric.sqrtg() ; 
-        prims[FZL]   /= metric.sqrtg() ; 
+        // construct closure and get pressure
+        m1_prims_array_t prims ;
+        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ;
+        prims[ERADL] /= metric.sqrtg() ;
+        prims[NRADL] /= metric.sqrtg() ;
+        prims[FXL]   /= metric.sqrtg() ;
+        prims[FYL]   /= metric.sqrtg() ;
+        prims[FZL]   /= metric.sqrtg() ;
 
         m1_closure_t cl{prims,metric} ;
-        cl.update_closure(0.) ; 
-        cl.compute_pressure() ; 
+        cl.update_closure(0.) ;
+        cl.compute_pressure() ;
         /**************************************************************************************************/
-        auto const& PUU            = cl.PUU              ; 
-        double const E             = cl.E                ; 
+        auto const& PUU            = cl.PUU              ;
+        double const E             = cl.E                ;
         double const * const Fu    = cl.FU.data()        ;
         double const * const Fd    = cl.FD.data()        ;
-        double const * const betau = metric._beta.data() ; 
-        double const * const gdd   = metric._g.data()    ; 
-        double const * const guu   = metric._ginv.data() ; 
-        double const sqrtg         = metric.sqrtg()      ; 
+        double const * const betau = metric._beta.data() ;
+        double const * const gdd   = metric._g.data()    ;
+        double const * const guu   = metric._ginv.data() ;
+        double const sqrtg         = metric.sqrtg()      ;
         double const alp           = metric.alp()        ;
         /**************************************************************************************************/
         /* Metric derivatives                                                                             */
         /**************************************************************************************************/
-        double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9] ; 
-        fill_deriv_scalar(this->_state, i,j,k, ALP_, q, dalpha_dx, idx(0,q)) ; 
+        double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9] ;
+        fill_deriv_scalar(this->_state, i,j,k, ALP_, q, dalpha_dx, idx(0,q)) ;
         fill_deriv_vector(this->_state, i,j,k, BETAX_, q, dbetau_dx, idx(0,q)) ;
         #ifdef GRACE_ENABLE_COWLING_METRIC
         fill_deriv_tensor(this->_state, i,j,k, GXX_, q, dgdd_dx, idx(0,q)) ;
-        #else 
-        double chi = s(CHI_) ; 
-        double oochi = 1./fmax(1e-15,chi) ; 
-        double dchi_dx[3] ; 
+        #else
+        double chi = s(CHI_) ;
+        double oochi = 1./Kokkos::fmax(1e-15,chi) ;
+        double dchi_dx[3] ;
         fill_deriv_scalar(this->_state, i,j,k, CHI_, q, dchi_dx, idx(0,q)) ;
         fill_deriv_tensor(this->_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
         // gdd = gtdd/chi
-        // dgdd/dx = dgtdd/dx / chi - gdd / chi dchi/dx 
+        // dgdd/dx = dgtdd/dx / chi - gdd / chi dchi/dx
         for( int idir=0; idir<3; ++idir) {
             for( int a=0; a<6; ++a) {
-                dgdd_dx[a + 6*idir] = oochi * ( dgdd_dx[a + 6*idir] - gdd[a] * dchi_dx[idir] ); 
+                dgdd_dx[a + 6*idir] = oochi * ( dgdd_dx[a + 6*idir] - gdd[a] * dchi_dx[idir] );
             }
         }
-        #endif 
+        #endif
         /**************************************************************************************************/
         /* Extrinsic curvature                                                                            */
         /**************************************************************************************************/
-        double Kdd[6] ; 
+        double Kdd[6] ;
         #ifdef GRACE_ENABLE_COWLING_METRIC
-        Kdd[0] = s(KXX_) ; Kdd[1] = s(KXY_) ; Kdd[2] = s(KXZ_) ; 
-        Kdd[3] = s(KYY_) ; Kdd[4] = s(KYZ_) ; Kdd[5] = s(KZZ_) ; 
+        Kdd[0] = s(KXX_) ; Kdd[1] = s(KXY_) ; Kdd[2] = s(KXZ_) ;
+        Kdd[3] = s(KYY_) ; Kdd[4] = s(KYZ_) ; Kdd[5] = s(KZZ_) ;
         #else
-        double Atdd[6] = { 
+        double Atdd[6] = {
               s(ATXX_), s(ATXY_), s(ATXZ_),
               s(ATYY_), s(ATYZ_), s(ATZZ_)
         } ;
         #ifdef GRACE_ENABLE_Z4C_METRIC
         double const Khat  = s(KHAT_);
         double const theta = s(THETA_);
-        double const Ktr = Khat + 2. * theta ; 
+        double const Ktr = Khat + 2. * theta ;
         #elif defined(GRACE_ENABLE_BSSN_METRIC)
-        double const Ktr = s(KTR_) ; 
-        #endif 
+        double const Ktr = s(KTR_) ;
+        #endif
         for( int a=0; a<6; ++a ) {
-            Kdd[a] = oochi * Atdd[a] + Ktr * gdd[a] / 3. ; 
+            Kdd[a] = oochi * Atdd[a] + Ktr * gdd[a] / 3. ;
         }
-        #endif 
+        #endif
         /**************************************************************************************************/
-        double dE, dF[3] ; 
+        double dE, dF[3] ;
         m1_geom_source_terms(
             E, Fd, Fu, alp, Kdd,
             dalpha_dx, dgdd_dx, dbetau_dx, PUU,
@@ -291,269 +291,269 @@ struct m1_equations_system_t
 
     /**
      * @brief Compute M1 auxiliary quantities.
-     * 
+     *
      * @param i Cell index in \f$x^1\f$ direction.
      * @param j Cell index in \f$x^2\f$ direction.
      * @param k Cell index in \f$x^3\f$ direction.
      * @param q Quadrant index.
      */
     template< int ispec >
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_auxiliaries(  VEC( const int i 
-                        ,      const int j 
-                        ,      const int k) 
-                        , int64_t q 
-                        , grace::device_coordinate_system coords) const 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_auxiliaries(  VEC( const int i
+                        ,      const int j
+                        ,      const int k)
+                        , int64_t q
+                        , grace::device_coordinate_system coords) const
     {
         using namespace grace ;
-        using namespace Kokkos ; 
+        using namespace Kokkos ;
 
-        double rtp[3] ; 
-        coords.get_physical_coordinates_sph(i,j,k,q,rtp) ; 
+        double rtp[3] ;
+        coords.get_physical_coordinates_sph(i,j,k,q,rtp) ;
 
 
-        m1_prims_array_t prims ; 
-        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ; 
-        
-        metric_array_t metric; 
-        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ; 
+        m1_prims_array_t prims ;
+        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ;
+
+        metric_array_t metric;
+        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
 
         prims[ERADL] /= metric.sqrtg() ;
-        prims[NRADL] /= metric.sqrtg() ; 
-        prims[FXL] /= metric.sqrtg() ; 
-        prims[FYL] /= metric.sqrtg() ; 
-        prims[FZL] /= metric.sqrtg() ; 
+        prims[NRADL] /= metric.sqrtg() ;
+        prims[FXL] /= metric.sqrtg() ;
+        prims[FYL] /= metric.sqrtg() ;
+        prims[FZL] /= metric.sqrtg() ;
 
         m1_closure_t cl{
             prims, metric
-        } ; 
-        cl.update_closure(0) ; 
+        } ;
+        cl.update_closure(0) ;
         // rescale if superluminal
         if ( cl.F >= cl.E ) {
-            double fact = 0.9999 * cl.E / cl.F ; 
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) *= fact ; 
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) *= fact ; 
-            this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) *= fact ; 
+            double fact = 0.9999 * cl.E / cl.F ;
+            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
+            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
+            this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
         }
-        // compute radiation avg energy 
-        double epsilon = cl.J / prims[NRADL] * cl.Gamma ; 
-        // Set atmosphere / excision 
-        double r = rtp[0] ; 
-        bool excise = excision_params.excise_by_radius 
-                ? r <= excision_params.r_ex 
-                : metric.alp() <= excision_params.alp_ex ; 
-        double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ; 
-        double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ; 
-        if ( cl.E < E_atmo * (1. + 1.e-3 ) || prims[NRADL] < E_atmo * (1. + 1.e-3 )) 
+        // compute radiation avg energy
+        double epsilon = cl.J / prims[NRADL] * cl.Gamma ;
+        // Set atmosphere / excision
+        double r = rtp[0] ;
+        bool excise = excision_params.excise_by_radius
+                ? r <= excision_params.r_ex
+                : metric.alp() <= excision_params.alp_ex ;
+        double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ;
+        double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ;
+        if ( cl.E < E_atmo * (1. + 1.e-3 ) || prims[NRADL] < E_atmo * (1. + 1.e-3 ))
         {
-            double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ; 
-            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * atmo_state[0]; 
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[1] ; 
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[2] ; 
+            double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ;
+            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * atmo_state[0];
+            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[1] ;
+            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[2] ;
             this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[3] ;
-            // We set N in order to ensure a sensible average energy 
-            cl.update_closure(atmo_state,0,true) ; 
-            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / eps_atmo ; 
-            epsilon = eps_atmo ; 
+            // We set N in order to ensure a sensible average energy
+            cl.update_closure(atmo_state,0,true) ;
+            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / eps_atmo ;
+            epsilon = eps_atmo ;
         } else if ( excise ) {
-            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * excision_params.E_ex ; 
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ; 
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ; 
+            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * excision_params.E_ex ;
+            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
+            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
             this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
             // here since we are in excision it's safe to assume v^i == 0 :
-            // Gamma == 1 and N = sqrtg E / eps_target 
+            // Gamma == 1 and N = sqrtg E / eps_target
             this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
-            epsilon = excision_params.eps_ex;  
-        } 
-        // Finally check epsilon, if out of range 
+            epsilon = excision_params.eps_ex;
+        }
+        // Finally check epsilon, if out of range
         // we adjust **only** Nrad
         //if ( epsilon < atmo_params.eps_min ) {
-        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ; 
+        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ;
         //} else if ( epsilon > atmo_params.eps_max ) {
-        //    // avoid subnormal 
-        //    double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ; 
-        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * n ; 
+        //    // avoid subnormal
+        //    double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ;
+        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * n ;
         //}
-        
+
     }
 
     /**
      * @brief Compute M1 implicit update.
-     * 
+     *
      * @param i Cell index in \f$x^1\f$ direction.
      * @param j Cell index in \f$x^2\f$ direction.
      * @param k Cell index in \f$x^3\f$ direction.
      * @param q Quadrant index.
      */
     template< int ispec >
-    void KOKKOS_INLINE_FUNCTION 
-    compute_implicit_update( const int q 
-                         , VEC( const int i 
-                         ,      const int j 
+    void KOKKOS_INLINE_FUNCTION
+    compute_implicit_update( const int q
+                         , VEC( const int i
+                         ,      const int j
                          ,      const int k)
                          , grace::scalar_array_t<GRACE_NSPACEDIM> const idx
                          , grace::var_array_t const state_new
-                         , double const dt 
-                         , double const dtfact ) const 
+                         , double const dt
+                         , double const dtfact ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
         /**************************************************************************************************/
         /* Read in the metric                                                                             */
-        metric_array_t metric ; 
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
         /**************************************************************************************************/
-        // read in eas 
-        m1_eas_array_t eas ; 
-        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ; 
+        // read in eas
+        m1_eas_array_t eas ;
+        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ;
         /**************************************************************************************************/
         // construct closure and update
-        m1_prims_array_t prims ; 
-        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ; 
-        prims[ERADL] /= metric.sqrtg() ; 
-        prims[NRADL] /= metric.sqrtg() ; 
-        prims[FXL] /= metric.sqrtg(); 
-        prims[FYL] /= metric.sqrtg(); 
-        prims[FZL] /= metric.sqrtg(); 
+        m1_prims_array_t prims ;
+        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ;
+        prims[ERADL] /= metric.sqrtg() ;
+        prims[NRADL] /= metric.sqrtg() ;
+        prims[FXL] /= metric.sqrtg();
+        prims[FYL] /= metric.sqrtg();
+        prims[FZL] /= metric.sqrtg();
 
         m1_closure_t cl{prims,metric} ;
         cl.update_closure(0.) ;
         /**************************************************************************************************/
-        // store explicitly updated state 
-        double  W[4]  ; 
-        W[0] = prims[ERADL] ; W[1] = prims[FXL] ; W[2] = prims[FYL] ; W[3] = prims[FZL] ;   
+        // store explicitly updated state
+        double  W[4]  ;
+        W[0] = prims[ERADL] ; W[1] = prims[FXL] ; W[2] = prims[FYL] ; W[3] = prims[FZL] ;
         /**************************************************************************************************/
-        // construct the initial guess 
-        double  U[4]  ; 
+        // construct the initial guess
+        double  U[4]  ;
         cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
-        //U[0] = ( prims[ERADL] + dt * dtfact * eas[ETAL]) / ( 1. + dt * dtfact * eas[KAL]) ; 
+        //U[0] = ( prims[ERADL] + dt * dtfact * eas[ETAL]) / ( 1. + dt * dtfact * eas[KAL]) ;
         #if 0
         if ( i == 4 and j == 4 and k == 4 ) {
-            printf("E_guess %.16g eta %.16g kappa %.16g \n", U[0], eas[ETAL], eas[KAL]) ; 
+            printf("E_guess %.16g eta %.16g kappa %.16g \n", U[0], eas[ETAL], eas[KAL]) ;
         }
-        #endif 
-        // take a pointer so we can capture it 
-        // in the lambda 
-        m1_closure_t* pcl = &cl; 
+        #endif
+        // take a pointer so we can capture it
+        // in the lambda
+        m1_closure_t* pcl = &cl;
         /**************************************************************************************************/
-        // construct the lambdas for the evaluation of the update 
+        // construct the lambdas for the evaluation of the update
         auto const func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
-            pcl->implicit_update_func(eas,u,W,s,dt,dtfact) ; 
-        } ; 
+            pcl->implicit_update_func(eas,u,W,s,dt,dtfact) ;
+        } ;
         auto const dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
-            pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ; 
-        } ; 
+            pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
+        } ;
         /**************************************************************************************************/
-        // call rootfinder 
-        unsigned long maxiter = 200 ; 
-        int err = 0; 
+        // call rootfinder
+        unsigned long maxiter = 200 ;
+        int err = 0;
         utils::rootfind_nd_newton_raphson<4>(
             func, dfunc, U, maxiter, 1e-15, err
-        ) ; 
+        ) ;
         /**************************************************************************************************/
         if ( err != utils::nr_err_t::SUCCESS ) {
-            // assume optically thick closure and 
-            // repeat 
+            // assume optically thick closure and
+            // repeat
             cl.update_closure(prims,0.,false /*nb no update here*/) ;
 
             cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
 
             auto const fixed_closure_func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
-                pcl->implicit_update_func(eas,u,W,s,dt,dtfact,false) ; 
-            } ; 
+                pcl->implicit_update_func(eas,u,W,s,dt,dtfact,false) ;
+            } ;
             auto const fixed_closure_dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
-                pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ; 
-            } ; 
+                pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
+            } ;
             utils::rootfind_nd_newton_raphson<4>(
                 fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
-            ) ; 
-            // if we failed again we just take a linear step and call it 
+            ) ;
+            // if we failed again we just take a linear step and call it
             if ( err != utils::nr_err_t::SUCCESS ) {
-                cl.update_closure(prims,0,true) ; 
-                cl.get_implicit_update_initial_guess(eas, U, dt, dtfact); 
+                cl.update_closure(prims,0,true) ;
+                cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
             }
         }
-        // the compiler seems to sometimes think U is never 
+        // the compiler seems to sometimes think U is never
         // modified and just elides the whole function....
         volatile double U0 = U[0];
         volatile double U1 = U[1];
         volatile double U2 = U[2];
         volatile double U3 = U[3];
         /**************************************************************************************************/
-        // write back to the new state 
+        // write back to the new state
         #define VOLATILE_WRITE(ivar,val) \
         state_new(i,j,k,ivar,q) = val
-        //VOLATILE_WRITE(ERAD_ , metric.sqrtg() * U0) ; 
-        //VOLATILE_WRITE(FRADX_, metric.sqrtg() * U1) ; 
-        //VOLATILE_WRITE(FRADY_, metric.sqrtg() * U2) ; 
-        //VOLATILE_WRITE(FRADZ_, metric.sqrtg() * U3) ; 
-        state_new(i,j,k,ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * U[0] ; 
-        state_new(i,j,k,FRADX1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[1] ; 
-        state_new(i,j,k,FRADY1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[2] ; 
-        state_new(i,j,k,FRADZ1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[3] ; 
+        //VOLATILE_WRITE(ERAD_ , metric.sqrtg() * U0) ;
+        //VOLATILE_WRITE(FRADX_, metric.sqrtg() * U1) ;
+        //VOLATILE_WRITE(FRADY_, metric.sqrtg() * U2) ;
+        //VOLATILE_WRITE(FRADZ_, metric.sqrtg() * U3) ;
+        state_new(i,j,k,ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * U[0] ;
+        state_new(i,j,k,FRADX1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[1] ;
+        state_new(i,j,k,FRADY1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[2] ;
+        state_new(i,j,k,FRADZ1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[3] ;
         /**************************************************************************************************/
         //#ifndef GRACE_FREEZE_HYDRO
-        //double const dE = this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ; 
-        //state_new(VEC(i,j,k),TAU_,q) += dE ; 
+        //double const dE = this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //state_new(VEC(i,j,k),TAU_,q) += dE ;
         //double const dSx = this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) ;
-        //state_new(VEC(i,j,k),SX_,q) += dSx ; 
+        //state_new(VEC(i,j,k),SX_,q) += dSx ;
         //double const dSy = this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
-        //state_new(VEC(i,j,k),SY_,q) += dSy ; 
-        //double const dSz = this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ; 
-        //state_new(VEC(i,j,k),SZ_,q) += dSz ; 
+        //state_new(VEC(i,j,k),SY_,q) += dSy ;
+        //double const dSz = this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
+        //state_new(VEC(i,j,k),SZ_,q) += dSz ;
         //#endif
         /**************************************************************************************************/
         // Number source is linear
-        // we need to update the closure on the starred state 
-        // to get the correct Gamma factor! 
-        double N, dN ; 
-        cl.update_closure(U0, {U1,U2,U3},0,true) ; 
+        // we need to update the closure on the starred state
+        // to get the correct Gamma factor!
+        double N, dN ;
+        cl.update_closure(U0, {U1,U2,U3},0,true) ;
         // prims here are **not** the implicitly updated ones
         cl.get_N_implicit_update(
-            prims, eas, dt, dtfact, &N, &dN 
-        ) ; 
-        //VOLATILE_WRITE(NRAD_,metric.sqrtg()*N) ; 
-        state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * N ; 
+            prims, eas, dt, dtfact, &N, &dN
+        ) ;
+        //VOLATILE_WRITE(NRAD_,metric.sqrtg()*N) ;
+        state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * N ;
         /**************************************************************************************************/
-        // if needed add dN to ye here! 
+        // if needed add dN to ye here!
         //#ifdef M1_NU_THREESPECIES
         //if constexpr ( ispec == 0 || ispec == 1) {
-        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ; 
-        //state_new(VEC(i,j,k),YESTAR_,q) += ye_coupling_sign[ispec] * dN ; 
+        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //state_new(VEC(i,j,k),YESTAR_,q) += ye_coupling_sign[ispec] * dN ;
         //}
-        //#endif 
+        //#endif
         ////KEN may have done a mistake, or at least not nice code
         //#ifdef M1_NU_FIVESPECIES
         //if constexpr ( ispec == 2 || ispec == 3) {
-        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ; 
-        //state_new(VEC(i,j,k),YMUSTAR_,q) += ye_coupling_sign[ispec] * dN ; 
+        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //state_new(VEC(i,j,k),YMUSTAR_,q) += ye_coupling_sign[ispec] * dN ;
         //}
-        //#endif 
+        //#endif
         //#if 0
         //if ( i == 4 and j == 4 and k == 4 ) {
-        //    printf("E_old %.16g E_new %.16g eta %.16g kappa %.16g \n", prims[ERADL], U[0], eas[ETAL], eas[KAL]) ; 
+        //    printf("E_old %.16g E_new %.16g eta %.16g kappa %.16g \n", prims[ERADL], U[0], eas[ETAL], eas[KAL]) ;
         //}
-        //#endif 
+        //#endif
     }
 
     template< typename eos_t >
-    void KOKKOS_INLINE_FUNCTION 
-    add_backreaction( const int q 
-                         , VEC( const int i 
-                         ,      const int j 
+    void KOKKOS_INLINE_FUNCTION
+    add_backreaction( const int q
+                         , VEC( const int i
+                         ,      const int j
                          ,      const int k)
                          , grace::scalar_array_t<GRACE_NSPACEDIM> const idx
-                         , grace::var_array_t const state_new ) const 
+                         , grace::var_array_t const state_new ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
         /**************************************************************************************************/
         /* Read in the metric                                                                             */
-        metric_array_t metric ; 
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
 
         eos_t eos;
@@ -574,7 +574,7 @@ struct m1_equations_system_t
                 dSy += this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
                 dSz += this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
             }
-        
+
             // ── Energy positivity check ──────────────────────────────────────────
             double const tau_old = state_new(VEC(i,j,k),TAU_,q) ;
             bool const energy_good = ( tau_old + dE > 0. ) ;
@@ -589,7 +589,7 @@ struct m1_equations_system_t
             state_new(VEC(i,j,k),SX_,q)  += limiting_factor_E * dSx ;
             state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
             state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
-            
+
             if ( !energy_good ) {
                 // revert all radiation species to old state
                 #pragma unroll
@@ -608,12 +608,12 @@ struct m1_equations_system_t
            - state_new(VEC(i,j,k),NRAD1_,q) ;
         const double dN2 = this->_state(VEC(i,j,k),NRAD2_,q)
            - state_new(VEC(i,j,k),NRAD2_,q) ;
-        
+
         // Ye bounds check
         double yemax = eos.get_c2p_ye_max();
         double yemin = eos.get_c2p_ye_min();
         double const D        = state_new(VEC(i,j,k),DENS_,q) ;
-        double const dye_old  = state_new(VEC(i,j,k),YESTAR_,q) ; 
+        double const dye_old  = state_new(VEC(i,j,k),YESTAR_,q) ;
         double const ye_old   = dye_old / D ;
         double const dye_new  = dye_old + dN1 - dN2 ;
         double const ye_new   = dye_new / D ;
@@ -626,7 +626,7 @@ struct m1_equations_system_t
         double const limiting_factor = (factor_max >= 0.0 && factor_max <= 1.0) ? factor_max * (1.0 - 1e-10) :
                                           (factor_min >= 0.0 && factor_min <= 1.0) ? factor_min * (1.0 - 1e-10) :
                                           1.0 ;
-        
+
         if ( number_e_good ) {
             state_new(VEC(i,j,k),YESTAR_,q) = dye_new ;
         }
@@ -639,13 +639,13 @@ struct m1_equations_system_t
             state_new(VEC(i,j,k),YESTAR_,q) = dye_old + limiting_factor * (dye_new - dye_old) ;
         }
         #endif
-        
+
         #ifdef M1_NU_FIVESPECIES
         const double dN3 = this->_state(VEC(i,j,k),NRAD3_,q)
            - state_new(VEC(i,j,k),NRAD3_,q) ;
         const double dN4 = this->_state(VEC(i,j,k),NRAD4_,q)
            - state_new(VEC(i,j,k),NRAD4_,q) ;
-        
+
         double const ymumax     = eos.get_c2p_ymu_max() ;
         double const ymumin     = eos.get_c2p_ymu_min() ;
         double const dymu_old   = state_new(VEC(i,j,k),YMUSTAR_,q) ;
@@ -653,14 +653,14 @@ struct m1_equations_system_t
         double const dymu_new   = dymu_old + (dN3 - dN4) ;
         double const ymu_new    = dymu_new / D ;
         bool const number_mu_good = ( ymu_new >= ymumin && ymu_new <= ymumax ) ;
-        
+
         double const fac_max_mu = (ymumax - ymu_old) * D / (dymu_new - dymu_old) ;
         double const fac_min_mu = (ymumin - ymu_old) * D / (dymu_new - dymu_old) ;
-        
+
         double const limiting_factor_mu = (fac_max_mu >= 0.0 && fac_max_mu <= 1.0) ? fac_max_mu * (1.0 - 1e-10) :
                                            (fac_min_mu >= 0.0 && fac_min_mu <= 1.0) ? fac_min_mu * (1.0 - 1e-10) :
                                            1.0 ;
-        
+
         if ( number_mu_good ) {
             state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_new ;
         } else {
@@ -675,7 +675,7 @@ struct m1_equations_system_t
 
     /**
      * @brief Compute maximum absolute value eigenspeed.
-     * 
+     *
      * @param i Cell index in \f$x^1\f$ direction.
      * @param j Cell index in \f$x^2\f$ direction.
      * @param k Cell index in \f$x^3\f$ direction.
@@ -684,72 +684,72 @@ struct m1_equations_system_t
      */
     template< int ispec >
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
-    compute_max_eigenspeed( VEC( const int i 
-                          ,      const int j 
-                          ,      const int k) 
-                          , int64_t q ) const 
+    compute_max_eigenspeed( VEC( const int i
+                          ,      const int j
+                          ,      const int k)
+                          , int64_t q ) const
     {
-        using namespace grace; 
-        using namespace Kokkos ; 
+        using namespace grace;
+        using namespace Kokkos ;
         /**************************************************************************************************/
         /* Read in the metric                                                                             */
-        metric_array_t metric ; 
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
         /**************************************************************************************************/
-        // read in eas 
-        m1_eas_array_t eas ; 
-        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ; 
-        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ; 
+        // read in eas
+        m1_eas_array_t eas ;
+        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ;
         /**************************************************************************************************/
         // construct closure and update
-        m1_prims_array_t prims ; 
-        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ; 
-        prims[ERADL] /= metric.sqrtg() ; 
-        prims[NRADL] /= metric.sqrtg() ; 
-        prims[FXL] /= metric.sqrtg(); 
-        prims[FYL] /= metric.sqrtg(); 
-        prims[FZL] /= metric.sqrtg(); 
+        m1_prims_array_t prims ;
+        FILL_M1_PRIMS_ARRAY(prims,this->_state,this->_aux,q,ispec,VEC(i,j,k)) ;
+        prims[ERADL] /= metric.sqrtg() ;
+        prims[NRADL] /= metric.sqrtg() ;
+        prims[FXL] /= metric.sqrtg();
+        prims[FYL] /= metric.sqrtg();
+        prims[FZL] /= metric.sqrtg();
 
         m1_closure_t cl{prims,metric} ;
         cl.update_closure(0.) ;
         /**************************************************************************************************/
-        double cmax=0. ; 
+        double cmax=0. ;
         {
-            double cp, cm ; 
-            compute_cp_cm<0>(cp,cm,cl,metric) ; 
-            cmax = fmax(cmax,fmax(fabs(cp),fabs(cm))) ; 
+            double cp, cm ;
+            compute_cp_cm<0>(cp,cm,cl,metric) ;
+            cmax = Kokkos::fmax(cmax,Kokkos::fmax(Kokkos::fabs(cp),Kokkos::fabs(cm))) ;
         }
         {
-            double cp, cm ; 
-            compute_cp_cm<1>(cp,cm,cl,metric) ; 
-            cmax = fmax(cmax,fmax(fabs(cp),fabs(cm))) ; 
+            double cp, cm ;
+            compute_cp_cm<1>(cp,cm,cl,metric) ;
+            cmax = Kokkos::fmax(cmax,Kokkos::fmax(Kokkos::fabs(cp),Kokkos::fabs(cm))) ;
         }
         {
-            double cp, cm ; 
-            compute_cp_cm<2>(cp,cm,cl,metric) ; 
-            cmax = fmax(cmax,fmax(fabs(cp),fabs(cm))) ; 
+            double cp, cm ;
+            compute_cp_cm<2>(cp,cm,cl,metric) ;
+            cmax = Kokkos::fmax(cmax,Kokkos::fmax(Kokkos::fabs(cp),Kokkos::fabs(cm))) ;
         }
-        return cmax ; 
+        return cmax ;
     }
     private:
     /***********************************************************************/
     //! Number of reconstructed variables.
-    static constexpr unsigned int M1_NUM_RECON_VARS = 7 ; 
-  
+    static constexpr unsigned int M1_NUM_RECON_VARS = 7 ;
+
     //! Parameters for atmosphere
     m1_atmo_params_t atmo_params;
     //! Parameters for excision
-    m1_excision_params_t excision_params; 
+    m1_excision_params_t excision_params;
     //! Parameters for backreaction
     m1_backreaction_params_t backreaction_params;
     /***********************************************************************/
     /***********************************************************************/
     /**
      * @brief Compute fluxes for m1 equations.
-     * 
+     *
      * @tparam idir Direction the fluxes are computed in.
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
@@ -760,28 +760,28 @@ struct m1_equations_system_t
      * @param ngz Number of ghost-zones.
      * @param fluxes Flux array.
      */
-    template< int idir 
-            , int ispec 
+    template< int idir
+            , int ispec
             , typename recon_t   >
     GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
-    getflux(  VEC( const int i 
-            ,      const int j 
+    getflux(  VEC( const int i
+            ,      const int j
             ,      const int k)
-            , const int64_t q 
+            , const int64_t q
             , grace::flux_array_t const fluxes
             , grace::scalar_array_t<GRACE_NSPACEDIM> const dx
-            , double const dt 
-            , double const dtfact ) const 
+            , double const dt
+            , double const dtfact ) const
     {
         /***********************************************************************/
         /* Initialize reconstructor and riemann solver                         */
         /***********************************************************************/
-        recon_t reconstructor{} ; 
+        recon_t reconstructor{} ;
         /***********************************************************************/
         /* 3rd order interpolation of metric at cell interface                 */
         /***********************************************************************/
-        metric_array_t metric_face ; 
-        COMPUTE_FCVAL(metric_face,this->_state,i,j,k,q,idir) ; 
+        metric_array_t metric_face ;
+        COMPUTE_FCVAL(metric_face,this->_state,i,j,k,q,idir) ;
         /***********************************************************************/
         /*              Reconstruct primitive variables                        */
         /***********************************************************************/
@@ -792,48 +792,48 @@ struct m1_equations_system_t
                 , FRADX1_ +ispec*GRACE_N_M1_VARS
                 , FRADY1_ +ispec*GRACE_N_M1_VARS
                 , FRADZ1_ +ispec*GRACE_N_M1_VARS
-            } ; 
+            } ;
         /* Local indices in prims array (note z^k -> v^k) */
         std::array<int, 5>
             recon_indices_loc{
                   ERADL
                 , NRADL
                 , FXL
-                , FYL 
-                , FZL 
+                , FYL
+                , FZL
             } ;
         /* Reconstruction                                  */
-        m1_prims_array_t primL, primR ; 
+        m1_prims_array_t primL, primR ;
         #pragma unroll 5
         for( int ivar=0; ivar<5; ++ivar) {
             auto u = Kokkos::subview( this->_state
-                                    , VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()) 
-                                    , recon_indices[ivar] 
+                                    , VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL())
+                                    , recon_indices[ivar]
                                     , q ) ;
             reconstructor( u, VEC(i,j,k)
                          , primL[recon_indices_loc[ivar]]
                          , primR[recon_indices_loc[ivar]]
                          , idir) ;
         }
-        // now we need to reconstruct zvec from the hydro 
+        // now we need to reconstruct zvec from the hydro
         std::array<int, 3>
             recon_indices_aux{
                   ZVECX_
                 , ZVECY_
                 , ZVECZ_
-            } ; 
+            } ;
         /* Local indices in prims array (note z^k -> v^k) */
         std::array<int, 3>
             recon_indices_aux_loc{
-                  ZXL 
-                , ZYL 
+                  ZXL
+                , ZYL
                 , ZZL
             } ;
         #pragma unroll 3
         for( int ivar=0; ivar<3; ++ivar) {
             auto u = Kokkos::subview( this->_aux
-                                    , VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()) 
-                                    , recon_indices_aux[ivar] 
+                                    , VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL())
+                                    , recon_indices_aux[ivar]
                                     , q ) ;
             reconstructor( u, VEC(i,j,k)
                          , primL[recon_indices_aux_loc[ivar]]
@@ -842,108 +842,108 @@ struct m1_equations_system_t
         }
         // note that at this stage F is actually F/E, we need to fix that here
         for( int ii=0; ii<3; ++ii) {
-            primL[FXL+ii] *= primL[ERADL] ; 
-            primR[FXL+ii] *= primR[ERADL] ;  
+            primL[FXL+ii] *= primL[ERADL] ;
+            primR[FXL+ii] *= primR[ERADL] ;
         }
-        // ditto for N 
-        primL[NRADL] *= primL[ERADL] ; 
+        // ditto for N
+        primL[NRADL] *= primL[ERADL] ;
         primR[NRADL] *= primR[ERADL] ;
-        // closures 
+        // closures
         m1_closure_t cl{
             primL[ERADL],
             {primL[FXL], primL[FYL], primL[FZL]},
             {primL[ZXL], primL[ZYL], primL[ZZL]},
             metric_face
-        }, 
+        },
         cr{
             primR[ERADL],
             {primR[FXL], primR[FYL], primR[FZL]},
             {primR[ZXL], primR[ZYL], primR[ZZL]},
             metric_face
-        }; 
+        };
 
-        cl.update_closure(0) ; cr.update_closure(0) ;  
-        cl.compute_pressure(); cr.compute_pressure() ; 
-        // compute P^i_j 
+        cl.update_closure(0) ; cr.update_closure(0) ;
+        cl.compute_pressure(); cr.compute_pressure() ;
+        // compute P^i_j
         int imap[3][3] = {
             {0,1,2}, {1,3,4}, {2,4,5}
-        } ; 
-        auto const PUU_l = cl.PUU ; auto const PUU_r = cr.PUU ; 
+        } ;
+        auto const PUU_l = cl.PUU ; auto const PUU_r = cr.PUU ;
         auto const PUD_l = metric_face.lower(
             {PUU_l[idir][0], PUU_l[idir][1],PUU_l[idir][2]}
-        ) ; 
+        ) ;
         auto const PUD_r = metric_face.lower(
             {PUU_r[idir][0], PUU_r[idir][1],PUU_r[idir][2]}
-        ) ; 
-        // compute the A factor for asymptotic flux correction 
+        ) ;
+        // compute the A factor for asymptotic flux correction
         // These are only the aux of e-neutrino
         double const kappa_a = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q);
         double const kappa_s = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q);
         double const _dx = dx(idir,q);
-        // this prevents division by zero while also clamping it 
-        // in [0,1]... I think! 
-        double const A = 1./( _dx * fmax(kappa_a+kappa_s,1./_dx) ) ; 
-        // compute one component of the upper-index flux for the E flux 
-        
-        double FUd_l = metric_face.invgamma(imap[idir][0]) * primL[FXL] 
-                     + metric_face.invgamma(imap[idir][1]) * primL[FYL]
-                     + metric_face.invgamma(imap[idir][2]) * primL[FZL] ; 
-        double FUd_r = metric_face.invgamma(imap[idir][0]) * primR[FXL] 
-                     + metric_face.invgamma(imap[idir][1]) * primR[FYL]
-                     + metric_face.invgamma(imap[idir][2]) * primR[FZL] ; 
+        // this prevents division by zero while also clamping it
+        // in [0,1]... I think!
+        double const A = 1./( _dx * Kokkos::fmax(kappa_a+kappa_s,1./_dx) ) ;
+        // compute one component of the upper-index flux for the E flux
 
-        // compute wave speeds 
-        double cmin, cmax ; 
+        double FUd_l = metric_face.invgamma(imap[idir][0]) * primL[FXL]
+                     + metric_face.invgamma(imap[idir][1]) * primL[FYL]
+                     + metric_face.invgamma(imap[idir][2]) * primL[FZL] ;
+        double FUd_r = metric_face.invgamma(imap[idir][0]) * primR[FXL]
+                     + metric_face.invgamma(imap[idir][1]) * primR[FYL]
+                     + metric_face.invgamma(imap[idir][2]) * primR[FZL] ;
+
+        // compute wave speeds
+        double cmin, cmax ;
         double cpr, cmr, cpl, cml;
         compute_cp_cm<idir>(cpl,cml, cl, metric_face) ;
-        compute_cp_cm<idir>(cpr,cmr, cr, metric_face) ; 
-        cmin = -Kokkos::min(0., Kokkos::min(cml,cmr)) ; 
-        cmax =  Kokkos::max(0., Kokkos::max(cpl,cpr)) ; 
+        compute_cp_cm<idir>(cpr,cmr, cr, metric_face) ;
+        cmin = -Kokkos::min(0., Kokkos::min(cml,cmr)) ;
+        cmax =  Kokkos::max(0., Kokkos::max(cpl,cpr)) ;
         /* Add some diffusion in weakly hyperbolic limit */
         if( cmin < 1e-12 and cmax < 1e-12 ) { cmin=1; cmax=1; }
 
-        // compute the fluxes 
-        // E 
+        // compute the fluxes
+        // E
         double E_l = primL[ERADL] * metric_face.sqrtg() ;
-        double E_r = primR[ERADL] * metric_face.sqrtg() ; 
-        double f_E_l = metric_face.sqrtg() * (metric_face.alp() * FUd_l - metric_face.beta(idir) * primL[ERADL]) ; 
-        double f_E_r = metric_face.sqrtg() * (metric_face.alp() * FUd_r - metric_face.beta(idir) * primR[ERADL]) ; 
-        //fluxes(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ; 
-        double f_E_HLLE = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ; 
-        // Fx 
+        double E_r = primR[ERADL] * metric_face.sqrtg() ;
+        double f_E_l = metric_face.sqrtg() * (metric_face.alp() * FUd_l - metric_face.beta(idir) * primL[ERADL]) ;
+        double f_E_r = metric_face.sqrtg() * (metric_face.alp() * FUd_r - metric_face.beta(idir) * primR[ERADL]) ;
+        //fluxes(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ;
+        double f_E_HLLE = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ;
+        // Fx
         double Fx_l = primL[FXL] * metric_face.sqrtg() ;
         double Fx_r = primR[FXL] * metric_face.sqrtg() ;
-        double f_Fx_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[0] - metric_face.beta(idir) * primL[FXL]) ; 
-        double f_Fx_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[0] - metric_face.beta(idir) * primR[FXL]) ; 
-        //fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin) 
-        //                            + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r); 
-        double f_Fx_HLLE = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin) 
-                                    + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r); 
-        // Fy 
+        double f_Fx_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[0] - metric_face.beta(idir) * primL[FXL]) ;
+        double f_Fx_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[0] - metric_face.beta(idir) * primR[FXL]) ;
+        //fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin)
+        //                            + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r);
+        double f_Fx_HLLE = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin)
+                                    + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r);
+        // Fy
         double Fy_l = primL[FYL] * metric_face.sqrtg() ;
         double Fy_r = primR[FYL] * metric_face.sqrtg() ;
-        double f_Fy_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[1] - metric_face.beta(idir) * primL[FYL]) ; 
+        double f_Fy_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[1] - metric_face.beta(idir) * primL[FYL]) ;
         double f_Fy_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[1] - metric_face.beta(idir) * primR[FYL]) ;
-        //fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin) 
-        //                            + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r); 
-        double f_Fy_HLLE = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin) 
-                                    + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r); 
-        // Fz 
+        //fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin)
+        //                            + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r);
+        double f_Fy_HLLE = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin)
+                                    + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r);
+        // Fz
         double Fz_l = primL[FZL] * metric_face.sqrtg() ;
         double Fz_r = primR[FZL] * metric_face.sqrtg() ;
-        double f_Fz_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[2] - metric_face.beta(idir) * primL[FZL]) ; 
+        double f_Fz_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[2] - metric_face.beta(idir) * primL[FZL]) ;
         double f_Fz_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[2] - metric_face.beta(idir) * primR[FZL]) ;
-        //fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin) 
-        //                            + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r); 
-        double f_Fz_HLLE = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin) 
-                                    + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r); 
-        // Nrad 
+        //fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin)
+        //                            + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r);
+        double f_Fz_HLLE = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin)
+                                    + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r);
+        // Nrad
         double N_l = primL[NRADL] *  metric_face.sqrtg() ;
         double N_r = primR[NRADL] *  metric_face.sqrtg() ;
-        double f_N_l = metric_face.sqrtg() * metric_face.alp() * N_l/cl.Gamma * ( cl.W * (cl.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cl.HU[idir]/cl.J ) ; 
-        double f_N_r = metric_face.sqrtg() * metric_face.alp() * N_r/cr.Gamma * ( cr.W * (cr.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cr.HU[idir]/cr.J ) ; 
-        //fluxes(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ; 
-        double f_N_HLLE = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ; 
+        double f_N_l = metric_face.sqrtg() * metric_face.alp() * N_l/cl.Gamma * ( cl.W * (cl.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cl.HU[idir]/cl.J ) ;
+        double f_N_r = metric_face.sqrtg() * metric_face.alp() * N_r/cr.Gamma * ( cr.W * (cr.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cr.HU[idir]/cr.J ) ;
+        //fluxes(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
+        double f_N_HLLE = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
 
         //#define M1_USE_PPLIM
         #ifdef M1_USE_PPLIM
@@ -979,7 +979,7 @@ struct m1_equations_system_t
             }
             primL_LLF[NRADL] *= primL_LLF[ERADL] ;
             primR_LLF[NRADL] *= primR_LLF[ERADL] ;
-        
+
             // Build closures from cell-centred states
             m1_closure_t cl_LLF{
                 primL_LLF[ERADL],
@@ -995,46 +995,46 @@ struct m1_equations_system_t
             } ;
             cl_LLF.update_closure(0) ; cr_LLF.update_closure(0) ;
             cl_LLF.compute_pressure() ; cr_LLF.compute_pressure() ;
-        
+
             auto const PUD_l_LLF = metric_face.lower(
                 {cl_LLF.PUU[idir][0], cl_LLF.PUU[idir][1], cl_LLF.PUU[idir][2]}
             ) ;
             auto const PUD_r_LLF = metric_face.lower(
                 {cr_LLF.PUU[idir][0], cr_LLF.PUU[idir][1], cr_LLF.PUU[idir][2]}
             ) ;
-        
+
             double const FUd_l_LLF = metric_face.invgamma(imap[idir][0]) * primL_LLF[FXL]
                                    + metric_face.invgamma(imap[idir][1]) * primL_LLF[FYL]
                                    + metric_face.invgamma(imap[idir][2]) * primL_LLF[FZL] ;
             double const FUd_r_LLF = metric_face.invgamma(imap[idir][0]) * primR_LLF[FXL]
                                    + metric_face.invgamma(imap[idir][1]) * primR_LLF[FYL]
                                    + metric_face.invgamma(imap[idir][2]) * primR_LLF[FZL] ;
-        
+
             // Cell-centred conserved variables and physical fluxes; LF uses c=1
             double const E_l_LLF   = primL_LLF[ERADL] * metric_face.sqrtg() ;
             double const E_r_LLF   = primR_LLF[ERADL] * metric_face.sqrtg() ;
             double const f_E_l_LLF = metric_face.sqrtg() * (metric_face.alp() * FUd_l_LLF - metric_face.beta(idir) * primL_LLF[ERADL]) ;
             double const f_E_r_LLF = metric_face.sqrtg() * (metric_face.alp() * FUd_r_LLF - metric_face.beta(idir) * primR_LLF[ERADL]) ;
             double const f_E_LF    = 0.5*(f_E_l_LLF + f_E_r_LLF) - 0.5*(E_r_LLF - E_l_LLF) ;
-        
+
             double const Fx_l_LLF   = primL_LLF[FXL] * metric_face.sqrtg() ;
             double const Fx_r_LLF   = primR_LLF[FXL] * metric_face.sqrtg() ;
             double const f_Fx_l_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_l_LLF[0] - metric_face.beta(idir) * primL_LLF[FXL]) ;
             double const f_Fx_r_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_r_LLF[0] - metric_face.beta(idir) * primR_LLF[FXL]) ;
             double const f_Fx_LF    = 0.5*(f_Fx_l_LLF + f_Fx_r_LLF) - 0.5*(Fx_r_LLF - Fx_l_LLF) ;
-        
+
             double const Fy_l_LLF   = primL_LLF[FYL] * metric_face.sqrtg() ;
             double const Fy_r_LLF   = primR_LLF[FYL] * metric_face.sqrtg() ;
             double const f_Fy_l_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_l_LLF[1] - metric_face.beta(idir) * primL_LLF[FYL]) ;
             double const f_Fy_r_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_r_LLF[1] - metric_face.beta(idir) * primR_LLF[FYL]) ;
             double const f_Fy_LF    = 0.5*(f_Fy_l_LLF + f_Fy_r_LLF) - 0.5*(Fy_r_LLF - Fy_l_LLF) ;
-        
+
             double const Fz_l_LLF   = primL_LLF[FZL] * metric_face.sqrtg() ;
             double const Fz_r_LLF   = primR_LLF[FZL] * metric_face.sqrtg() ;
             double const f_Fz_l_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_l_LLF[2] - metric_face.beta(idir) * primL_LLF[FZL]) ;
             double const f_Fz_r_LLF = metric_face.sqrtg() * (metric_face.alp() * PUD_r_LLF[2] - metric_face.beta(idir) * primR_LLF[FZL]) ;
             double const f_Fz_LF    = 0.5*(f_Fz_l_LLF + f_Fz_r_LLF) - 0.5*(Fz_r_LLF - Fz_l_LLF) ;
-        
+
             double const N_l_LLF   = primL_LLF[NRADL] * metric_face.sqrtg() ;
             double const N_r_LLF   = primR_LLF[NRADL] * metric_face.sqrtg() ;
             double const f_N_l_LLF = metric_face.sqrtg() * metric_face.alp() * N_l_LLF/cl_LLF.Gamma
@@ -1044,13 +1044,13 @@ struct m1_equations_system_t
                                    * ( cr_LLF.W * (cr_LLF.vU[idir] - metric_face.beta(idir)/metric_face.alp())
                                      + cr_LLF.HU[idir]/cr_LLF.J ) ;
             double const f_N_LF    = 0.5*(f_N_l_LLF + f_N_r_LLF) - 0.5*(N_r_LLF - N_l_LLF) ;
-        
+
             // Positivity check and theta computation (GRMHD-style continuous blend)
             double const a2CFL       = 6. * (dt * dtfact / _dx) ;
             double const E_atmo_cons = atmo_params.E_fl * metric_face.sqrtg() ;
             double const E_m         = E_r_LLF + a2CFL * f_E_HLLE ;   // E in right cell after this flux
             double const E_p         = E_l_LLF - a2CFL * f_E_HLLE ;   // E in left cell after this flux
-        
+
             if ( E_m < E_atmo_cons || E_p < E_atmo_cons ) {
                 double const denom = a2CFL * (f_E_HLLE - f_E_LF) ;
                 double theta_m = 1., theta_p = 1. ;
@@ -1073,7 +1073,7 @@ struct m1_equations_system_t
                     fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fy_HLLE ;
                     fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fz_HLLE ;
                 }
-            }   
+            }
         #else
                 fluxes(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_E_HLLE  ;
                 fluxes(VEC(i,j,k),NRAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_N_HLLE  ;
@@ -1086,23 +1086,23 @@ struct m1_equations_system_t
     template< size_t idir >
     GRACE_HOST_DEVICE void compute_cp_cm(
         double& cp, double &cm, m1_closure_t const& cl, metric_array_t const& metric
-    ) const 
+    ) const
     {
 
         int const icomp = (idir==0)*0 + (idir==1)*3 + (idir==2)*5 ;
 
-        double dthin = cl.chi * 1.5 - 0.5 ; 
+        double dthin = cl.chi * 1.5 - 0.5 ;
         double dthick = 1.5 - cl.chi * 1.5 ;
         m1_wavespeeds(
-            cl.W, dthin, dthick, cl.F, metric.alp(), 
+            cl.W, dthin, dthick, cl.F, metric.alp(),
             cl.vU[idir], metric.invgamma(icomp),
             metric.beta(idir),cl.FU[idir],
             &cm, &cp
-        ) ; 
+        ) ;
 
     }
 
-} ; 
+} ;
 
 /**************************************************************************************************/
 /* Standalone functions for m1 initial data and eas calculations                                  */
@@ -1112,13 +1112,13 @@ void set_m1_eas(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
     , grace::var_array_t& aux
-) ; 
+) ;
 
 template < typename eos_t >
 void set_m1_eas() ;
 
 template < typename eos_t >
-void set_m1_initial_data() ; 
+void set_m1_initial_data() ;
 
 /***********************************************************************/
 // Explicit template instantiation
