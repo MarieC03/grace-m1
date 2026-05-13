@@ -1,28 +1,28 @@
 /**
  * @file c2p.hh
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-06-10
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #ifndef GRACE_PHYSICS_EOS_C2P_HH
@@ -45,6 +45,10 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_EPS_TOO_LOW,
     C2P_YE_TOO_LOW,
     C2P_YE_TOO_HIGH,
+    #ifdef M1_NU_FIVESPECIES
+    C2P_YMU_TOO_LOW,
+    C2P_YMU_TOO_HIGH,
+    #endif
     C2P_RHO_TOO_HIGH,
     C2P_RHO_TOO_LOW,
     C2P_ENT_TOO_LOW,
@@ -52,7 +56,7 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_VEL_TOO_HIGH,
     C2P_SIGMA_TOO_HIGH,
     C2P_NSIG
-} ; 
+} ;
 
 enum c2p_err_enum_t : uint8_t {
     C2P_RESET_DENS=0,
@@ -60,15 +64,18 @@ enum c2p_err_enum_t : uint8_t {
     C2P_RESET_STILDE,
     C2P_RESET_ENTROPY,
     C2P_RESET_YE,
+    #ifdef M1_NU_FIVESPECIES
+    C2P_RESET_YMU,
+    #endif
     C2P_N_ERR
-} ; 
+} ;
 
-using c2p_sig_t = bitset_t<C2P_NSIG> ; 
+using c2p_sig_t = bitset_t<C2P_NSIG> ;
 
-using c2p_err_t = bitset_t<C2P_N_ERR> ; 
+using c2p_err_t = bitset_t<C2P_N_ERR> ;
 
 /**
- * @brief Handles c2p signals coming from 
+ * @brief Handles c2p signals coming from
  *        the low level routines and decides which
  *        conserved variables need to be changed.
  *        NB: Might abort on fatal errors!
@@ -81,51 +88,59 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
 {
     if ( sig.test(C2P_RHO_TOO_HIGH) ) {
         if ( be_lenient ) {
-            err.set_all() ; 
+            err.set_all() ;
         } else {
-            Kokkos::abort("In c2p: maximum density exceeded") ; 
+            Kokkos::abort("In c2p: maximum density exceeded") ;
         }
     }
     if ( sig.test(C2P_RHO_TOO_LOW) ) {
         // if rho was modified everything has to change
-        err.set(C2P_RESET_DENS)    ; 
+        err.set(C2P_RESET_DENS)    ;
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
-        err.set(C2P_RESET_YE)      ;  
+        err.set(C2P_RESET_YE)      ;
+        #ifdef M1_NU_FIVESPECIES
+        err.set(C2P_RESET_YMU)      ;
+        #endif
     }
 
     if (sig.test(C2P_YE_TOO_LOW) or sig.test(C2P_YE_TOO_HIGH)) {
-        err.set(C2P_RESET_YE) ; 
+        err.set(C2P_RESET_YE) ;
     }
+    #ifdef M1_NU_FIVESPECIES
+    if (sig.test(C2P_YMU_TOO_LOW) or sig.test(C2P_YMU_TOO_HIGH)) {
+        err.set(C2P_RESET_YMU) ;
+    }
+    #endif
 
     if (sig.test(C2P_ENT_TOO_LOW) or sig.test(C2P_ENT_TOO_HIGH)) {
-        err.set(C2P_RESET_ENTROPY) ; 
+        err.set(C2P_RESET_ENTROPY) ;
     }
 
     if (sig.test(C2P_EPS_TOO_HIGH)) {
-        // err.set(C2P_RESET_STILDE) ; FIXME: I checked around other codes, people usually leave momentum alone 
+        // err.set(C2P_RESET_STILDE) ; FIXME: I checked around other codes, people usually leave momentum alone
         err.set(C2P_RESET_TAU)    ;
     }
 
     if (sig.test(C2P_EPS_TOO_LOW)) {
-        // err.set(C2P_RESET_STILDE) ; FIXME: I checked around other codes, people usually leave momentum alone 
+        // err.set(C2P_RESET_STILDE) ; FIXME: I checked around other codes, people usually leave momentum alone
         err.set(C2P_RESET_TAU)    ;
     }
 
     if (sig.test(C2P_VEL_TOO_HIGH)) {
-        // W enters everything 
-        err.set(C2P_RESET_DENS)    ; 
+        // W enters everything
+        err.set(C2P_RESET_DENS)    ;
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
-        err.set(C2P_RESET_YE)      ;  
+        err.set(C2P_RESET_YE)      ;
     }
 
     // magnetization
     if ( sig.test(C2P_SIGMA_TOO_HIGH) ) {
-        // rho enters everything 
-        err.set(C2P_RESET_DENS)    ; 
+        // rho enters everything
+        err.set(C2P_RESET_DENS)    ;
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
@@ -135,7 +150,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
 }
 
 /**
- * @brief Handles eos signals coming from 
+ * @brief Handles eos signals coming from
  *        within the c2p routines and decides which
  *        conserved variables need to be changed.
  *        NB: Might abort on fatal errors!
@@ -146,58 +161,67 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
     c2p_err_t& err
 ) {
     if ( eos_err.test(EOS_RHO_TOO_HIGH) ) {
-        Kokkos::abort("In EOS: maximum density exceeded") ; 
+        Kokkos::abort("In EOS: maximum density exceeded") ;
     }
 
     if (eos_err.test(EOS_RHO_TOO_LOW)) {
-        err.set(C2P_RESET_DENS)    ; 
+        err.set(C2P_RESET_DENS)    ;
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
-        err.set(C2P_RESET_YE)      ;  
+        err.set(C2P_RESET_YE)      ;
+        #ifdef M1_NU_FIVESPECIES
+        err.set(C2P_RESET_YMU)      ;
+        #endif
     }
 
     if (eos_err.test(EOS_YE_TOO_LOW) or eos_err.test(EOS_YE_TOO_HIGH)) {
-        err.set(C2P_RESET_YE) ; 
+        err.set(C2P_RESET_YE) ;
+    }
+    #ifdef M1_NU_FIVESPECIES
+    if (eos_err.test(EOS_YMU_TOO_LOW) or eos_err.test(EOS_YMU_TOO_HIGH)) {
+        err.set(C2P_RESET_YMU) ;
     }
 
+    #endif
+
     if (eos_err.test(EOS_ENTROPY_TOO_HIGH) or eos_err.test(EOS_ENTROPY_TOO_LOW)) {
-        err.set(C2P_RESET_ENTROPY) ; 
+        err.set(C2P_RESET_ENTROPY) ;
     }
 
     if (eos_err.test(EOS_EPS_TOO_HIGH)) {
         if (be_lenient) {
-            err.set(C2P_RESET_STILDE) ; 
+            err.set(C2P_RESET_STILDE) ;
             err.set(C2P_RESET_TAU)    ;
         } else {
-            Kokkos::abort("In EOS: maximum eps exceeded") ; 
+            Kokkos::abort("In EOS: maximum eps exceeded") ;
         }
     }
 
     if (eos_err.test(EOS_EPS_TOO_LOW)) {
-        err.set(C2P_RESET_STILDE) ; 
+        err.set(C2P_RESET_STILDE) ;
         err.set(C2P_RESET_TAU)    ;
     }
 
     if ( eos_err.test(EOS_TEMPERATURE_TOO_HIGH)) {
         if (be_lenient) {
-            err.set(C2P_RESET_STILDE) ; 
+            err.set(C2P_RESET_STILDE) ;
             err.set(C2P_RESET_TAU)    ;
         } else {
-            Kokkos::abort("In EOS: maximum temperature exceeded") ; 
+            Kokkos::abort("In EOS: maximum temperature exceeded") ;
         }
     }
     if (eos_err.test(EOS_TEMPERATURE_TOO_LOW)) {
-        err.set(C2P_RESET_STILDE) ; 
+        err.set(C2P_RESET_STILDE) ;
         err.set(C2P_RESET_TAU)    ;
-    } 
+    }
 
 
 }
 
 /**
  * @brief Convert conservative variables to primitive ones.
- * 
+ *
  * @tparam eos_t Type of EOS.
  * @param cons Conservative variables (at one cell).
  * @param prims Primitive variables (at one cell).
@@ -210,20 +234,20 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
  */
 template< typename eos_t >
 void GRACE_HOST_DEVICE GRACE_DEVICE_EXTERNAL_LINKAGE
-conservs_to_prims( grace::grmhd_cons_array_t&  
-                      , grace::grmhd_prims_array_t&  
-                      , grace::metric_array_t const&  
-                      , eos_t const& eos 
-                      , atmo_params_t const& atmo 
-                      , excision_params_t const& excision 
+conservs_to_prims( grace::grmhd_cons_array_t&
+                      , grace::grmhd_prims_array_t&
+                      , grace::metric_array_t const&
+                      , eos_t const& eos
+                      , atmo_params_t const& atmo
+                      , excision_params_t const& excision
                       , c2p_params_t const& c2p_pars
                       , double * rtp
-                      , c2p_err_t& c2p_err ) ; 
+                      , c2p_err_t& c2p_err ) ;
 
 void GRACE_HOST_DEVICE GRACE_DEVICE_EXTERNAL_LINKAGE
 prims_to_conservs( grace::grmhd_prims_array_t& prims
-                 , grace::grmhd_cons_array_t& cons 
-                 , grace::metric_array_t const& metric ) ; 
+                 , grace::grmhd_cons_array_t& cons
+                 , grace::metric_array_t const& metric ) ;
 // Explicit template instantiation
 #define INSTANTIATE_TEMPLATE(EOS) \
 extern template \
@@ -236,7 +260,7 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
                       , excision_params_t const& excision \
                       , c2p_params_t const& c2p_pars \
                       , double * rtp \
-                      , c2p_err_t& c2p_err ) 
+                      , c2p_err_t& c2p_err )
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
 #undef INSTANTIATE_TEMPLATE

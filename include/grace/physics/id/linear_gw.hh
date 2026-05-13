@@ -17,59 +17,60 @@ namespace grace {
 
 template < typename eos_t >
 struct linear_gw_id_t {
-    using state_t = grace::var_array_t ; 
-    
+    using state_t = grace::var_array_t ;
+
     linear_gw_id_t(
-          eos_t eos 
+          eos_t eos
         , grace::coord_array_t<GRACE_NSPACEDIM> pcoords )
         : _eos(eos)
         , _pcoords(pcoords)
     {
-    } 
+    }
 
     grmhd_id_t GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
-    operator() (VEC(int const i, int const j, int const k), int const q) const 
+    operator() (VEC(int const i, int const j, int const k), int const q) const
     {
-        grmhd_id_t id ; 
-        id.rho     = 0.0 ; 
+        grmhd_id_t id ;
+        id.rho     = 0.0 ;
         id.press   = 0.0   ;
-        id.eps = 0.0 ; 
-        id.temp = 0.0 ; 
-        id.entropy = 0.0 ; 
+        id.eps = 0.0 ;
+        id.temp = 0.0 ;
+        id.entropy = 0.0 ;
         id.bx = 0.0 ;
         id.by = 0.0 ;
         id.bz = 0.0 ;
         id.vx = 0; id.vy = 0.; id.vz = 0.;
         id.ye = 0;
+        id.ymu = 0;
 
-        double x = _pcoords(i,j,k,0,q) ; 
-        double const A = 1e-8 ; 
-        double const Hs = A * sin(2*M_PI*x) ; 
-        double const Hc = A * M_PI * cos(2*M_PI*x) ; 
+        double x = _pcoords(i,j,k,0,q) ;
+        double const A = 1e-8 ;
+        double const Hs = A * sin(2*M_PI*x) ;
+        double const Hc = A * M_PI * cos(2*M_PI*x) ;
 
-        id.alp = 1.0 ; 
-        id.betax = 0; id.betay=0; id.betaz = 0; 
+        id.alp = 1.0 ;
+        id.betax = 0; id.betay=0; id.betaz = 0;
 
-        id.gxx = 1 - Hs; 
-        id.gyy = 1 + Hs; 
+        id.gxx = 1 - Hs;
+        id.gyy = 1 + Hs;
         id.gzz = 1;
         id.gxy = 0; id.gxz = 0; id.gyz = 0 ;
 
-        id.kxx = 1 + Hc; 
-        id.kyy = 1 + Hc; 
+        id.kxx = 1 + Hc;
+        id.kyy = 1 + Hc;
         id.kzz = 0 ;
 
-        id.kxy = 0 ;  
-        id.kxz = 0 ; 
-        id.kyz = 0 ; 
+        id.kxy = 0 ;
+        id.kxz = 0 ;
+        id.kyz = 0 ;
 
 
-        return std::move(id) ; 
+        return std::move(id) ;
     }
 
-    eos_t   _eos         ;                            //!< Equation of state object 
+    eos_t   _eos         ;                            //!< Equation of state object
     grace::coord_array_t<GRACE_NSPACEDIM> _pcoords ;  //!< Physical coordinates of cell centers
-} ; 
+} ;
 
 
 }

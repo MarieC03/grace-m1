@@ -19,69 +19,70 @@ namespace grace {
 
 template < typename eos_t >
 struct robust_stability_id_t {
-    using state_t = grace::var_array_t ; 
-    
+    using state_t = grace::var_array_t ;
+
     robust_stability_id_t(
-          eos_t eos 
+          eos_t eos
         , grace::coord_array_t<GRACE_NSPACEDIM> pcoords )
         : _eos(eos)
         , _pcoords(pcoords)
     {
-        _rho = get_param<int>("grmhd", "robust_stability_rho") ; 
+        _rho = get_param<int>("grmhd", "robust_stability_rho") ;
         random_pool = Kokkos::Random_XorShift64_Pool<>(/*seed=*/12345);
-    } 
+    }
 
 
-    grmhd_id_t GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    operator() (VEC(int const i, int const j, int const k), int const q) const 
+    grmhd_id_t GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    operator() (VEC(int const i, int const j, int const k), int const q) const
     {
-        grmhd_id_t id ; 
-        id.rho     = 0.0 ; 
+        grmhd_id_t id ;
+        id.rho     = 0.0 ;
         id.press   = 0.0   ;
-        id.eps = 0.0 ; 
+        id.eps = 0.0 ;
         id.temp = 0.0 ;
-        id.entropy = 0.0 ; 
+        id.entropy = 0.0 ;
         id.bx = 0.0 ;
         id.by = 0.0 ;
         id.bz = 0.0 ;
         id.vx = 0; id.vy = 0.; id.vz = 0.;
         id.ye = 0;
+        id.ymu = 0;
 
         auto generator = random_pool.get_state();
 
         auto const eps = [&]() -> double {
-            return generator.drand(-1e-10/_rho/_rho, 1e-10/_rho/_rho) ; 
-        } ; 
+            return generator.drand(-1e-10/_rho/_rho, 1e-10/_rho/_rho) ;
+        } ;
 
 
-        id.alp = 1 + eps() ;  
-        id.betax = eps(); id.betay=eps(); id.betaz = eps(); 
+        id.alp = 1 + eps() ;
+        id.betax = eps(); id.betay=eps(); id.betaz = eps();
 
-        id.gxx = 1 + eps(); 
-        id.gyy = 1 + eps(); 
+        id.gxx = 1 + eps();
+        id.gyy = 1 + eps();
         id.gzz = 1 + eps();
-        id.gxy = eps(); 
-        id.gxz = eps(); 
+        id.gxy = eps();
+        id.gxz = eps();
         id.gyz = eps();
 
-        id.kxx = eps(); 
-        id.kyy = eps(); 
-        id.kzz = eps(); 
+        id.kxx = eps();
+        id.kyy = eps();
+        id.kzz = eps();
 
-        id.kxy = eps(); 
-        id.kxz = eps(); 
-        id.kyz = eps(); 
+        id.kxy = eps();
+        id.kxz = eps();
+        id.kyz = eps();
 
         random_pool.free_state(generator);
 
-        return std::move(id) ; 
+        return std::move(id) ;
     }
 
-    eos_t   _eos         ;                            //!< Equation of state object 
+    eos_t   _eos         ;                            //!< Equation of state object
     grace::coord_array_t<GRACE_NSPACEDIM> _pcoords ;  //!< Physical coordinates of cell centers
-    int _rho ; 
-    Kokkos::Random_XorShift64_Pool<> random_pool ; 
-} ; 
+    int _rho ;
+    Kokkos::Random_XorShift64_Pool<> random_pool ;
+} ;
 
 
 }
