@@ -3,26 +3,26 @@
  * @author Marie Cassing (mcassing@itp.uni-frankfurt.de)
  * @brief Weakhub library setup for rates
  * @date 2026-03-02
- * 
+ *
  * @copyright This file is part of of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #include "grace/physics/grace_weakhub_table.hh"
@@ -83,7 +83,7 @@ void initialize_weakhub_from_params() {
     std::vector<double> logrho(IVrho);
     std::vector<double> logtemp(IVtemp);
     std::vector<double> ye(IVye);
-    std::vector<double> logymu(max(IVymu, size_t{1}));
+    std::vector<double> logymu(Kokkos::fmax(IVymu, size_t{1}));
 
     read_dataset(file, "logrho_IVtable", H5T_NATIVE_DOUBLE, logrho.data());
     read_dataset(file, "logtemp_IVtable", H5T_NATIVE_DOUBLE, logtemp.data());
@@ -111,7 +111,7 @@ void initialize_weakhub_from_params() {
                     }
 
     GRACE_INFO("Weakhub rho  range: [{}, {}] (log, code units)", logrho.front(), logrho.back());
-    GRACE_INFO("Weakhub temp range: [{}, {}] MeV", 
+    GRACE_INFO("Weakhub temp range: [{}, {}] MeV",
                std::exp(logtemp.front()), std::exp(logtemp.back()));
     GRACE_INFO("Weakhub Ye   range: [{}, {}]", ye.front(), ye.back());
     if (IVymu > 1)
