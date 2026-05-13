@@ -3,26 +3,26 @@
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
  * @brief Kelvin-Helmholtz instability initial-data kernel: counter-streaming flows with a perturbed shear layer.
  * @date 2025-10-01
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
 */
 #ifndef GRACE_PHYSICS_ID_KHI_HH
 #define GRACE_PHYSICS_ID_KHI_HH
@@ -43,8 +43,8 @@ namespace grace {
 
 template < typename eos_t >
 struct kelvin_helmholtz_id_t {
-    using state_t = grace::var_array_t ; 
-    
+    using state_t = grace::var_array_t ;
+
     kelvin_helmholtz_id_t(
           eos_t eos
         , grace::coord_array_t<GRACE_NSPACEDIM> pcoords
@@ -80,21 +80,22 @@ struct kelvin_helmholtz_id_t {
         id.bx = sqrt(2 * _sigma_pol * id.press) ;
         id.by = id.bz = 0 ;
 
-        id.betax = 0; id.betay=0; id.betaz = 0; 
-        id.alp = 1 ; 
+        id.betax = 0; id.betay=0; id.betaz = 0;
+        id.alp = 1 ;
         id.gxx = 1; id.gyy = 1; id.gzz = 1;
         id.gxy = 0; id.gxz = 0; id.gyz = 0 ;
         id.kxx = 0; id.kyy = 0; id.kzz = 0 ;
-        id.kxy = 0; id.kxz =0 ; id.kyz = 0 ; 
-        eos_err_t eoserr ; 
+        id.kxy = 0; id.kxz =0 ; id.kyz = 0 ;
+        eos_err_t eoserr ;
         id.ye  = _eos.ye_cold__press(id.press, eoserr);
+        id.ymu  = _eos.ymu_cold__press(id.press, eoserr);
 
-        double h,cs2; 
-        id.eps = _eos.eps_h_csnd2_temp_entropy__press_rho_ye(
-            h,cs2,id.temp,id.entropy,id.press,id.rho,id.ye,eoserr 
+        double h,cs2;
+        id.eps = _eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu(
+            h,cs2,id.temp,id.entropy,id.press,id.rho,id.ye,id.ymu,eoserr
         ) ;
-        
-        return std::move(id) ; 
+
+        return std::move(id) ;
     }
 
     eos_t   _eos         ;                            //!< Equation of state object

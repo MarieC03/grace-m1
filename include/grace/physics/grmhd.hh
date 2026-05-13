@@ -3,26 +3,26 @@
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
  * @brief GRMHD evolution-system class (templated on EOS): reconstruction, Riemann-flux assembly, source terms, and primitive recovery dispatch.
  * @date 2024-05-28
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 #ifndef GRACE_PHYSICS_GRMHD_HH
 #define GRACE_PHYSICS_GRMHD_HH
@@ -56,20 +56,20 @@
  * \defgroup physics Physics Modules.
  */
 namespace grace {
-//**************************************************************************************************/ 
+//**************************************************************************************************/
 //**************************************************************************************************
 /**
  * @brief GRMHD equations system.
- * \ingroup physics 
+ * \ingroup physics
  * @tparam eos_t Type of equation of state used.
  */
 //**************************************************************************************************/
 template< typename eos_t >
-struct grmhd_equations_system_t 
+struct grmhd_equations_system_t
     : public hrsc_evolution_system_t<grmhd_equations_system_t<eos_t>>
 {
  private:
-    //! Base class type 
+    //! Base class type
     using base_t = hrsc_evolution_system_t<grmhd_equations_system_t<eos_t>>;
 
  public:
@@ -95,7 +95,7 @@ struct grmhd_equations_system_t
 
     /**
      * @brief Compute GRMHD fluxes in direction \f$x^1\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -122,7 +122,7 @@ struct grmhd_equations_system_t
     }
     /**
      * @brief Compute GRMHD fluxes in direction \f$x^2\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -149,7 +149,7 @@ struct grmhd_equations_system_t
     }
     /**
      * @brief Compute GRMHD fluxes in direction \f$x^3\f$
-     * 
+     *
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
      * @tparam thread_team_t Type of the thread team.
@@ -176,7 +176,7 @@ struct grmhd_equations_system_t
     }
     /**
      * @brief Compute geometric source terms for GRMHD equations.
-     * 
+     *
      * @tparam thread_team_t Thread team type.
      * @param team Thread team.
      * @param i Cell index in \f$x^1\f$ direction.
@@ -187,15 +187,15 @@ struct grmhd_equations_system_t
      * @param dt Timestep.
      * @param dtfact Timestep factor.
      */
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_source_terms( const int q 
-                         , VEC( const int i 
-                         ,      const int j 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_source_terms( const int q
+                         , VEC( const int i
+                         ,      const int j
                          ,      const int k)
                          , grace::scalar_array_t<GRACE_NSPACEDIM> const idx
                          , grace::var_array_t const state_new
-                         , double const dt 
-                         , double const dtfact ) const 
+                         , double const dt
+                         , double const dtfact ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
@@ -203,32 +203,32 @@ struct grmhd_equations_system_t
         /**************************************************************************************************/
         /* Read in the metric                                                                             */
         /**************************************************************************************************/
-        metric_array_t metric ; 
-        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;        
+        metric_array_t metric ;
+        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
         /**************************************************************************************************/
         /* Read the primitive variables                                                                   */
         /**************************************************************************************************/
-        grmhd_prims_array_t prims ; 
+        grmhd_prims_array_t prims ;
         FILL_PRIMS_ARRAY_ZVEC(prims,this->_aux,q,VEC(i,j,k))   ;
-        double const eps   = prims[EPSL]   ; 
-        double const rho   = prims[RHOL]   ; 
+        double const eps   = prims[EPSL]   ;
+        double const rho   = prims[RHOL]   ;
         double const p     = prims[PRESSL] ;
-        double const * const   z   = &(prims[ZXL])       ;  
-        double const * const   B   = &(prims[BXL])       ;  
-        double const * const betau = metric._beta.data() ; 
-        double const * const gdd   = metric._g.data()    ; 
-        double const * const guu   = metric._ginv.data() ; 
-        double const sqrtg         = metric.sqrtg()      ; 
-        double const alp           = metric.alp()        ; 
+        double const * const   z   = &(prims[ZXL])       ;
+        double const * const   B   = &(prims[BXL])       ;
+        double const * const betau = metric._beta.data() ;
+        double const * const gdd   = metric._g.data()    ;
+        double const * const guu   = metric._ginv.data() ;
+        double const sqrtg         = metric.sqrtg()      ;
+        double const alp           = metric.alp()        ;
         /**************************************************************************************************/
-        double W ; 
-        grmhd_get_W(gdd,z,&W) ; 
-        double b2, smallb[4] ; 
+        double W ;
+        grmhd_get_W(gdd,z,&W) ;
+        double b2, smallb[4] ;
         grmhd_get_smallbu_smallb2(alp,betau,gdd,B,z,W,&smallb,&b2) ;
         /**************************************************************************************************/
         /* Metric derivatives                                                                             */
         /**************************************************************************************************/
-        double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9]; 
+        double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9];
         fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, ALP_, q, dalpha_dx, idx(0,q)) ;
         fill_deriv_vector<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, BETAX_, q, dbetau_dx, idx(0,q)) ;
         #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
@@ -245,25 +245,25 @@ struct grmhd_equations_system_t
         fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, CHI_, q, dchi_dx, idx(0,q)) ;
         fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
         // gdd = gtdd/W^2
-        // dgdd/dx = d gtdd / dx / W^2 - 2 gtdd d W / dx / W^3 
+        // dgdd/dx = d gtdd / dx / W^2 - 2 gtdd d W / dx / W^3
         for( int idir=0; idir<3; ++idir) {
             for( int a=0; a<6; ++a) {
-                dgdd_dx[a + 6*idir] = ooWsqr * dgdd_dx[a + 6*idir] - 2. * ooW * dchi_dx[idir] * gdd[a] ;  
+                dgdd_dx[a + 6*idir] = ooWsqr * dgdd_dx[a + 6*idir] - 2. * ooW * dchi_dx[idir] * gdd[a] ;
             }
         }
-        #endif 
-        
+        #endif
+
 
         /**************************************************************************************************/
         /* Extrinsic curvature                                                                            */
         /**************************************************************************************************/
-        double Kdd[6] ; 
+        double Kdd[6] ;
         #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
-        Kdd[0] = s(KXX_) ; Kdd[1] = s(KXY_) ; Kdd[2] = s(KXZ_) ; 
-        Kdd[3] = s(KYY_) ; Kdd[4] = s(KYZ_) ; Kdd[5] = s(KZZ_) ; 
+        Kdd[0] = s(KXX_) ; Kdd[1] = s(KXY_) ; Kdd[2] = s(KXZ_) ;
+        Kdd[3] = s(KYY_) ; Kdd[4] = s(KYZ_) ; Kdd[5] = s(KZZ_) ;
         #else
         // K_{ij} = \tilde{A}_{ij} / \tilde{W}^2 + 1/3 (Khat + 2 \Theta) gamma_{ij}
-        double Atdd[6] = { 
+        double Atdd[6] = {
               s(ATXX_), s(ATXY_), s(ATXZ_),
               s(ATYY_), s(ATYZ_), s(ATZZ_)
         } ;
@@ -271,13 +271,13 @@ struct grmhd_equations_system_t
         double const theta = s(THETA_);
         double const Ktr = Khat + 2. * theta ;
         for( int a=0; a<6; ++a ) {
-            Kdd[a] = ooWsqr * Atdd[a] + (Ktr) * gdd[a] / 3. ; 
+            Kdd[a] = ooWsqr * Atdd[a] + (Ktr) * gdd[a] / 3. ;
         }
-        #endif 
+        #endif
         /**************************************************************************************************/
         /* Compute source terms                                                                           */
         /**************************************************************************************************/
-        double tau_src, stilde_src[3] ; 
+        double tau_src, stilde_src[3] ;
         grmhd_get_geom_sources(
             alp, betau, gdd, guu, Kdd, dalpha_dx, dgdd_dx, dbetau_dx,
             rho, p, eps, B, z, W,
@@ -303,18 +303,18 @@ struct grmhd_equations_system_t
      * @param k Cell index in \f$x^3\f$ direction.
      * @param q Quadrant index.
      */
-    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
-    compute_auxiliaries(  VEC( const int i 
-                        ,      const int j 
-                        ,      const int k) 
-                        , int64_t q 
-                        , grace::device_coordinate_system coords) const 
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_auxiliaries(  VEC( const int i
+                        ,      const int j
+                        ,      const int k)
+                        , int64_t q
+                        , grace::device_coordinate_system coords) const
     {
         using namespace grace ;
-        using namespace Kokkos ; 
+        using namespace Kokkos ;
 
-        double rtp[3] ; 
-        coords.get_physical_coordinates_sph(i,j,k,q,rtp) ; 
+        double rtp[3] ;
+        coords.get_physical_coordinates_sph(i,j,k,q,rtp) ;
 
         auto vars = subview(
               this->_state
@@ -331,7 +331,7 @@ struct grmhd_equations_system_t
                  , k )
             , ALL()
             , q
-        ) ; 
+        ) ;
         auto Bx = subview(
               this->_stag_state.face_staggered_fields_x
             , VEC( ALL()
@@ -339,7 +339,7 @@ struct grmhd_equations_system_t
                  , ALL() )
             , static_cast<size_t>(BSX_)
             , q
-        ) ; 
+        ) ;
         auto By = subview(
               this->_stag_state.face_staggered_fields_y
             , VEC( ALL()
@@ -357,17 +357,20 @@ struct grmhd_equations_system_t
             , q
         ) ;
         grmhd_cons_array_t cons ;
-        cons[DENSL] = vars(DENS_)        ; 
+        cons[DENSL] = vars(DENS_)        ;
         cons[STXL]  = vars(SX_)          ;
         cons[STYL]  = vars(SY_)          ;
         cons[STZL]  = vars(SZ_)          ;
         cons[TAUL]  = vars(TAU_)         ;
-        cons[YESL]  = vars(YESTAR_)      ; 
-        cons[ENTSL] = vars(ENTROPYSTAR_) ; 
-        cons[BSXL]  = 0.5*(Bx(VEC(i,j,k)) + Bx(VEC(i+1,j,k))) ; 
-        cons[BSYL]  = 0.5*(By(VEC(i,j,k)) + By(VEC(i,j+1,k))) ; 
-        cons[BSZL]  = 0.5*(Bz(VEC(i,j,k)) + Bz(VEC(i,j,k+1))) ; 
-        metric_array_t metric ; 
+        cons[YESL]  = vars(YESTAR_)      ;
+        #ifdef M1_NU_FIVESPECIES
+        cons[YMUSL]   = vars(YMUSTAR_)     ;
+        #endif
+        cons[ENTSL] = vars(ENTROPYSTAR_) ;
+        cons[BSXL]  = 0.5*(Bx(VEC(i,j,k)) + Bx(VEC(i+1,j,k))) ;
+        cons[BSYL]  = 0.5*(By(VEC(i,j,k)) + By(VEC(i,j+1,k))) ;
+        cons[BSZL]  = 0.5*(Bz(VEC(i,j,k)) + Bz(VEC(i,j,k+1))) ;
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
         // Set cell-centered **primitive** B^i
         aux(BX_) = cons[BSXL] / metric.sqrtg() ;
@@ -388,6 +391,9 @@ struct grmhd_equations_system_t
         aux(TEMP_)    = prims[TEMPL]   ;
         aux(ENTROPY_) = prims[ENTL]    ;
         aux(YE_)      = prims[YEL]     ;
+        #ifdef M1_NU_FIVESPECIES
+        aux(YMU_)      = prims[YMUL]     ;
+        #endif
         aux(ZVECX_)   = prims[ZXL]     ;
         aux(ZVECY_)   = prims[ZYL]     ;
         aux(ZVECZ_)   = prims[ZZL]     ;
@@ -431,10 +437,16 @@ struct grmhd_equations_system_t
             uint64_t const curr = c2p_errors.words[0] ;
             aux(C2P_ERR_) = static_cast<double>(prev | curr) ;
         }
+        #ifdef M1_NU_FIVESPECIES
+        if ( c2p_errors.test(c2p_err_enum_t::C2P_RESET_YMU) ) {
+            aux(C2P_ERR_) += Kokkos::fabs(vars(YMUSTAR_) - cons[YMUSL])/(1e-50+Kokkos::fabs(cons[YMUSL])) ;
+            vars(YMUSTAR_) = cons[YMUSL] ;
+        }
+        #endif
     };
     /**
      * @brief Compute maximum absolute value eigenspeed.
-     * 
+     *
      * @param i Cell index in \f$x^1\f$ direction.
      * @param j Cell index in \f$x^2\f$ direction.
      * @param k Cell index in \f$x^3\f$ direction.
@@ -442,51 +454,56 @@ struct grmhd_equations_system_t
      * @return double Maximum eigenspeed of GRMHD equations.
      */
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
-    compute_max_eigenspeed( VEC( const int i 
-                          ,      const int j 
-                          ,      const int k) 
-                          , int64_t q ) const 
+    compute_max_eigenspeed( VEC( const int i
+                          ,      const int j
+                          ,      const int k)
+                          , int64_t q ) const
     {
         /****************************************************/
         /****************************************************/
 
-        using namespace grace; 
-        using namespace Kokkos ; 
+        using namespace grace;
+        using namespace Kokkos ;
 
         /****************************************************/
         /* Get prims */
         grmhd_prims_array_t prims ;
         FILL_PRIMS_ARRAY_ZVEC(prims,this->_aux,q,VEC(i,j,k)) ;
         /* Get metric */
-        metric_array_t metric ; 
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k));
         /* Get some pointers */
         double * const  betau = metric._beta.data() ;
         double * const  gdd   = metric._g.data()    ;
-        double const alp = metric.alp() ; 
+        double const alp = metric.alp() ;
 
-        double * const z = &(prims[ZXL]) ; 
-        double * const B = &(prims[BXL]) ; 
-        double rho    = prims[RHOL]  ; 
+        double * const z = &(prims[ZXL]) ;
+        double * const B = &(prims[BXL]) ;
+        double rho    = prims[RHOL]  ;
         double T      = prims[TEMPL] ;
-        double ye     = prims[YEL] ; 
-        double eps    = prims[EPSL] ; 
+        double ye     = prims[YEL] ;
+    #ifdef M1_NU_FIVESPECIES
+        double ymu    = prims[YMUL] ;
+    #else
+        double ymu    = 0.0;
+    #endif
+        double eps    = prims[EPSL] ;
         double press  = prims[PRESSL] ;
         /****************************************************/
 
         /* Get soundspeed, enthalpy */
-        double csnd2, h ; 
-        eos_err_t err ; 
-        double dummy = _eos.press_h_csnd2__temp_rho_ye( h, csnd2, T, rho, ye, err);
+        double csnd2, h ;
+        eos_err_t err ;
+        double dummy = _eos.press_h_csnd2__temp_rho_ye_ymu( h, csnd2, T, rho, ye, ymu, err);
 
         /* Compute Lorentz factor */
         double W ;
         grmhd_get_W(
             gdd, z, &W
-        ) ; 
+        ) ;
 
         /* Compute smallb */
-        double smallbu[4] ; 
+        double smallbu[4] ;
         double b2;
         grmhd_get_smallbu_smallb2(
             alp,betau,gdd,B,z,W,
@@ -510,10 +527,10 @@ struct grmhd_equations_system_t
                 idir,
                 &cm, &cp
             ) ;
-            cmax = math::max(cmax,math::abs(cp),math::abs(cm)) ; 
+            cmax = math::max(cmax,math::abs(cp),math::abs(cm)) ;
         }
         /****************************************************/
-        return cmax ; 
+        return cmax ;
         /****************************************************/
         /****************************************************/
     };
@@ -521,13 +538,17 @@ struct grmhd_equations_system_t
  private:
     /***********************************************************************/
     //! Number of reconstructed variables.
-    static constexpr unsigned int GRMHD_NUM_RECON_VARS = 10 ; 
+    #ifndef M1_NU_FIVESPECIES
+    static constexpr unsigned int GRMHD_NUM_RECON_VARS = 10 ;
+    #else
+    static constexpr unsigned int GRMHD_NUM_RECON_VARS = 11 ;
+    #endif
     //! Equation of State object.
-    eos_t _eos ;    
+    eos_t _eos ;
     //! Parameters for atmosphere
     atmo_params_t atmo_params;
     //! Parameters for excision
-    excision_params_t excision_params; 
+    excision_params_t excision_params;
     //! con2prim parameters
     c2p_params_t c2p_params ;
     //! Riemann-solver parameters (currently: Rusanov wavespeed floor)
@@ -537,7 +558,7 @@ struct grmhd_equations_system_t
     /***********************************************************************/
     /**
      * @brief Compute fluxes for gmrmhd equations.
-     * 
+     *
      * @tparam idir Direction the fluxes are computed in.
      * @tparam recon_t Type of reconstruction.
      * @tparam riemann_t Type of Riemann solver.
@@ -565,7 +586,7 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         /* Initialize reconstructor and riemann solver                         */
         /***********************************************************************/
-        recon_t reconstructor{} ; 
+        recon_t reconstructor{} ;
 
         /***********************************************************************/
         /* Define and interpolate metric                                       */
@@ -574,7 +595,7 @@ struct grmhd_equations_system_t
         FILL_METRIC_ARRAY( metric_l, this->_state, q
                          , VEC( i-utils::delta(idir,0)
                               , j-utils::delta(idir,1)
-                              , k-utils::delta(idir,2))) ; 
+                              , k-utils::delta(idir,2))) ;
         FILL_METRIC_ARRAY( metric_r, this->_state, q
                          , VEC( i
                               , j
@@ -611,6 +632,9 @@ struct grmhd_equations_system_t
                 , ZVECY_
                 , ZVECZ_
                 , YE_
+                #ifdef M1_NU_FIVESPECIES
+                , YMU_
+                #endif
                 , recon_thermo_idx_aux
                 , ENTROPY_
                 , BX_
@@ -625,6 +649,9 @@ struct grmhd_equations_system_t
                 , ZYL
                 , ZZL
                 , YEL
+                #ifdef M1_NU_FIVESPECIES
+                , YMUL
+                #endif
                 , recon_thermo_idx_local
                 , ENTL
                 , BXL
@@ -669,11 +696,11 @@ struct grmhd_equations_system_t
         /* Replace B^d_L/R with face staggered                                 */
         /***********************************************************************/
         if constexpr ( idir == 0 ) {
-            primL[BXL] = primR[BXL] = this->_stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) / metric_face.sqrtg() ; 
+            primL[BXL] = primR[BXL] = this->_stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) / metric_face.sqrtg() ;
         } else if constexpr ( idir == 1 ) {
-            primL[BYL] = primR[BYL] = this->_stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) / metric_face.sqrtg(); 
+            primL[BYL] = primR[BYL] = this->_stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) / metric_face.sqrtg();
         } else {
-            primL[BZL] = primR[BZL] = this->_stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) / metric_face.sqrtg(); 
+            primL[BZL] = primR[BZL] = this->_stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) / metric_face.sqrtg();
         }
         /***********************************************************************/
         /* EOS: derive remaining thermo state from the reconstructed thermo   */
@@ -753,6 +780,9 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         fluxes(VEC(i,j,k),DENS_,idir,q)        = f_HLL[DENSL] ;
         fluxes(VEC(i,j,k),YESTAR_,idir,q)      = f_HLL[YESL] ;
+    #ifdef M1_NU_FIVESPECIES
+        fluxes(VEC(i,j,k),YMUSTAR_,idir,q)      = f_HLL[YMUSL]  ;
+    #endif
         fluxes(VEC(i,j,k),ENTROPYSTAR_,idir,q) = f_HLL[ENTSL] ;
         fluxes(VEC(i,j,k),TAU_,idir,q)         = f_HLL[TAUL] ;
         fluxes(VEC(i,j,k),SX_,idir,q)          = f_HLL[STXL] ;
@@ -792,34 +822,34 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         double const * const gdd   = metric_face._g.data();
         double const * const guu   = metric_face._ginv.data();
-        double const * const betau = metric_face._beta.data(); 
-        double const alp           = metric_face.alp() ; 
-        double const sqrtg         = metric_face.sqrtg() ; 
-        double const * const zl    = &(primL[ZXL]) ; 
-        double const * const zr    = &(primR[ZXL]) ; 
-        double const * const Bl    = &(primL[BXL]) ; 
-        double const * const Br    = &(primR[BXL]) ; 
-        double& rhol          = primL[RHOL]   ; 
-        double& rhor          = primR[RHOL]   ; 
-        double& sl            = primL[ENTL]   ; 
+        double const * const betau = metric_face._beta.data();
+        double const alp           = metric_face.alp() ;
+        double const sqrtg         = metric_face.sqrtg() ;
+        double const * const zl    = &(primL[ZXL]) ;
+        double const * const zr    = &(primR[ZXL]) ;
+        double const * const Bl    = &(primL[BXL]) ;
+        double const * const Br    = &(primR[BXL]) ;
+        double& rhol          = primL[RHOL]   ;
+        double& rhor          = primR[RHOL]   ;
+        double& sl            = primL[ENTL]   ;
         double& sr            = primR[ENTL]   ;
         double& tl            = primL[TEMPL]  ;
         double& tr            = primR[TEMPL]  ;
         double& yel           = primL[YEL]    ;
         double& yer           = primR[YEL]    ;
         double const epsl = primL[EPSL], epsr = primR[EPSL];
-        double const pl   = primL[PRESSL], pr = primR[PRESSL] ; 
-        double const cs2l = primL[CS2L], cs2r = primR[CS2L] ;  
+        double const pl   = primL[PRESSL], pr = primR[PRESSL] ;
+        double const cs2l = primL[CS2L], cs2r = primR[CS2L] ;
         /***********************************************************************/
         /* Compute W on both sides                                             */
         /***********************************************************************/
         double wl,wr ;
-        grmhd_get_W(gdd, zl, &wl) ; 
-        grmhd_get_W(gdd, zr, &wr) ; 
+        grmhd_get_W(gdd, zl, &wl) ;
+        grmhd_get_W(gdd, zr, &wr) ;
         /***********************************************************************/
         /* Compute b and b2 on both sides                                      */
         /***********************************************************************/
-        double smallbl[4], smallbr[4] ; 
+        double smallbl[4], smallbr[4] ;
         double b2l, b2r ;
         grmhd_get_smallbu_smallb2(
             alp, betau, gdd, Bl, zl, wl, &smallbl, &b2l
@@ -903,9 +933,9 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         /* Compute fluxes and conserved on both sides                          */
         /***********************************************************************/
-        double densl, taul, entsl, densr, taur, entsr ; 
-        double stl[3], str[3] ; 
-        double fdl, ftl, fel, fstl[3] ; 
+        double densl, taul, entsl, densr, taur, entsr ;
+        double stl[3], str[3] ;
+        double fdl, ftl, fel, fstl[3] ;
         double fdr, ftr, fer, fstr[3] ;
 
         grmhd_get_fluxes(
@@ -922,51 +952,54 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         /* Use Riemann solver                                                  */
         /***********************************************************************/
-        f[DENSL] = sqrtg * solver(fdl,fdr,densl,densr,cmin,cmax) ; 
+        f[DENSL] = sqrtg * solver(fdl,fdr,densl,densr,cmin,cmax) ;
         /***********************************************************************/
         f[ENTSL] = sqrtg * solver(fel,fer,entsl,entsr,cmin,cmax) ;
         /***********************************************************************/
-        f[TAUL]  = sqrtg * solver(ftl,ftr,taul,taur,cmin,cmax) ; 
+        f[TAUL]  = sqrtg * solver(ftl,ftr,taul,taur,cmin,cmax) ;
         /***********************************************************************/
-        f[STXL] = sqrtg * solver(fstl[0],fstr[0],stl[0],str[0],cmin,cmax) ; 
-        f[STYL] = sqrtg * solver(fstl[1],fstr[1],stl[1],str[1],cmin,cmax) ; 
-        f[STZL] = sqrtg * solver(fstl[2],fstr[2],stl[2],str[2],cmin,cmax) ; 
+        f[STXL] = sqrtg * solver(fstl[0],fstr[0],stl[0],str[0],cmin,cmax) ;
+        f[STYL] = sqrtg * solver(fstl[1],fstr[1],stl[1],str[1],cmin,cmax) ;
+        f[STZL] = sqrtg * solver(fstl[2],fstr[2],stl[2],str[2],cmin,cmax) ;
         /***********************************************************************/
         f[YESL] = sqrtg * solver(yel*fdl,yer*fdr,yel*densl,yer*densr,cmin,cmax) ;
+    #ifdef M1_NU_FIVESPECIES
+        f[YMUSL] = sqrtg * solver(ymul*fdl,ymur*fdr,ymul*densl,ymur*densr,cmin,cmax) ;
+    #endif
         /***********************************************************************/
-        #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS 
+        #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
         if constexpr ( idir == 0 ) {
             // cross directions are y, z
             // Ey = Fx(Bz)
             // Ez = - Fx(By)
-            double Fbzl = - Bl[0] * vtildel[2] + Bl[2] * vtildel[0] ; 
-            double Fbzr = - Br[0] * vtilder[2] + Br[2] * vtilder[0] ; 
-            emf[0] = sqrtg * solver(Fbzl, Fbzr, Bl[2], Br[2], cmin,cmax) ; 
+            double Fbzl = - Bl[0] * vtildel[2] + Bl[2] * vtildel[0] ;
+            double Fbzr = - Br[0] * vtilder[2] + Br[2] * vtilder[0] ;
+            emf[0] = sqrtg * solver(Fbzl, Fbzr, Bl[2], Br[2], cmin,cmax) ;
             double Fbyl = - Bl[0] * vtildel[1] + Bl[1] * vtildel[0] ;
             double Fbyr = - Br[0] * vtilder[1] + Br[1] * vtilder[0] ;
-            emf[1] = - sqrtg * solver(Fbyl, Fbyr, Bl[1], Br[1], cmin,cmax) ; 
+            emf[1] = - sqrtg * solver(Fbyl, Fbyr, Bl[1], Br[1], cmin,cmax) ;
         } else if constexpr (idir == 1) {
             // cross directions are x, z
             // Ex = - Fy(Bz)
             // Ez = Fy(Bx)
             double Fbzl = - Bl[1] * vtildel[2] + Bl[2] * vtildel[1] ;
-            double Fbzr = - Br[1] * vtilder[2] + Br[2] * vtilder[1] ; 
-            emf[0] = - sqrtg * solver(Fbzl,Fbzr,Bl[2],Br[2],cmin,cmax) ; 
+            double Fbzr = - Br[1] * vtilder[2] + Br[2] * vtilder[1] ;
+            emf[0] = - sqrtg * solver(Fbzl,Fbzr,Bl[2],Br[2],cmin,cmax) ;
             double Fbxl = Bl[0] * vtildel[1] - Bl[1] * vtildel[0] ;
             double Fbxr = Br[0] * vtilder[1] - Br[1] * vtilder[0] ;
-            emf[1] = sqrtg * solver(Fbxl,Fbxr,Bl[0],Br[0],cmin,cmax) ; 
+            emf[1] = sqrtg * solver(Fbxl,Fbxr,Bl[0],Br[0],cmin,cmax) ;
         } else {
             // cross directions are x, y
             // Ex = Fz(By)
             // Ey = - Fz(Bx)
-            double Fbyl = Bl[1] * vtildel[2] - Bl[2] * vtildel[1] ; 
-            double Fbyr = Br[1] * vtilder[2] - Br[2] * vtilder[1] ; 
-            emf[0] = sqrtg * solver(Fbyl,Fbyr,Bl[1],Br[1],cmin,cmax) ; 
+            double Fbyl = Bl[1] * vtildel[2] - Bl[2] * vtildel[1] ;
+            double Fbyr = Br[1] * vtilder[2] - Br[2] * vtilder[1] ;
+            emf[0] = sqrtg * solver(Fbyl,Fbyr,Bl[1],Br[1],cmin,cmax) ;
             double Fbxl = Bl[0] * vtildel[2] - Bl[2] * vtildel[0] ;
-            double Fbxr = Br[0] * vtilder[2] - Br[2] * vtilder[0] ; 
-            emf[1] = - sqrtg * solver(Fbxl,Fbxr,Bl[0],Br[0],cmin,cmax) ; 
+            double Fbxr = Br[0] * vtilder[2] - Br[2] * vtilder[0] ;
+            emf[1] = - sqrtg * solver(Fbxl,Fbxr,Bl[0],Br[0],cmin,cmax) ;
         }
-        #endif 
+        #endif
     }
     /***********************************************************************/
     /* HLLD/HLLC ADV Riemann solver: not implemented in this build.         */
@@ -1001,7 +1034,7 @@ struct grmhd_equations_system_t
 } ;
 /***********************************************************************/
 template< typename eos_t >
-void set_grmhd_initial_data() ; 
+void set_grmhd_initial_data() ;
 /***********************************************************************/
 void set_conservs_from_prims() ;
 /***********************************************************************/

@@ -39,56 +39,56 @@
 
 namespace grace {
 
-  
-  template< typename eos_t > 
+
+  template< typename eos_t >
   struct ent_froot_t {
 
     KOKKOS_FUNCTION ent_froot_t(
-      eos_t _eos, double _d, double _rsqr, double _rbsqr, double _bsqr, double _s, double _ye, double h0
-    ) : eos(_eos), d(_d), s(_s), ye(_ye), rsqr(_rsqr), bsqr(_bsqr), rbsqr(_rbsqr)
+      eos_t _eos, double _d, double _rsqr, double _rbsqr, double _bsqr, double _s, double _ye, double _ymu, double h0
+    ) : eos(_eos), d(_d), s(_s), ye(_ye), ymu(_ymu), rsqr(_rsqr), bsqr(_bsqr), rbsqr(_rbsqr)
     {
-      double zsqrmax = rsqr/(h0*h0) ; 
-      double wsqrmax = 1 + zsqrmax ; 
-      wmax = sqrt(wsqrmax) ; 
-      vsqrmax = zsqrmax/wsqrmax ; 
+      double zsqrmax = rsqr/(h0*h0) ;
+      double wsqrmax = 1 + zsqrmax ;
+      wmax = sqrt(wsqrmax) ;
+      vsqrmax = zsqrmax/wsqrmax ;
     }
 
-    double KOKKOS_INLINE_FUNCTION 
+    double KOKKOS_INLINE_FUNCTION
     x__mu(double mu) const {
-      return 1./(1. + mu*bsqr) ; 
+      return 1./(1. + mu*bsqr) ;
     }
 
-    double KOKKOS_INLINE_FUNCTION 
+    double KOKKOS_INLINE_FUNCTION
     rfsqr__mu_x(double mu, double x) const {
-      return x * (rsqr * x + mu * (x + 1.0) * rbsqr);  
+      return x * (rsqr * x + mu * (x + 1.0) * rbsqr);
     }
 
     double KOKKOS_INLINE_FUNCTION
     operator() (double mu)
     {
       const double x     = x__mu(mu) ;
-      const double rfsqr = rfsqr__mu_x(mu,x) ; 
-      double vsqr        = rfsqr * mu * mu ; 
-      double w           = 1/sqrt(1-vsqr) ; 
+      const double rfsqr = rfsqr__mu_x(mu,x) ;
+      double vsqr        = rfsqr * mu * mu ;
+      double w           = 1/sqrt(1-vsqr) ;
       if ( vsqr > vsqrmax ) {
-        vsqr = vsqrmax ; 
-        w    = wmax    ; 
-      } 
+        vsqr = vsqrmax ;
+        w    = wmax    ;
+      }
 
       double const rhomax = eos.density_maximum();
       double const rhomin = eos.density_minimum();
-      double rho          = Kokkos::fmin(rhomax,Kokkos::fmax(rhomin,d/w)) ; 
+      double rho          = Kokkos::fmin(rhomax,Kokkos::fmax(rhomin,d/w)) ;
 
-      double hh,csnd2,temp,eps ; 
-      eos_err_t eos_err ; 
-      double press = eos.press_h_csnd2_temp_eps__entropy_rho_ye(
-        hh,csnd2,temp,eps,s,rho,ye,eos_err
-      ) ; 
+      double hh,csnd2,temp,eps ;
+      eos_err_t eos_err ;
+      double press = eos.press_h_csnd2_temp_eps__entropy_rho_ye_ymu(
+        hh,csnd2,temp,eps,s,rho,ye,ymu,eos_err
+      ) ;
 
-      double const a = press/(rho*(1+eps)) ; 
-      double const h = (1+eps) * (1+a) ; 
+      double const a = press/(rho*(1+eps)) ;
+      double const h = (1+eps) * (1+a) ;
 
-      double const hbw     = h/w      ; 
+      double const hbw     = h/w      ;
       double const newmu   = 1. / (hbw + rfsqr * mu) ;
 
       return mu - newmu;
@@ -97,7 +97,7 @@ namespace grace {
     double KOKKOS_INLINE_FUNCTION
     compute_primitives (
       double mu, c2p_sig_t& err,
-      double& x, double& w, double& rho, double& press, 
+      double& x, double& w, double& rho, double& press,
       double& eps, double& temp, double& entropy
     )
     {
@@ -105,42 +105,42 @@ namespace grace {
       entropy = s ;
 
       x                  = x__mu(mu) ;
-      const double rfsqr = rfsqr__mu_x(mu,x) ; 
-      double vsqr        = rfsqr * mu * mu ; 
-      w = 1/sqrt(1-vsqr) ; 
+      const double rfsqr = rfsqr__mu_x(mu,x) ;
+      double vsqr        = rfsqr * mu * mu ;
+      w = 1/sqrt(1-vsqr) ;
       if ( vsqr > vsqrmax ) {
-        vsqr = vsqrmax ; 
-        w    = wmax    ; 
-        err.set(c2p_sig_enum_t::C2P_VEL_TOO_HIGH) ; 
-      } 
+        vsqr = vsqrmax ;
+        w    = wmax    ;
+        err.set(c2p_sig_enum_t::C2P_VEL_TOO_HIGH) ;
+      }
 
       double const rhomax = eos.density_maximum();
       double const rhomin = eos.density_minimum();
-      rho = d/w ; 
+      rho = d/w ;
       if ( rho >= rhomax ) {
-        err.set(c2p_sig_enum_t::C2P_RHO_TOO_HIGH) ; 
-        rho = rhomax ; 
+        err.set(c2p_sig_enum_t::C2P_RHO_TOO_HIGH) ;
+        rho = rhomax ;
       } else if ( rho <= rhomin ) {
-        err.set(c2p_sig_enum_t::C2P_RHO_TOO_LOW) ; 
-        rho = rhomin ; 
-      } 
-
-      double hh,csnd2 ; 
-      eos_err_t eos_err ; 
-      press = eos.press_h_csnd2_temp_eps__entropy_rho_ye(
-        hh,csnd2,temp,eps,entropy,rho,ye,eos_err
-      ) ; 
-      // handle errors, rho always in bound, need to 
-      // check entropy and ye 
-      if (eos_err.test(EOS_ERROR_T::EOS_ENTROPY_TOO_LOW)) {
-        err.set(C2P_ENT_TOO_LOW) ;
-      }   
-      if (eos_err.test(EOS_ERROR_T::EOS_ENTROPY_TOO_HIGH)) {
-        err.set(C2P_ENT_TOO_HIGH) ; 
+        err.set(c2p_sig_enum_t::C2P_RHO_TOO_LOW) ;
+        rho = rhomin ;
       }
 
-      double const a = press/(rho*(1+eps)) ; 
-      double const h = (1+eps) * (1+a) ; 
+      double hh,csnd2 ;
+      eos_err_t eos_err ;
+      press = eos.press_h_csnd2_temp_eps__entropy_rho_ye_ymu(
+        hh,csnd2,temp,eps,entropy,rho,ye,ymu,eos_err
+      ) ;
+      // handle errors, rho always in bound, need to
+      // check entropy and ye and ymu
+      if (eos_err.test(EOS_ERROR_T::EOS_ENTROPY_TOO_LOW)) {
+        err.set(C2P_ENT_TOO_LOW) ;
+      }
+      if (eos_err.test(EOS_ERROR_T::EOS_ENTROPY_TOO_HIGH)) {
+        err.set(C2P_ENT_TOO_HIGH) ;
+      }
+
+      double const a = press/(rho*(1+eps)) ;
+      double const h = (1+eps) * (1+a) ;
 
       double const hbw     = h/w      ;
       double const newmu   = 1. / (hbw + rfsqr * mu) ;
@@ -151,13 +151,13 @@ namespace grace {
 
     eos_t eos ;
 
-    double d, s, ye ; 
+    double d, s, ye, ymu ;
 
-    double rsqr, bsqr, rbsqr ; 
+    double rsqr, bsqr, rbsqr ;
 
-    double vsqrmax, wmax ; 
+    double vsqrmax, wmax ;
 
-  } ; 
+  } ;
 
   template< typename eos_t >
   struct entropy_fix_c2p_t {
@@ -169,28 +169,32 @@ namespace grace {
 		  grmhd_cons_array_t& conservs
 		  ) : eos(_eos), metric(_metric), h0(_eos.enthalpy_minimum())
     {
-      
 
-      double const B2 = metric.square_vec({conservs[BSXL],conservs[BSYL], conservs[BSZL]}) ; 
+
+      double const B2 = metric.square_vec({conservs[BSXL],conservs[BSYL], conservs[BSZL]}) ;
       // limit tau
-      conservs[DENSL] = fmax(0,conservs[DENSL]) ; 
+      conservs[DENSL] = fmax(0,conservs[DENSL]) ;
       D  = conservs[DENSL] ;
 
 
       //conservs[TAUL]  = fmax(0.5*B2/D, conservs[TAUL]) ;
-      s = conservs[ENTSL]/D ; 
+      s = conservs[ENTSL]/D ;
       r = {conservs[STXL]/D, conservs[STYL]/D, conservs[STZL]/D} ;
-      
+
       Btilde = {conservs[BSXL]/sqrt(D),conservs[BSYL]/sqrt(D), conservs[BSZL]/sqrt(D)} ;
-      B = {conservs[BSXL],conservs[BSYL], conservs[BSZL]}; 
+      B = {conservs[BSXL],conservs[BSYL], conservs[BSZL]};
       r2 = metric.square_covec(r) ;
       Btilde2 = metric.square_vec(Btilde);
       r_dot_Btilde = (r[0]*Btilde[0] + r[1]*Btilde[1] + r[2]*Btilde[2]) ;
       r_dot_Btilde2 = r_dot_Btilde*r_dot_Btilde;
 
-      r = metric.raise(r) ; 
-      
+      r = metric.raise(r) ;
+
       ye = conservs[YESL] / D ;
+      ymu = 0.;
+      #ifdef M1_NU_FIVESPECIES
+      ymu = conservs[YMUSL] / D ;
+      #endif
 
       v02 = r2 / (h0*h0 + r2 ) ;
     }
@@ -211,6 +215,11 @@ namespace grace {
     double  GRACE_HOST_DEVICE
     invert(grmhd_prims_array_t& prims, c2p_sig_t& err) {
 
+<<<<<<< HEAD
+=======
+      static constexpr double tolerance = 1e-15 ;
+
+>>>>>>> 224b3b4 (Added muons to base_eos++)
       // initial bracket
       double mu0 = 1/h0 ;
       if ( r2 >= h0*h0 ) {
@@ -224,37 +233,42 @@ namespace grace {
         }
       }
 
+<<<<<<< HEAD
       ent_froot_t fmu(eos,D,r2,r_dot_Btilde2,Btilde2,s,ye,h0) ;
 
       double mu = utils::brent(fmu, 0, mu0, 1e-15) ;
+=======
+      ent_froot_t fmu(eos,D,r2,r_dot_Btilde2,Btilde2,s,ye,ymu,h0) ;
+      double mu = utils::brent(fmu, 0, mu0, tolerance) ;
+>>>>>>> 224b3b4 (Added muons to base_eos++)
 
-      double x, w, eps, rho, press, temp, entropy ; 
+      double x, w, eps, rho, press, temp, entropy ;
       double residual = fmu.compute_primitives(
         mu, err, x, w, rho, press, eps, temp, entropy
       ) ;
 
-      prims[EPSL]   = eps   ; 
-      prims[RHOL]   = rho   ; 
+      prims[EPSL]   = eps   ;
+      prims[RHOL]   = rho   ;
       prims[PRESSL] = press ;
-      prims[TEMPL]  = temp  ; 
-      prims[ENTL]   = entropy ; // we set it here in case it was clamped 
-      prims[BXL]    = B[0] ; 
-      prims[BYL]    = B[1] ; 
-      prims[BZL]    = B[2] ; 
+      prims[TEMPL]  = temp  ;
+      prims[ENTL]   = entropy ; // we set it here in case it was clamped
+      prims[BXL]    = B[0] ;
+      prims[BYL]    = B[1] ;
+      prims[BZL]    = B[2] ;
 
-      for( int ii=0; ii<3; ++ii) 
-        prims[ZXL+ii] = w * mu * x * ( r[ii] + mu * r_dot_Btilde * Btilde[ii] ) ;  
-      
-      return fabs(residual) ; 
+      for( int ii=0; ii<3; ++ii)
+        prims[ZXL+ii] = w * mu * x * ( r[ii] + mu * r_dot_Btilde * Btilde[ii] ) ;
+
+      return fabs(residual) ;
     }
-    
+
   private:
     eos_t eos ;
     metric_array_t metric ;
-    double r2, s, Btilde2, D, ye, r_dot_Btilde, r_dot_Btilde2, h0, v02 ;
+    double r2, s, Btilde2, D, ye, ymu, r_dot_Btilde, r_dot_Btilde2, h0, v02 ;
     std::array<double,3> r, Btilde, B ;
   };
-    
+
 
 } /* namespace grace */
 #endif /*GRACE_C2P_KASTAUN_MHD_HH*/

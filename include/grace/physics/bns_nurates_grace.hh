@@ -264,7 +264,7 @@ struct compute_bns_nurates_eas
         opacity_flags_init.use_pair           = pair_annihilation ? 1 : 0;
         opacity_flags_init.use_iso            = iso               ? 1 : 0;
         opacity_flags_init.use_inelastic_scatt = inelastic        ? 1 : 0;
-        
+
         opacity_params_init = opacity_params_default_none;  // host-only, safe here
         opacity_params_init.use_dU             = 1;
         opacity_params_init.use_decay          = 1;
@@ -284,6 +284,11 @@ struct compute_bns_nurates_eas
         const double rhoL  = aux(i, j, k, RHO_,  q);
         const double tempL = aux(i, j, k, TEMP_,  q); // MeV
         const double yeL   = aux(i, j, k, YE_,    q);
+    #ifndef M1_NU_FIVESPECIES
+        const double ymuL = 0.0;
+    #else
+        const double ymuL = aux(i, j, k, YMU_,    q);;
+    #endif
 
         // ----------------------------------------------------------------
         // 2. EOS call: chemical potentials
@@ -292,10 +297,10 @@ struct compute_bns_nurates_eas
         double Xa = 0., Xh = 0., Xn = 0., Xp = 0.;
         double Abar = 1., Zbar = 1.;
         eos_err_t err;
-        double rho_loc = rhoL, T_loc = tempL, ye_loc = yeL;
-        const double mue = eos.mue_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye(
+        double rho_loc = rhoL, T_loc = tempL, ye_loc = yeL, ymu_loc = ymuL;
+        const double mue = eos.mue_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
             mup, mun, Xa, Xh, Xn, Xp, Abar, Zbar,
-            T_loc, rho_loc, ye_loc, err);
+            T_loc, rho_loc, ye_loc, ymu_loc, err);
 
         // ----------------------------------------------------------------
         // 3. Metric and M1 primitives via GRACE closure

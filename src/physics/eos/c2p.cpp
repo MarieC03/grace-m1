@@ -106,8 +106,13 @@ limit_primitives(
         // recompute other prims
         eos_err_t eos_err ;
         double csnd2;
-        prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye(
-            prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], eos_err
+    #ifndef M1_NU_FIVESPECIES
+        double ymu = 0.0;
+    #else
+        double& ymu = prims[YMUL];
+    #endif
+        prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu(
+            prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], ymu, eos_err
         );
         // Set the signal for the caller to handle
         sig.set(c2p_sig_enum_t::C2P_SIGMA_TOO_HIGH) ;
@@ -115,7 +120,7 @@ limit_primitives(
 }
 
 template< typename eos_t >
-static bool KOKKOS_INLINE_FUNCTION
+static void KOKKOS_INLINE_FUNCTION
 limit_conservatives(
     grace::grmhd_cons_array_t&  cons,
     metric_array_t const& metric,
@@ -123,14 +128,17 @@ limit_conservatives(
     c2p_err_t& err
 )
 {
-    bool any_applied{false} ;
 
     double rhoL = cons[DENSL] ;
     double yeL  = cons[YESL]  / (cons[DENSL]) ;
+    double ymuL = 0;
+#ifdef M1_NU_FIVESPECIES
+    ymuL = cons[YMUSL]  / (cons[DENSL]) ;
+#endif
 
     double epsmax,epsmin ;
     eos_err_t eoserr;
-    eos.eps_range__rho_ye(epsmin,epsmax,rhoL,yeL,eoserr) ;
+    eos.eps_range__rho_ye_ymu(epsmin,epsmax,rhoL,yeL,ymuL,eoserr) ;
 
     // note: this is not really staggered!
     auto B2L = metric.square_vec({cons[BSXL],cons[BSYL],cons[BSZL]}) ;
@@ -169,20 +177,27 @@ reset_to_atmosphere(
 {
     prims[RHOL]  = atmo.rho_fl ;
     prims[YEL]   = atmo.ye_fl  ;
+#ifdef M1_NU_FIVESPECIES
+    prims[YMUL]   = atmo.ymu_fl  ;
+#endif
     prims[TEMPL] = atmo.temp_fl ;
     prims[ZXL]   = 0. ;
     prims[ZYL]   = 0. ;
     prims[ZZL]   = 0. ;
+#ifndef M1_NU_FIVESPECIES
+    double ymu = 0.;
+#else
+    double& ymu = prims[YMUL];
+#endif
     // get pressure, eps and entropy
     double csnd2 ;
     eos_err_t eos_err;
-    prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye(
-        prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], eos_err
+    prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu(
+        prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], ymu, eos_err
     );
     // all conserved need to be reset
     prims_to_conservs(prims,cons,metric) ;
-    c2p_set_all_resets(err) ;
-    err.set(c2p_err_enum_t::C2P_ATMO_RESET) ;
+    err.set_all() ;
 }
 
 template< typename eos_t >
@@ -247,6 +262,21 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         prims[YEL] = yemin ;
         c2p_err.set(c2p_err_enum_t::C2P_RESET_YE) ;
     }
+
+#ifdef M1_NU_FIVESPECIES
+    /* Check that the ymu is within bounds */
+    prims[YMUL] = cons[YMUSL]/cons[DENSL] ;
+    double ymumax = eos.get_c2p_ymu_max();
+    double ymumin = eos.get_c2p_ymu_min();
+    if ( prims[YMUL] > ymumax ) {
+        prims[YMUL] = ymumax ;
+        c2p_err.set(c2p_err_enum_t::C2P_RESET_YMU) ;
+    }
+    if ( prims[YMUL] < ymumin ) {
+        prims[YMUL] = ymumin ;
+        c2p_err.set(c2p_err_enum_t::C2P_RESET_YMU) ;
+    }
+#endif
 
     /* Figure out if we are inside a bh   */
     /* in which case we should be lenient */
@@ -366,11 +396,16 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         // get pressure, eps and entropy
         double csnd2 ;
         eos_err_t eos_err;
-        prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye(
-            prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], eos_err
+    #ifndef M1_NU_FIVESPECIES
+        double ymu = 0.;
+    #else
+        double& ymu = prims[YMUL];
+    #endif
+        prims[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu(
+            prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], ymu, eos_err
         );
         // check if the EOS had any sort of problem
-        c2p_handle_eos_signals<eos_t>(
+        c2p_handle_eos_signals(
             eos_err,
             c2p_is_lenient,
             c2p_err
@@ -450,6 +485,9 @@ prims_to_conservs( grace::grmhd_prims_array_t& prims
     cons[TAUL]  = sqrtg * tau ;
     cons[ENTSL] = sqrtg * sstar ;
     cons[YESL]  = cons[DENSL] * prims[YEL] ;
+#ifdef M1_NU_FIVESPECIES
+    cons[YMUSL]  = cons[DENSL] * prims[YMUL] ;
+#endif
     ////
     return ;
 }

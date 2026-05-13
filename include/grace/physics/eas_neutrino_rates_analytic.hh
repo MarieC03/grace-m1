@@ -435,7 +435,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double black_body_energy(double g_nu, doub
 //                   double mass_scale, int species, double rho_cgs) const;
 // -----------------------------------------------------------------------------
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 double compute_analytic_tau_from_rho_cgs(double rho_cgs) {
     // Deaton+ 2013 fit (log10 tau vs log10 rho) for cold NS-like profiles.
     const double rcgs = safe_pos(rho_cgs);
@@ -445,13 +445,13 @@ double compute_analytic_tau_from_rho_cgs(double rho_cgs) {
 }
 
 struct tau_policy_none {
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
                                            double /*mass_scale*/, int /*species*/,
                                            double /*rho_cgs*/) const {
         return 0.0;
     }
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_post(double /*kappa_tot_cgs*/, double /*rho_code*/,
                                            const double* /*xyz_code*/, double /*mass_scale*/,
                                            int /*species*/, double /*rho_cgs*/) const {
@@ -460,13 +460,13 @@ struct tau_policy_none {
 };
 
 struct tau_policy_analytic_density {
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
                                            double /*mass_scale*/, int /*species*/,
                                            double rho_cgs) const {
         return compute_analytic_tau_from_rho_cgs(rho_cgs);
     }
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_post(double /*kappa_tot_cgs*/, double /*rho_code*/,
                                            const double* /*xyz_code*/, double /*mass_scale*/,
                                            int /*species*/, double rho_cgs) const {
@@ -480,14 +480,14 @@ struct tau_policy_local_spherical {
     // Optional seed for tau_init.
     bool seed_with_analytic{true};
 
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
                                            double /*mass_scale*/, int /*species*/,
                                            double rho_cgs) const {
         return seed_with_analytic ? compute_analytic_tau_from_rho_cgs(rho_cgs) : 0.0;
     }
 
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double tau_post(double kappa_tot_cgs, double /*rho_code*/,
                                            const double* xyz_code, double mass_scale,
                                            int /*species*/, double /*rho_cgs*/) const {
@@ -501,7 +501,7 @@ struct tau_policy_local_spherical {
 };
 
 template <typename eos_t, typename tau_policy_t>
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 fugacity_state make_fugacity_state(
     const eos_t& eos,
     double rho_code,
@@ -526,14 +526,15 @@ fugacity_state make_fugacity_state(
     double rho_eos = rho_code;
     double T_eos   = temp_code;
     double ye_eos  = ye;
+    double ymu_eos = ymu;
     eos_err_t err;
     // TODO!! EOS framework and get chm. pot!
     // Called it here like in FIL
-    F.mu_e = eos.mue_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye(
+    F.mu_e = eos.mue_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
         F.mu_p, F.mu_n,
         F.Xa, F.Xh, F.Xn, F.Xp,
         F.Abar, F.Zbar,
-        T_eos, rho_eos, ye_eos, err);
+        T_eos, rho_eos, ye_eos, ymu_eos, err);
     // TODO MUONS: when leptonic eos call here to get eta_mu
     // FIL: eta[NUMU] = eta[MUON] + eta[PROTON] - eta[NEUTRON] - Qnp;
 
@@ -659,7 +660,7 @@ struct nu_rates_all_out {
     std::array<nu_rates_out, NUMSPECIES> out;
 };
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_charged_current_absorption_opacity(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
     constexpr double abs_const = 0.25 * (1.0 + 3.0 * alpha * alpha) * sigma_0;
@@ -682,7 +683,7 @@ void add_charged_current_absorption_opacity(const fugacity_state& F, rates_accum
     }
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_scattering_opacity(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
     constexpr double Cs_n = (1.0 + 5.0 * alpha * alpha) / 24.0 * sigma_0;
@@ -710,7 +711,7 @@ void add_scattering_opacity(const fugacity_state& F, rates_accum& out) {
 // -----------------------------------------------------------------------------
 // Charged-current emission
 // -----------------------------------------------------------------------------
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_charged_current_emission(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
 
@@ -734,7 +735,7 @@ void add_charged_current_emission(const fugacity_state& F, rates_accum& out) {
     if (Qa > 0.0 && Kokkos::isfinite(Qa)) out.Q[NUEBAR] += Qa;
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
 
@@ -797,7 +798,7 @@ void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
     #endif
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
 
@@ -850,7 +851,7 @@ void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out) {
     #endif
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_brems_emission(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
     const double factorY = 0.5 * (ipow<2>(F.Xn) + ipow<2>(F.Xp) + (28.0/3.0) * F.Xn * F.Xp);
@@ -877,7 +878,7 @@ void add_brems_emission(const fugacity_state& F, rates_accum& out) {
   }
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void apply_kirchhoff(const fugacity_state& F,
                                              const std::array<double, NUMSPECIES>& g_nu,
                                              rates_accum& out) {
@@ -899,7 +900,7 @@ void apply_kirchhoff(const fugacity_state& F,
     }
 }
 
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_kirchhoff_absorption_opacity_from_QR(
                         const fugacity_state& F,
                         const std::array<double, NUMSPECIES>& g_nu,
@@ -948,7 +949,7 @@ void add_kirchhoff_emission_from_absorption_opacity(
 // -----------------------------------------------------------------------------
 
 template <typename eos_t, typename tau_policy_t>
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE 
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 nu_rates_all_out compute_all_species_weakhub(
     const grace::weakhub::device_handle& weakhub,
     const eos_t& eos,
@@ -1120,15 +1121,15 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
         #ifdef M1_NU_FIVESPECIES
             g_nu = {{1,1,1,1,2}};
         #endif
-    
+
         std::array<double, NUMSPECIES> Q_beta{{0,0,0,0,0}};
         std::array<double, NUMSPECIES> R_beta{{0,0,0,0,0}};
-    
+
         add_kirchhoff_emission_from_absorption_opacity(
-            F, g_nu, rates.kappa_a, rates.kappa_n, Q_beta, R_beta);   
+            F, g_nu, rates.kappa_a, rates.kappa_n, Q_beta, R_beta);
 
         rates.Q[NUE]    += Q_beta[NUE];
-        rates.R[NUE]    += R_beta[NUE];  
+        rates.R[NUE]    += R_beta[NUE];
         rates.Q[NUEBAR] += Q_beta[NUEBAR];
         rates.R[NUEBAR] += R_beta[NUEBAR];
     }
