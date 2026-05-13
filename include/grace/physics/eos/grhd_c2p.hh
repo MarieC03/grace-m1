@@ -2,28 +2,28 @@
 /**
  * @file grhd_c2p.hh
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-06-10
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #ifndef GRACE_PHYSICS_EOS_C2P_GRHD_HH
@@ -45,10 +45,10 @@
 namespace grace {
 
 /**
- * @brief Implementation of conservative 
- *        to primitive conversion routine 
- *        for General Relativistic Hydro 
- *        following Appendix C of 
+ * @brief Implementation of conservative
+ *        to primitive conversion routine
+ *        for General Relativistic Hydro
+ *        following Appendix C of
  *        https://arxiv.org/pdf/1306.4953
  * \ingroup eos
  */
@@ -56,30 +56,34 @@ template< typename eos_t >
 struct grhd_c2p_t {
     /**
      * @brief Constructor.
-     * 
+     *
      * @param _eos Equation of State.
      * @param _metric Metric array.
      * @param conservs Conservative variables.
-     * NB: The conservatives are expected to be 
+     * NB: The conservatives are expected to be
      *     undensitized when passed to the c2p.
      */
     GRACE_HOST_DEVICE
     grhd_c2p_t( eos_t const& _eos
-              , metric_array_t const& _metric 
+              , metric_array_t const& _metric
               , grmhd_cons_array_t& conservs )
     : eos(_eos), metric(_metric)
-    {   
+    {
 
-        StildeU = metric.raise({conservs[STXL],conservs[STYL],conservs[STZL]}) ; 
-        auto StildeNorm = 
-            Kokkos::sqrt(conservs[STXL]*StildeU[0] + conservs[STYL]*StildeU[1] + conservs[STZL]*StildeU[2] ) ; 
+        StildeU = metric.raise({conservs[STXL],conservs[STYL],conservs[STZL]}) ;
+        auto StildeNorm =
+            Kokkos::sqrt(conservs[STXL]*StildeU[0] + conservs[STYL]*StildeU[1] + conservs[STZL]*StildeU[2] ) ;
 
-        D  = conservs[DENSL] ; 
-        
+        D  = conservs[DENSL] ;
+
         ye = conservs[YESL] / D ;
-        q  = conservs[TAUL] / D ; 
-        r = StildeNorm / D ; 
-        k = r / ( 1 + q ) ;  
+        ymu = 0;
+        #ifdef M1_NU_FIVESPECIES
+        ymu = conservs[YMUSL] / D ;
+        #endif
+        q  = conservs[TAUL] / D ;
+        r = StildeNorm / D ;
+        k = r / ( 1 + q ) ;
     }
 
     /**
@@ -87,107 +91,113 @@ struct grhd_c2p_t {
      *        and return primitive variables.
      * @param error c2p inversion residual.
      * @return grmhd_prims_array_t Primitives.
-     * NB: When this function returns, the velocity portion 
-     * of the prims array actually contains the z-vector, 
+     * NB: When this function returns, the velocity portion
+     * of the prims array actually contains the z-vector,
      * the pressure contains the lorentz factor and temperature
-     * and entropy are left empty. This is later fixed by the 
-     * calling function which will compute \f$v^i\f$, pressure, 
-     * entropy and temperature by calling the EOS and adding 
+     * and entropy are left empty. This is later fixed by the
+     * calling function which will compute \f$v^i\f$, pressure,
+     * entropy and temperature by calling the EOS and adding
      * the relevant metric components to the velocity.
      */
     double  GRACE_HOST_DEVICE
     invert(grmhd_prims_array_t& prims, c2p_sig_t& c2p_errors) {
         auto const func = [&] (double const& zeta) {
-            return zeta - r / htilde(zeta) ; 
-        } ; 
-        double const zm{ 0.5*k/Kokkos::sqrt(1-math::int_pow<2>(0.5*k))} 
-                   , zp{ 1e-06 + k/Kokkos::sqrt(1-math::int_pow<2>(k))} ; 
-        double const zeta = utils::brent(func,zm,zp,1e-15) ; 
-        double W = Wtilde(zeta) ; 
-        
+            return zeta - r / htilde(zeta) ;
+        } ;
+        double const zm{ 0.5*k/Kokkos::sqrt(1-math::int_pow<2>(0.5*k))}
+                   , zp{ 1e-06 + k/Kokkos::sqrt(1-math::int_pow<2>(k))} ;
+        double const zeta = utils::brent(func,zm,zp,1e-15) ;
+        double W = Wtilde(zeta) ;
+
         prims[RHOL] = D/W ;
         prims[YEL]  = ye ;
+        #ifdef M1_NU_FIVESPECIES
+        prims[YMUL]  = ymu ;
+        #endif
         /* Enforce range on eps tilde */
-        double epsmin, epsmax; 
+        double epsmin, epsmax;
         eos_err_t err ;
-        eos.eps_range__rho_ye(epsmin,epsmax,prims[RHOL],prims[YEL],err) ; 
-        double eps = epstilde(W,zeta) ; 
+        eos.eps_range__rho_ye_mu(epsmin,epsmax,prims[RHOL],prims[YEL],ymu,err) ;
+        double eps = epstilde(W,zeta) ;
         if ( eps > epsmax ) {
-            c2p_errors.set(C2P_EPS_TOO_HIGH) ; 
-            eps = 0.999 * epsmax ; 
+            c2p_errors.set(C2P_EPS_TOO_HIGH) ;
+            eps = 0.999 * epsmax ;
         } else if ( eps < epsmin ) {
-            c2p_errors.set(C2P_EPS_TOO_LOW) ; 
-            eps = epsmin ; 
+            c2p_errors.set(C2P_EPS_TOO_LOW) ;
+            eps = epsmin ;
         }
-        prims[EPSL]   = eps ;  
+        prims[EPSL]   = eps ;
 
-        double h = htilde(zeta) ; 
-        prims[ZXL] = StildeU[0] / D / h ; 
-        prims[ZYL] = StildeU[1] / D / h ; 
-        prims[ZZL] = StildeU[2] / D / h ; 
-        
-        double csnd2 ; 
-        prims[PRESSL] = eos.press_h_csnd2_temp_entropy__eps_rho_ye(
-            h,csnd2,prims[TEMPL],prims[ENTL],prims[EPSL],prims[RHOL],prims[YEL], err
+        double h = htilde(zeta) ;
+        prims[ZXL] = StildeU[0] / D / h ;
+        prims[ZYL] = StildeU[1] / D / h ;
+        prims[ZZL] = StildeU[2] / D / h ;
+
+        double csnd2 ;
+        prims[PRESSL] = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(
+            h,csnd2,prims[TEMPL],prims[ENTL],prims[EPSL],prims[RHOL],prims[YEL],ymu, err
         ) ;
 
-        return fabs(func(zeta)) ; 
+        return fabs(func(zeta)) ;
     }
 
  private:
     //! Equation of state
-    eos_t const& eos ; 
+    eos_t const& eos ;
     //! Metric
     metric_array_t const& metric;
     //! Conserved density
     double D  ;
     //! Electron fraction
-    double ye ; 
+    double ye ;
+    //! Muon fraction
+    double ymu ;
     //! Rescaled energy
-    double q  ; 
+    double q  ;
     //! Rescaled momentum
-    double r  ; 
+    double r  ;
     //! Momentum / Energy ratio
-    double k  ; 
-    //! Momentum with upper indices 
-    std::array<double,3> StildeU ; 
-    
+    double k  ;
+    //! Momentum with upper indices
+    std::array<double,3> StildeU ;
 
-    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
+
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     Wtilde(double const& z) const {
-        return Kokkos::sqrt(1 + math::int_pow<2>(z)) ; 
+        return Kokkos::sqrt(1 + math::int_pow<2>(z)) ;
     }
 
-    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     rhotilde(double const& W) const {
-        return D/W ; 
+        return D/W ;
     }
 
-    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     epstilde(double const& W, double const& z) const {
-        return W*q - z*r + math::int_pow<2>(z)/(1+W) ; 
+        return W*q - z*r + math::int_pow<2>(z)/(1+W) ;
     }
 
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     atilde(double& rho, double& eps) const {
         unsigned int err ;
-        double yel{ye} ; 
-        auto const press = eos.press__eps_rho_ye(eps,rho,yel,err) ; 
-        return press / (rho * ( 1 + eps )) ; 
+        double yel{ye} ;
+        auto const press = eos.press__eps_rho_ye(eps,rho,yel,err) ;
+        return press / (rho * ( 1 + eps )) ;
     }
 
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     htilde(double const& z) const {
-        auto const W   = Wtilde(z) ; 
-        auto rho = rhotilde(W) ; 
-        double epsmin, epsmax; 
-        double yel{ye} ; 
-        unsigned int err; 
-        eos.eps_range__rho_ye(epsmin,epsmax,rho,yel,err) ; 
-        auto eps = fmax(epsmin,fmin(epsmax,epstilde(W,z))) ; 
-        return (1+eps) * (1+atilde(rho,eps)) ; 
+        auto const W   = Wtilde(z) ;
+        auto rho = rhotilde(W) ;
+        double epsmin, epsmax;
+        double yel{ye} ;
+        double ymul{ymu}
+        unsigned int err;
+        eos.eps_range__rho_ye_mu(epsmin,epsmax,rho,yel,ymul,err) ;
+        auto eps = fmax(epsmin,fmin(epsmax,epstilde(W,z))) ;
+        return (1+eps) * (1+atilde(rho,eps)) ;
     }
-} ; 
+} ;
 
 }
 
