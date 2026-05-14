@@ -1,28 +1,28 @@
 /**
  * @file grmhd.cpp
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-05-28
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 #include <grace_config.h>
 #include <grace/utils/grace_utils.hh>
@@ -41,19 +41,19 @@
 #endif
 #ifdef GRACE_ENABLE_GRMHD
 #include <grace/physics/grmhd_subexpressions.hh>
-#endif 
+#endif
 #ifdef GRACE_ENABLE_LORENE
 #include <grace/physics/id/lorene_bns.hh>
-#endif 
+#endif
 #ifdef GRACE_ENABLE_TWO_PUNCTURES
 #include <grace/physics/id/twopuncture.hh>
-#endif 
+#endif
 #ifdef GRACE_ENABLE_Z4C_METRIC
 #include <grace/physics/z4c.hh>
 #endif
 #ifdef GRACE_ENABLE_BSSN_METRIC
 #include <grace/physics/bssn.hh>
-#endif 
+#endif
 #include <grace/physics/id/shocktube.hh>
 #include <grace/physics/id/vacuum.hh>
 #include <grace/physics/id/blastwave.hh>
@@ -68,8 +68,8 @@
 #include <grace/physics/id/linear_gw.hh>
 #include <grace/physics/id/robust_stability.hh>
 #ifdef GRACE_ENABLE_FUKA
-// #include <grace/physics/id/import_kadath.hh> 
-#include <grace/physics/id/fuka_id.hh> 
+// #include <grace/physics/id/import_kadath.hh>
+#include <grace/physics/id/fuka_id.hh>
 #endif
 #include <grace/coordinates/coordinates.hh>
 #include <grace/evolution/hrsc_evolution_system.hh>
@@ -90,96 +90,96 @@ namespace grace{
 
 static void rescale_B_field(double max_betam1, double max_press) {
 
-    DECLARE_GRID_EXTENTS ; 
+    DECLARE_GRID_EXTENTS ;
     using namespace grace ;
     using namespace Kokkos ;
 
-    auto& aux   = variable_list::get().getaux() ; 
+    auto& aux   = variable_list::get().getaux() ;
     auto& state   = variable_list::get().getstate() ;
-    auto& stag_state = variable_list::get().getstaggeredstate() ; 
+    auto& stag_state = variable_list::get().getstaggeredstate() ;
     MinMaxScalar<double> b2_max_loc ;
-    double b2_max ; 
+    double b2_max ;
     auto policy =
-            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ; 
-    parallel_reduce( GRACE_EXECUTION_TAG("IO","find_max_press_loc") 
-                       , policy 
+            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ;
+    parallel_reduce( GRACE_EXECUTION_TAG("IO","find_max_press_loc")
+                       , policy
                        , KOKKOS_LAMBDA(VEC(int i, int j, int k), int q, MinMaxScalar<double>& lres)
         {
-            metric_array_t metric ; 
-            FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k)) ; 
-            grmhd_prims_array_t prims ; 
-            FILL_PRIMS_ARRAY_ZVEC(prims,aux,q,VEC(i,j,k)) ; 
+            metric_array_t metric ;
+            FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k)) ;
+            grmhd_prims_array_t prims ;
+            FILL_PRIMS_ARRAY_ZVEC(prims,aux,q,VEC(i,j,k)) ;
             auto W = Kokkos::sqrt(1+metric.square_vec({prims[ZXL],prims[ZYL],prims[ZZL]}));
             double B[3] = {
                 0.5 * (stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) + stag_state.face_staggered_fields_x(VEC(i+1,j,k),BSX_,q)),
                 0.5 * (stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) + stag_state.face_staggered_fields_y(VEC(i,j+1,k),BSY_,q)),
                 0.5 * (stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) + stag_state.face_staggered_fields_z(VEC(i,j,k+1),BSZ_,q))
-            } ; 
+            } ;
 
             double smallbu[4];
             double b2;
             grmhd_get_smallbu_smallb2(
                 metric._beta.data(), metric._g.data(),
-                B, &(prims[ZXL]), W, metric.alp(), 
+                B, &(prims[ZXL]), W, metric.alp(),
                 &smallbu, &b2
-            ) ; 
-            lres.max_val = lres.max_val < b2 ? b2 : lres.max_val    ; 
-        }, MinMax<double>(b2_max_loc)) ; 
+            ) ;
+            lres.max_val = lres.max_val < b2 ? b2 : lres.max_val    ;
+        }, MinMax<double>(b2_max_loc)) ;
     parallel::mpi_allreduce( &b2_max_loc.max_val
                             , &b2_max
                             , 1
                             , sc_MPI_MAX) ;
-    auto max_beta_now = 2 * max_press / b2_max ; 
-    double fact ; 
+    auto max_beta_now = 2 * max_press / b2_max ;
+    double fact ;
     if ( b2_max > 1e-15 ) {
-        fact = Kokkos::sqrt( 2 * max_press / b2_max / max_betam1 ) ; 
+        fact = Kokkos::sqrt( 2 * max_press / b2_max / max_betam1 ) ;
     } else {
         fact = 1 ;
     }
-    GRACE_INFO("B2_max {} fact {}", b2_max, fact) ; 
+    GRACE_INFO("B2_max {} fact {}", b2_max, fact) ;
     parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BX")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz+1,ny+2*ngz,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) *= fact ; 
+                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) *= fact ;
                     });
     parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BY")
                 , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz+1,nz+2*ngz),nq})
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
-                { 
-                    stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) *= fact ; 
+                {
+                    stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) *= fact ;
                 });
     parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BZ")
                 , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz+1),nq})
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                 {
-                    stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) *= fact ; 
+                    stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) *= fact ;
                 });
 }
 
 static double get_max_press()
 {
-    DECLARE_GRID_EXTENTS ; 
+    DECLARE_GRID_EXTENTS ;
     using namespace grace ;
     using namespace Kokkos ;
 
-    auto& aux   = variable_list::get().getaux() ; 
+    auto& aux   = variable_list::get().getaux() ;
 
     MinMaxScalar<double> pmax_loc ;
-    double pmax ; 
+    double pmax ;
     auto policy =
-            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ; 
-    parallel_reduce( GRACE_EXECUTION_TAG("IO","find_max_press_loc") 
-                       , policy 
+            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ;
+    parallel_reduce( GRACE_EXECUTION_TAG("IO","find_max_press_loc")
+                       , policy
                        , KOKKOS_LAMBDA(VEC(int i, int j, int k), int q, MinMaxScalar<double>& lres)
         {
-            lres.max_val = lres.max_val < aux(VEC(i,j,k),PRESS_,q) ? aux(VEC(i,j,k),PRESS_,q) : lres.max_val    ; 
-        }, MinMax<double>(pmax_loc)) ; 
+            lres.max_val = lres.max_val < aux(VEC(i,j,k),PRESS_,q) ? aux(VEC(i,j,k),PRESS_,q) : lres.max_val    ;
+        }, MinMax<double>(pmax_loc)) ;
     parallel::mpi_allreduce( &pmax_loc.max_val
                             , &pmax
                             , 1
-                            , sc_MPI_MAX) ; 
-    return pmax ; 
+                            , sc_MPI_MAX) ;
+    return pmax ;
 }
 
 [[maybe_unused]] static double get_max_rho()
@@ -198,44 +198,44 @@ static double get_max_press()
                        , policy
                        , KOKKOS_LAMBDA(VEC(int i, int j, int k), int q, MinMaxScalar<double>& lres)
         {
-            lres.max_val = lres.max_val < aux(VEC(i,j,k),RHO_,q) ? aux(VEC(i,j,k),RHO_,q) : lres.max_val    ; 
-        }, MinMax<double>(rhomax_loc)) ; 
+            lres.max_val = lres.max_val < aux(VEC(i,j,k),RHO_,q) ? aux(VEC(i,j,k),RHO_,q) : lres.max_val    ;
+        }, MinMax<double>(rhomax_loc)) ;
     parallel::mpi_allreduce( &rhomax_loc.max_val
                             , &rhomax
                             , 1
-                            , sc_MPI_MAX) ; 
-    return rhomax ; 
+                            , sc_MPI_MAX) ;
+    return rhomax ;
 }
 
 template< typename eos_t
-        , typename id_t 
-        , typename ... arg_t > 
+        , typename id_t
+        , typename ... arg_t >
 static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
 {
-    DECLARE_GRID_EXTENTS ; 
-    using namespace grace  ; 
-    using namespace Kokkos ; 
-    coord_array_t<GRACE_NSPACEDIM> pcoords ; 
-    grace::fill_physical_coordinates(pcoords) ; 
-    GRACE_TRACE("Filled physical coordinates array.") ; 
-    auto& state = grace::variable_list::get().getstate() ; 
-    auto& stag_state = grace::variable_list::get().getstaggeredstate() ; 
-    auto& aux   = grace::variable_list::get().getaux()   ; 
+    DECLARE_GRID_EXTENTS ;
+    using namespace grace  ;
+    using namespace Kokkos ;
+    coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    grace::fill_physical_coordinates(pcoords) ;
+    GRACE_TRACE("Filled physical coordinates array.") ;
+    auto& state = grace::variable_list::get().getstate() ;
+    auto& stag_state = grace::variable_list::get().getstaggeredstate() ;
+    auto& aux   = grace::variable_list::get().getaux()   ;
 
-    auto const& _eos = eos::get().get_eos<eos_t>() ;   
-    id_t id_kernel{ _eos, pcoords, kernel_args... } ; 
-    Kokkos::fence() ; 
+    auto const& _eos = eos::get().get_eos<eos_t>() ;
+    id_t id_kernel{ _eos, pcoords, kernel_args... } ;
+    Kokkos::fence() ;
     GRACE_TRACE("Setting initial data");
-    // main ID loop, here we fill hydro and metric 
+    // main ID loop, here we fill hydro and metric
     parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID")
                 , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq})
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                 {
 
-                    auto const id = id_kernel(VEC(i,j,k), q) ; 
-                    
-                    aux(VEC(i,j,k),RHO_,q)   = id.rho; 
-                    aux(VEC(i,j,k),PRESS_,q) = id.press ; 
+                    auto const id = id_kernel(VEC(i,j,k), q) ;
+
+                    aux(VEC(i,j,k),RHO_,q)   = id.rho;
+                    aux(VEC(i,j,k),PRESS_,q) = id.press ;
                     #ifdef GRACE_ENABLE_COWLING_METRIC
                     state(VEC(i,j,k),ALP_,q) = id.alp ;
 
@@ -243,17 +243,17 @@ static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
                     state(VEC(i,j,k),BETAY_,q) = id.betay ;
                     state(VEC(i,j,k),BETAZ_,q) = id.betaz ;
 
-                    state(VEC(i,j,k),GXX_,q) = id.gxx ; 
-                    state(VEC(i,j,k),GXY_,q) = id.gxy ; 
-                    state(VEC(i,j,k),GXZ_,q) = id.gxz ; 
-                    state(VEC(i,j,k),GYY_,q) = id.gyy ; 
+                    state(VEC(i,j,k),GXX_,q) = id.gxx ;
+                    state(VEC(i,j,k),GXY_,q) = id.gxy ;
+                    state(VEC(i,j,k),GXZ_,q) = id.gxz ;
+                    state(VEC(i,j,k),GYY_,q) = id.gyy ;
                     state(VEC(i,j,k),GYZ_,q) = id.gyz ;
                     state(VEC(i,j,k),GZZ_,q) = id.gzz ;
 
-                    state(VEC(i,j,k),KXX_,q) = id.kxx ; 
-                    state(VEC(i,j,k),KXY_,q) = id.kxy ; 
-                    state(VEC(i,j,k),KXZ_,q) = id.kxz ; 
-                    state(VEC(i,j,k),KYY_,q) = id.kyy ; 
+                    state(VEC(i,j,k),KXX_,q) = id.kxx ;
+                    state(VEC(i,j,k),KXY_,q) = id.kxy ;
+                    state(VEC(i,j,k),KXZ_,q) = id.kxz ;
+                    state(VEC(i,j,k),KYY_,q) = id.kyy ;
                     state(VEC(i,j,k),KYZ_,q) = id.kyz ;
                     state(VEC(i,j,k),KZZ_,q) = id.kzz ;
                     #elif defined(GRACE_ENABLE_Z4C_METRIC)
@@ -261,109 +261,109 @@ static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
                     #elif defined(GRACE_ENABLE_BSSN_METRIC)
                     adm_to_bssn(id,state,VEC(i,j,k),q);
                     #endif
-                    // set z = W v^i = u^i + beta^i / alpha 
+                    // set z = W v^i = u^i + beta^i / alpha
                     auto const v2 = id.gxx * id.vx * id.vx +
                                     id.gyy * id.vy * id.vy +
                                     id.gzz * id.vz * id.vz +
-                                    2. * ( 
+                                    2. * (
                                         id.gxy * id.vx * id.vy +
                                         id.gxz * id.vx * id.vz +
-                                        id.gyz * id.vy * id.vz 
-                                    ) ; 
-                    auto const w = 1./Kokkos::sqrt( 1 - v2  ) ; 
+                                        id.gyz * id.vy * id.vz
+                                    ) ;
+                    auto const w = 1./Kokkos::sqrt( 1 - v2  ) ;
 
-                    aux(VEC(i,j,k),ZVECX_,q)  = w * id.vx ; 
-                    aux(VEC(i,j,k),ZVECY_,q)  = w * id.vy ; 
-                    aux(VEC(i,j,k),ZVECZ_,q)  = w * id.vz ; 
-                    // set ye 
-                    aux(VEC(i,j,k),YE_,q) = id.ye ; 
-       
+                    aux(VEC(i,j,k),ZVECX_,q)  = w * id.vx ;
+                    aux(VEC(i,j,k),ZVECY_,q)  = w * id.vy ;
+                    aux(VEC(i,j,k),ZVECZ_,q)  = w * id.vz ;
+                    // set ye
+                    aux(VEC(i,j,k),YE_,q) = id.ye ;
+
                     /* Set eps temp and entropy */
-                    aux(VEC(i,j,k),EPS_,q) = id.eps ; 
-                    aux(VEC(i,j,k),ENTROPY_,q) = id.entropy ; 
-                    aux(VEC(i,j,k),PRESS_,q) = id.press ; 
-                    aux(VEC(i,j,k),TEMP_,q) = id.temp ; 
+                    aux(VEC(i,j,k),EPS_,q) = id.eps ;
+                    aux(VEC(i,j,k),ENTROPY_,q) = id.entropy ;
+                    aux(VEC(i,j,k),PRESS_,q) = id.press ;
+                    aux(VEC(i,j,k),TEMP_,q) = id.temp ;
 
                     /* Set B field */
                     aux(VEC(i,j,k),BX_,q) = id.bx ;
                     aux(VEC(i,j,k),BY_,q) = id.by ;
-                    aux(VEC(i,j,k),BZ_,q) = id.bz ; 
-                }) ; 
-    Kokkos::fence() ; 
-    GRACE_TRACE("Done filling initial data") ; 
-    // Evolved metric needs gammatilde, which is a derivative 
-    #ifdef GRACE_ENABLE_Z4C_METRIC 
+                    aux(VEC(i,j,k),BZ_,q) = id.bz ;
+                }) ;
+    Kokkos::fence() ;
+    GRACE_TRACE("Done filling initial data") ;
+    // Evolved metric needs gammatilde, which is a derivative
+    #ifdef GRACE_ENABLE_Z4C_METRIC
     {
-        Kokkos::fence(); 
-        auto& idx = variable_list::get().getinvspacings() ; 
+        Kokkos::fence();
+        auto& idx = variable_list::get().getinvspacings() ;
         parallel_for( GRACE_EXECUTION_TAG("ID","Z4C_fill_Gammatilde")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        std::array<double,3> _idx{idx(0,q),idx(1,q),idx(2,q)} ; 
-                        compute_gamma_tilde<4>(state,VEC(i,j,k),q,_idx,VEC(nx,ny,nz),ngz) ; 
+                        std::array<double,3> _idx{idx(0,q),idx(1,q),idx(2,q)} ;
+                        compute_gamma_tilde<4>(state,VEC(i,j,k),q,_idx,VEC(nx,ny,nz),ngz) ;
                     });
     }
-    #endif 
-    #ifdef GRACE_ENABLE_BSSN_METRIC 
+    #endif
+    #ifdef GRACE_ENABLE_BSSN_METRIC
     {
-        Kokkos::fence(); 
-        auto& idx = variable_list::get().getinvspacings() ; 
+        Kokkos::fence();
+        auto& idx = variable_list::get().getinvspacings() ;
         parallel_for( GRACE_EXECUTION_TAG("ID","BSSN_fill_Gammatilde")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        std::array<double,3> _idx{idx(0,q),idx(1,q),idx(2,q)} ; 
-                        compute_gamma_tilde<4>(state,VEC(i,j,k),q,_idx,VEC(nx,ny,nz),ngz) ; 
+                        std::array<double,3> _idx{idx(0,q),idx(1,q),idx(2,q)} ;
+                        compute_gamma_tilde<4>(state,VEC(i,j,k),q,_idx,VEC(nx,ny,nz),ngz) ;
                     });
     }
-    #endif 
-    // set up B fields 
-    auto B_init_type = grace::get_param<std::string>("grmhd","B_field_initialization") ; 
+    #endif
+    // set up B fields
+    auto B_init_type = grace::get_param<std::string>("grmhd","B_field_initialization") ;
     if ( B_init_type == "direct" ) {
-        // get staggered coordinates 
-        fill_physical_coordinates(pcoords,STAG_FACEX) ; 
-        id_kernel = id_t(_eos, pcoords, kernel_args... ) ; 
-        // now we set the staggered fields 
+        // get staggered coordinates
+        fill_physical_coordinates(pcoords,STAG_FACEX) ;
+        id_kernel = id_t(_eos, pcoords, kernel_args... ) ;
+        // now we set the staggered fields
         parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BX")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz+1,ny+2*ngz,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        auto const id = id_kernel(VEC(i,j,k), q) ;  
+                        auto const id = id_kernel(VEC(i,j,k), q) ;
                         metric_array_t metric({id.gxx,id.gxy,id.gxz,id.gyy,id.gyz,id.gzz},{id.betax,id.betay,id.betaz},id.alp) ;
-                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) = id.bx * metric.sqrtg() ; 
+                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) = id.bx * metric.sqrtg() ;
                     });
-        // get staggered coordinates 
-        fill_physical_coordinates(pcoords,STAG_FACEY) ; 
-        id_kernel = id_t(_eos, pcoords, kernel_args... ) ; 
+        // get staggered coordinates
+        fill_physical_coordinates(pcoords,STAG_FACEY) ;
+        id_kernel = id_t(_eos, pcoords, kernel_args... ) ;
         parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BY")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz+1,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        auto const id = id_kernel(VEC(i,j,k), q) ;  
+                        auto const id = id_kernel(VEC(i,j,k), q) ;
                         metric_array_t metric({id.gxx,id.gxy,id.gxz,id.gyy,id.gyz,id.gzz},{id.betax,id.betay,id.betaz},id.alp) ;
-                        stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) = id.by * metric.sqrtg() ; 
+                        stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) = id.by * metric.sqrtg() ;
                     });
-        fill_physical_coordinates(pcoords,STAG_FACEZ) ; 
-        id_kernel = id_t(_eos, pcoords, kernel_args... ) ; 
+        fill_physical_coordinates(pcoords,STAG_FACEZ) ;
+        id_kernel = id_t(_eos, pcoords, kernel_args... ) ;
         parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BZ")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz+1),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        auto const id = id_kernel(VEC(i,j,k), q) ;  
-                        metric_array_t metric({id.gxx,id.gxy,id.gxz,id.gyy,id.gyz,id.gzz},{id.betax,id.betay,id.betaz},id.alp) ; 
-                        stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) = id.bz * metric.sqrtg() ; 
+                        auto const id = id_kernel(VEC(i,j,k), q) ;
+                        metric_array_t metric({id.gxx,id.gxy,id.gxz,id.gyy,id.gyz,id.gzz},{id.betax,id.betay,id.betaz},id.alp) ;
+                        stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) = id.bz * metric.sqrtg() ;
                     });
     } else if ( B_init_type == "from_Avec" ) {
         auto kind = get_param<std::string>("grmhd", "Avec_ID","Avec_kind") ;
-        ASSERT(kind == "poloidal_confined", "Only current_loop Avec initialization supported.") ; 
+        ASSERT(kind == "poloidal_confined", "Only current_loop Avec initialization supported.") ;
         if ( kind == "poloidal_confined" ) {
-            setup_confined_poloidal_B_field() ; 
+            setup_confined_poloidal_B_field() ;
         } else {
-            // to extend this, see the B_from_A file. 
+            // to extend this, see the B_from_A file.
             // the function that sets A is quite general,
             // and the curl is just the curl
-            ERROR("Unsupported Avec initialization") ; 
+            ERROR("Unsupported Avec initialization") ;
         }
     } else if (B_init_type == "none") {
         // Strictly speaking views are zero-initialized so we don't need this,
@@ -372,159 +372,159 @@ static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz+1,ny+2*ngz,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) = 0.0 ; 
+                        stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) = 0.0 ;
                     });
         parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BY")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz+1,nz+2*ngz),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) = 0.0 ; 
+                        stag_state.face_staggered_fields_y(VEC(i,j,k),BSY_,q) = 0.0 ;
                     });
         parallel_for( GRACE_EXECUTION_TAG("ID","grmhd_ID_BZ")
                     , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz+1),nq})
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                     {
-                        stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) = 0.0 ; 
+                        stag_state.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) = 0.0 ;
                     });
     } else {
-        ERROR("Unrecognized Bvec_id") ; 
+        ERROR("Unrecognized Bvec_id") ;
     }
-    
+
 }
 
 template< typename eos_t >
 void set_grmhd_initial_data() {
     auto const id_type = get_param<std::string>("grmhd","id_type") ;
-    GRACE_VERBOSE("Setting grmhd initial data of type {}.", id_type) ;  
+    GRACE_VERBOSE("Setting grmhd initial data of type {}.", id_type) ;
     /* Set requested initial data */
-    if ( id_type == "minkowski_vacuum" ) { 
-        auto const rho_bg = get_param<double>("grmhd","vacuum","rho_floor") ; 
-        auto const press_bg = get_param<double>("grmhd","vacuum","press_floor") ; 
-        auto const vx_bg = get_param<double>("grmhd","vacuum","velocity_x") ; 
-        auto const vy_bg = get_param<double>("grmhd","vacuum","velocity_y") ; 
-        auto const vz_bg = get_param<double>("grmhd","vacuum","velocity_z") ; 
-        auto const is_cks = get_param<bool>("coordinate_system", "is_kerr_schild") ; 
+    if ( id_type == "minkowski_vacuum" ) {
+        auto const rho_bg = get_param<double>("grmhd","vacuum","rho_floor") ;
+        auto const press_bg = get_param<double>("grmhd","vacuum","press_floor") ;
+        auto const vx_bg = get_param<double>("grmhd","vacuum","velocity_x") ;
+        auto const vy_bg = get_param<double>("grmhd","vacuum","velocity_y") ;
+        auto const vz_bg = get_param<double>("grmhd","vacuum","velocity_z") ;
+        auto const is_cks = get_param<bool>("coordinate_system", "is_kerr_schild") ;
         set_grmhd_initial_data_impl<eos_t, vacuum_id_t<eos_t>>(
             rho_bg,press_bg,vx_bg,vy_bg,vz_bg, is_cks
-        ) ; 
+        ) ;
     } else if( id_type == "shocktube" ) {
-        auto pars = get_param<YAML::Node>("grmhd","shocktube") ; 
-        auto const rho_L = pars["rho_L"].as<double>() ; 
-        auto const rho_R = pars["rho_R"].as<double>() ; 
-        auto const press_L = pars["press_L"].as<double>() ; 
+        auto pars = get_param<YAML::Node>("grmhd","shocktube") ;
+        auto const rho_L = pars["rho_L"].as<double>() ;
+        auto const rho_R = pars["rho_R"].as<double>() ;
+        auto const press_L = pars["press_L"].as<double>() ;
         auto const press_R = pars["press_R"].as<double>()  ;
-        auto const Bx_L = pars["Bx_L"].as<double>() ; 
+        auto const Bx_L = pars["Bx_L"].as<double>() ;
         auto const Bx_R = pars["Bx_R"].as<double>()  ;
-        auto const By_L = pars["By_L"].as<double>() ; 
+        auto const By_L = pars["By_L"].as<double>() ;
         auto const By_R = pars["By_R"].as<double>()  ;
-        auto const Bz_L = pars["Bz_L"].as<double>() ; 
+        auto const Bz_L = pars["Bz_L"].as<double>() ;
         auto const Bz_R = pars["Bz_R"].as<double>()  ;
         set_grmhd_initial_data_impl<eos_t,shocktube_id_t<eos_t>>(
-            rho_L, rho_R, 
-            press_L, press_R, 
+            rho_L, rho_R,
+            press_L, press_R,
             Bx_L, Bx_R,
             By_L, By_R,
             Bz_L, Bz_R
         ) ;
-        Kokkos::fence() ; 
-        GRACE_TRACE("Done with hydro ID.") ;  
+        Kokkos::fence() ;
+        GRACE_TRACE("Done with hydro ID.") ;
     } else if ( id_type == "blastwave" ) {
         set_grmhd_initial_data_impl<eos_t,blastwave_id_t<eos_t>>() ;
-    } else if ( id_type == "tov") { 
-        
-        auto const rho_c = get_param<double>("grmhd", "tov", "rho_c") ; 
-        auto const p_floor = get_param<double>("grmhd", "tov", "press_floor") ; 
-        auto const dr = get_param<double>("grmhd", "tov", "dr") ; 
+    } else if ( id_type == "tov") {
+
+        auto const rho_c = get_param<double>("grmhd", "tov", "rho_c") ;
+        auto const p_floor = get_param<double>("grmhd", "tov", "press_floor") ;
+        auto const dr = get_param<double>("grmhd", "tov", "dr") ;
         auto const pert_amp = get_param<double>("grmhd", "tov", "pert_amp") ;
 
         atmo_params_t atmo_params = get_atmo_params() ;
 
         set_grmhd_initial_data_impl<eos_t,tov_id_t<eos_t>>(atmo_params,rho_c,p_floor,dr,pert_amp) ;
     } else if( id_type == "magnetic_rotor" ) {
-        auto pars = get_param<YAML::Node>("grmhd","magnetic_rotor") ; 
-        auto const rho_in  = pars["rho_in"].as<double>() ; 
-        auto const rho_out = pars["rho_out"].as<double>() ; 
-        auto const press   = pars["press"].as<double>() ; 
-        auto const B0      = pars["B0"].as<double>() ; 
+        auto pars = get_param<YAML::Node>("grmhd","magnetic_rotor") ;
+        auto const rho_in  = pars["rho_in"].as<double>() ;
+        auto const rho_out = pars["rho_out"].as<double>() ;
+        auto const press   = pars["press"].as<double>() ;
+        auto const B0      = pars["B0"].as<double>() ;
         set_grmhd_initial_data_impl<eos_t,magnetic_rotor_id_t<eos_t>>(rho_in, rho_out, press, B0) ;
-        Kokkos::fence() ; 
-        GRACE_TRACE("Done with Magnetized Rotor MHD ID.") ;  
+        Kokkos::fence() ;
+        GRACE_TRACE("Done with Magnetized Rotor MHD ID.") ;
     } else if ( id_type == "orszag_tang_vortex") {
         auto pars = get_param<YAML::Node>("grmhd","orszag_tang_vortex") ;
-        auto const rho  = pars["rho"].as<double>() ; 
-        auto const press = pars["press"].as<double>() ;  
+        auto const rho  = pars["rho"].as<double>() ;
+        auto const press = pars["press"].as<double>() ;
         set_grmhd_initial_data_impl<eos_t,orszag_tang_vortex_mhd_id_t<eos_t>>(rho, press) ;
-        Kokkos::fence() ; 
-        GRACE_TRACE("Done with Orszag-Tang MHD ID.") ;  
+        Kokkos::fence() ;
+        GRACE_TRACE("Done with Orszag-Tang MHD ID.") ;
     } else if ( id_type == "fmtorus") {
         ERROR("Fishbone-Moncrief / Chakrabarti torus initial data is not "
               "currently implemented. The previous implementation was removed "
               "pending a clean re-implementation; the `fmtorus` configuration "
               "slot and example YAMLs are preserved for that future work.") ;
-    } else if (id_type == "khi") { 
+    } else if (id_type == "khi") {
         set_grmhd_initial_data_impl<eos_t,kelvin_helmholtz_id_t<eos_t>>() ;
     } else if ( id_type == "gas_cloud") {
-        double const rho0 = get_param<double>("grmhd","gas_cloud","rho0") ; 
-        double const r0 = get_param<double>("grmhd","gas_cloud","r0") ; 
+        double const rho0 = get_param<double>("grmhd","gas_cloud","rho0") ;
+        double const r0 = get_param<double>("grmhd","gas_cloud","r0") ;
         double const T0 = get_param<double>("grmhd","gas_cloud","temp") ;
-        double const p = get_param<double>("grmhd","gas_cloud","scaling") ; 
+        double const p = get_param<double>("grmhd","gas_cloud","scaling") ;
         set_grmhd_initial_data_impl<eos_t,cloud_id_t<eos_t>>(rho0,T0,r0,p) ;
     } else if ( id_type == "bondi_flow") {
-        set_grmhd_initial_data_impl<eos_t,bondi_id_t<eos_t>>() ; 
+        set_grmhd_initial_data_impl<eos_t,bondi_id_t<eos_t>>() ;
     } else if ( id_type == "puncture") {
-        double m=1.0 ; 
-        set_grmhd_initial_data_impl<eos_t,puncture_id_t<eos_t>>(m) ; 
+        double m=1.0 ;
+        set_grmhd_initial_data_impl<eos_t,puncture_id_t<eos_t>>(m) ;
     } else if ( id_type == "lorene_bns") {
-        auto fname = get_param<std::string>("grmhd","lorene_bns","filename") ; 
+        auto fname = get_param<std::string>("grmhd","lorene_bns","filename") ;
         #ifdef GRACE_ENABLE_LORENE
-        set_grmhd_initial_data_impl<eos_t,lorene_bns_id_t<eos_t>>(fname) ; 
-        #else 
-        ERROR("LORENE id requested but GRACE was not compiled with LORENE support.") ; 
-        #endif 
+        set_grmhd_initial_data_impl<eos_t,lorene_bns_id_t<eos_t>>(fname) ;
+        #else
+        ERROR("LORENE id requested but GRACE was not compiled with LORENE support.") ;
+        #endif
     } else if ( id_type == "fuka"){
         #ifdef GRACE_ENABLE_FUKA
-        auto fuka_id_type = get_param<std::string>("grmhd","fuka","fuka_id_type") ; 
-        auto id_dir = get_param<std::string>("grmhd","fuka","id_dir") ; 
-        auto fname = get_param<std::string>("grmhd","fuka","filename") ; 
-        set_grmhd_initial_data_impl<eos_t,fuka_id_t<eos_t>>(fuka_id_type,id_dir,fname) ; 
-        #else 
-        ERROR("FUKA id requested but GRACE was not compiled with KADATH support.") ; 
+        auto fuka_id_type = get_param<std::string>("grmhd","fuka","fuka_id_type") ;
+        auto id_dir = get_param<std::string>("grmhd","fuka","id_dir") ;
+        auto fname = get_param<std::string>("grmhd","fuka","filename") ;
+        set_grmhd_initial_data_impl<eos_t,fuka_id_t<eos_t>>(fuka_id_type,id_dir,fname) ;
+        #else
+        ERROR("FUKA id requested but GRACE was not compiled with KADATH support.") ;
         #endif
     } else if (id_type == "two_punctures") {
         #ifdef GRACE_ENABLE_TWO_PUNCTURES
-        set_grmhd_initial_data_impl<eos_t,two_punctures_id_t<eos_t>>() ; 
-        #else 
-        ERROR("TwoPunctures id requested but GRACE was not compiled with TwoPunctures support.") ; 
-        #endif 
+        set_grmhd_initial_data_impl<eos_t,two_punctures_id_t<eos_t>>() ;
+        #else
+        ERROR("TwoPunctures id requested but GRACE was not compiled with TwoPunctures support.") ;
+        #endif
     } else if ( id_type == "linear_gw") {
-        set_grmhd_initial_data_impl<eos_t,linear_gw_id_t<eos_t>>() ; 
+        set_grmhd_initial_data_impl<eos_t,linear_gw_id_t<eos_t>>() ;
     } else if (id_type == "robust_stability") {
-        set_grmhd_initial_data_impl<eos_t,robust_stability_id_t<eos_t>>() ; 
+        set_grmhd_initial_data_impl<eos_t,robust_stability_id_t<eos_t>>() ;
     } else {
-        ERROR("Unrecognized id_type " << id_type ) ; 
+        ERROR("Unrecognized id_type " << id_type ) ;
     }
     set_conservs_from_prims() ;
-    Kokkos::fence() ; 
+    Kokkos::fence() ;
 }
 
 void set_conservs_from_prims() {
     using namespace grace ;
     using namespace Kokkos ;
 
-    GRACE_VERBOSE("Setting conservative variables from primitives.") ; 
+    GRACE_VERBOSE("Setting conservative variables from primitives.") ;
 
-    auto& state = grace::variable_list::get().getstate() ; 
-    auto& sstate = grace::variable_list::get().getstaggeredstate() ; 
+    auto& state = grace::variable_list::get().getstate() ;
+    auto& sstate = grace::variable_list::get().getstaggeredstate() ;
     auto& idx     = grace::variable_list::get().getinvspacings() ;
 
-    int64_t nx,ny,nz ; 
-    std::tie(nx,ny,nz) = amr::get_quadrant_extents() ; 
-    int ngz = amr::get_n_ghosts() ; 
-    
+    int64_t nx,ny,nz ;
+    std::tie(nx,ny,nz) = amr::get_quadrant_extents() ;
+    int ngz = amr::get_n_ghosts() ;
+
     int64_t nq = amr::get_local_num_quadrants() ;
     auto& aux = variable_list::get().getaux() ;
     auto& csys = grace::coordinate_system::get() ;
-    auto dev_coords = csys.get_device_coord_system() ;  
+    auto dev_coords = csys.get_device_coord_system() ;
     #ifdef GRACE_ENABLE_Z4C_METRIC
     auto& curv_scratch = grace::variable_list::get().getz4ccurvscratch() ;
     z4c_system_t metric_evol_eq_system(state,aux,sstate,curv_scratch) ;
@@ -536,61 +536,61 @@ void set_conservs_from_prims() {
                 , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq})
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-        metric_array_t metric ; 
+        metric_array_t metric ;
         FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
 
         /*************************************************/
         /*                    Set B                      */
-        /*************************************************/ 
-        // note here we reset B-center since it is outdated 
+        /*************************************************/
+        // note here we reset B-center since it is outdated
         auto Bx = Kokkos::subview(sstate.face_staggered_fields_x,
-                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSX_), q) ; 
+                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSX_), q) ;
         auto By = Kokkos::subview(sstate.face_staggered_fields_y,
-                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSY_), q) ; 
+                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSY_), q) ;
         auto Bz = Kokkos::subview(sstate.face_staggered_fields_z,
                                  VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSZ_), q) ;
         aux(VEC(i,j,k),BX_,q) = 0.5 * (sstate.face_staggered_fields_x(VEC(i,j,k),BSX_,q) + sstate.face_staggered_fields_x(VEC(i+1,j,k),BSX_,q)) / metric.sqrtg();
         aux(VEC(i,j,k),BY_,q) = 0.5 * (sstate.face_staggered_fields_y(VEC(i,j,k),BSY_,q) + sstate.face_staggered_fields_y(VEC(i,j+1,k),BSY_,q)) / metric.sqrtg();
         aux(VEC(i,j,k),BZ_,q) = 0.5 * (sstate.face_staggered_fields_z(VEC(i,j,k),BSZ_,q) + sstate.face_staggered_fields_z(VEC(i,j,k+1),BSZ_,q)) / metric.sqrtg();
-        aux(VEC(i,j,k),BDIV_,q) = ( (Bx(VEC(i+1,j,k)) - Bx(VEC(i,j,k))) * idx(0,q) 
+        aux(VEC(i,j,k),BDIV_,q) = ( (Bx(VEC(i+1,j,k)) - Bx(VEC(i,j,k))) * idx(0,q)
                                   + (By(VEC(i,j+1,k)) - By(VEC(i,j,k))) * idx(1,q)
-                                  + (Bz(VEC(i,j,k+1)) - Bz(VEC(i,j,k))) * idx(2,q))/metric.sqrtg() ; 
-        
+                                  + (Bz(VEC(i,j,k+1)) - Bz(VEC(i,j,k))) * idx(2,q))/metric.sqrtg() ;
+
         /*************************************************/
         /*                    Set b2                     */
         /*************************************************/
-        grmhd_prims_array_t prims ; 
+        grmhd_prims_array_t prims ;
         FILL_PRIMS_ARRAY_ZVEC(prims,aux,q,VEC(i,j,k)) ;
         double const * const betau = metric._beta.data() ;
         double const * const gdd   = metric._g.data() ;
-        double const alp           = metric.sqrtg() ;    
-        double const * const z     = &(prims[ZXL]) ; 
-        double const * const B     = &(prims[BXL]) ; 
-        
-        double W ; 
-        grmhd_get_W(gdd,z,&W) ; 
+        double const alp           = metric.sqrtg() ;
+        double const * const z     = &(prims[ZXL]) ;
+        double const * const B     = &(prims[BXL]) ;
+
+        double W ;
+        grmhd_get_W(gdd,z,&W) ;
 
 
         /*************************************************/
         /*               Set conserved                   */
         /*************************************************/
         grmhd_cons_array_t cons ;
-        prims_to_conservs(prims,cons,metric) ; 
-        state(VEC(i,j,k),DENS_,q) = cons[DENSL] ; 
-        state(VEC(i,j,k),SX_,q) = cons[STXL] ; 
-        state(VEC(i,j,k),SY_,q) = cons[STYL] ; 
-        state(VEC(i,j,k),SZ_,q) = cons[STZL] ; 
+        prims_to_conservs(prims,cons,metric) ;
+        state(VEC(i,j,k),DENS_,q) = cons[DENSL] ;
+        state(VEC(i,j,k),SX_,q) = cons[STXL] ;
+        state(VEC(i,j,k),SY_,q) = cons[STYL] ;
+        state(VEC(i,j,k),SZ_,q) = cons[STZL] ;
         state(VEC(i,j,k),TAU_,q) = cons[TAUL] ;
-        state(VEC(i,j,k),YESTAR_,q) = cons[YESL] ; 
-        state(VEC(i,j,k),ENTROPYSTAR_,q) = cons[ENTSL] ; 
+        state(VEC(i,j,k),YESTAR_,q) = cons[YESL] ;
+        state(VEC(i,j,k),ENTROPYSTAR_,q) = cons[ENTSL] ;
 
         /*************************************************/
         /* If evolved metric, set constraint violations  */
         /*************************************************/
         #ifndef GRACE_ENABLE_COWLING_METRIC
-        //if (i>=ngz and i<nx+ngz and j>=ngz and j<ny+ngz and k>=ngz and k<nz+ngz) 
+        //if (i>=ngz and i<nx+ngz and j>=ngz and j<ny+ngz and k>=ngz and k<nz+ngz)
         //    metric_evol_eq_system(auxiliaries_computation_kernel_t{}, VEC(i,j,k), q, idx,dev_coords);
-        #endif 
+        #endif
     }) ;
 }
 // Explicit template instantiation
@@ -600,6 +600,7 @@ void set_grmhd_initial_data<EOS>( )
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
 }

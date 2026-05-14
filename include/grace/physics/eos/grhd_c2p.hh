@@ -191,7 +191,7 @@ struct grhd_c2p_t {
         auto rho = rhotilde(W) ;
         double epsmin, epsmax;
         double yel{ye} ;
-        double ymul{ymu}
+        double ymul{ymu} ;
         unsigned int err;
         eos.eps_range__rho_ye_mu(epsmin,epsmax,rho,yel,ymul,err) ;
         auto eps = fmax(epsmin,fmin(epsmax,epstilde(W,z))) ;

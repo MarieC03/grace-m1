@@ -1,28 +1,28 @@
 /**
  * @file auxiliaries.hh
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-05-13
- * 
+ *
  * @copyright This file is part of of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #ifndef GRACE_EVOLUTION_AUXILIARIES_HH
@@ -37,7 +37,7 @@ namespace grace {
  * @brief Fill the <code>aux</code> array.
  * \ingroup evol
  */
-void compute_auxiliary_quantities() ; 
+void compute_auxiliary_quantities() ;
 //*****************************************************************************************************
 /**
  * @brief Fill the <code>aux</code> array
@@ -50,8 +50,8 @@ template< typename eos_t >
 void compute_auxiliary_quantities(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
-    , grace::var_array_t& aux 
-) ; 
+    , grace::var_array_t& aux
+) ;
 //*****************************************************************************************************
 // Explicit template instantiation
 #define INSTANTIATE_TEMPLATE(EOS)                                       \
@@ -63,6 +63,7 @@ void compute_auxiliary_quantities<EOS>(                                 \
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
 }

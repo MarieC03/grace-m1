@@ -263,6 +263,7 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
                       , c2p_err_t& c2p_err )
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 #undef INSTANTIATE_TEMPLATE
 }
 

@@ -1,28 +1,28 @@
 /**
  * @file test_pwpoly_eos.cpp
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-05-29
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -52,31 +52,31 @@
 
 static void read_dset(const std::string &fileName, const std::string &groupName, const std::string &datasetName, std::vector<double> &data) ;
 
-static std::vector<double> inline 
+static std::vector<double> inline
 get_linspace(double const& xmin, double const& xmax, size_t N) {
-    double const h{ (xmax-xmin)/N } ; 
-    std::vector<double> res(N) ; 
+    double const h{ (xmax-xmin)/N } ;
+    std::vector<double> res(N) ;
     for( int i=0; i<N; ++i) {
-        res[i] = xmin + static_cast<double>(i) * h ; 
-    } 
-    return std::move(res) ; 
+        res[i] = xmin + static_cast<double>(i) * h ;
+    }
+    return std::move(res) ;
 }
 
 template< typename eos_t >
 static void test_eos_implementation(double _temp, std::string const& group, std::string const& test_filename)
 {
-    auto eos = grace::eos::get().get_eos<eos_t>() ; 
+    auto eos = grace::eos::get().get_eos<eos_t>() ;
     std::vector<double> rho,press,eps,h,entropy,csnd ;
 
-    read_dset(test_filename,group,"rho",rho) ; 
-    read_dset(test_filename,group,"press",press) ; 
-    read_dset(test_filename,group,"eps",eps) ; 
-    read_dset(test_filename,group,"h",h) ; 
-    read_dset(test_filename,group,"entropy",entropy) ; 
-    read_dset(test_filename,group,"csnd2",csnd) ; 
+    read_dset(test_filename,group,"rho",rho) ;
+    read_dset(test_filename,group,"press",press) ;
+    read_dset(test_filename,group,"eps",eps) ;
+    read_dset(test_filename,group,"h",h) ;
+    read_dset(test_filename,group,"entropy",entropy) ;
+    read_dset(test_filename,group,"csnd2",csnd) ;
 
-    size_t const N = rho.size() ; 
-    
+    size_t const N = rho.size() ;
+
     Kokkos::View<double *> d_rho("rho", N) ;
     Kokkos::View<double *> d_press("press", N) ;
     Kokkos::View<double *> d_eps("eps", N) ;
@@ -84,7 +84,7 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
     Kokkos::View<double *> d_csnd("csnd", N) ;
     Kokkos::View<double *> d_ent("entropy", N) ;
 
-    Kokkos::View<double **> d_err("error", N,35) ; 
+    Kokkos::View<double **> d_err("error", N,35) ;
 
     auto h_press = Kokkos::create_mirror_view(d_press);
     auto h_eps   = Kokkos::create_mirror_view(d_eps)  ;
@@ -93,7 +93,7 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
     auto h_ent   = Kokkos::create_mirror_view(d_ent)  ;
 
     auto h_err   = Kokkos::create_mirror_view(d_err)  ;
-    
+
 
     #define DEEP_COPY_VEC_TO_VIEW(vec,view) \
             do { \
@@ -103,25 +103,25 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
                 }                                                   \
                 Kokkos::deep_copy(view,host_view) ;                 \
             } while(0)
-    
-    DEEP_COPY_VEC_TO_VIEW(rho,d_rho) ; 
+
+    DEEP_COPY_VEC_TO_VIEW(rho,d_rho) ;
 
     Kokkos::parallel_for("pwp_test_fill",N,
     KOKKOS_LAMBDA (int i){
-        double eps,csnd2; 
-        double rho{d_rho(i)}, temp{_temp}, ye{0} ; 
+        double eps,csnd2;
+        double rho{d_rho(i)}, temp{_temp}, ye{0} ;
         int ww{0} ;
-        unsigned int err ; 
+        unsigned int err ;
 
-        double press ; 
+        double press ;
         press = eos.press_eps_csnd2__temp_rho_ye(eps,csnd2,temp,d_rho(i),ye,err) ;
-        d_press(i) = press; 
+        d_press(i) = press;
         d_eps(i)  = eps;
 
         double ploc, tloc, epsloc ;
-        ploc = eos.press__eps_rho_ye(eps,d_rho(i),ye,err) ; 
+        ploc = eos.press__eps_rho_ye(eps,d_rho(i),ye,err) ;
         d_err(i,ww) = math::abs(d_press(i) - ploc); ww++; //0
-        
+
         ploc = eos.press_temp__eps_rho_ye(tloc,eps,d_rho(i),ye,err) ;
         d_err(i,ww) = math::abs(d_press(i) - ploc); ww++; //1
         d_err(i,ww) = math::abs(temp-tloc) ; ww++;        //2
@@ -131,16 +131,16 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
 
         epsloc = eos.eps__temp_rho_ye(temp,rho,ye,err);
         d_err(i,ww) = math::abs(eps-epsloc) ; ww++;       //4
-        ploc = d_press(i) ; 
+        ploc = d_press(i) ;
 
         epsloc = eos.eps__press_temp_rho_ye(ploc,temp,rho,ye,err);
         d_err(i,ww) = math::abs(eps-epsloc) ; ww++;       //5
 
-        double h, hloc; 
-        double csnd, csndloc ; 
+        double h, hloc;
+        double csnd, csndloc ;
         ploc = eos.press_h_csnd2__eps_rho_ye(
             h,csnd,eps,rho,ye,err
-        ) ; 
+        ) ;
         d_err(i,ww) = math::abs(d_press(i) - ploc); ww++; //6
 
         ploc = eos.press_h_csnd2__temp_rho_ye(
@@ -149,10 +149,10 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
         d_err(i,ww) = math::abs(d_press(i) - ploc); ww++; //7
         d_err(i,ww) = math::abs(h-hloc); ww++;            //8
         d_err(i,ww) = math::abs(csnd-csndloc); ww++;      //9
- 
+
         epsloc = eos.eps_h_csnd2__press_rho_ye(
             hloc,csndloc,press,rho,ye,err
-        ) ; 
+        ) ;
         d_err(i,ww) = math::abs(h-hloc); ww++;            //10
         d_err(i,ww) = math::abs(csnd-csndloc); ww++;      //11
         d_err(i,ww) = math::abs(eps-epsloc) ; ww++;       //12
@@ -198,90 +198,92 @@ static void test_eos_implementation(double _temp, std::string const& group, std:
         d_err(i,ww) = math::abs(temp-tloc); ww++;            //31
         d_err(i,ww) = math::abs(entropy-entropyloc) ; ww++;  //32
 
-         
+
         d_h(i)    = h ;
         d_csnd(i) = csnd;
-        d_ent(i)  = entropy; 
-    }) ; 
+        d_ent(i)  = entropy;
+    }) ;
     Kokkos::deep_copy(h_press,d_press);
     Kokkos::deep_copy(h_eps, d_eps)   ;
-    Kokkos::deep_copy(h_h, d_h)       ; 
+    Kokkos::deep_copy(h_h, d_h)       ;
     Kokkos::deep_copy(h_csnd, d_csnd) ;
     Kokkos::deep_copy(h_ent, d_ent) ;
     Kokkos::deep_copy(h_err, d_err) ;
 
     std::ofstream errfile{"err.txt"} ;
 
-    std::ofstream resfile("results.dat"); 
+    std::ofstream resfile("results.dat");
     for( int i=0; i<N; ++i){
         for( int j=0; j<33; ++j) {
             // This is needed to prevent a failure because for T=0 eps cannot be recovered from the entropy
-            if( _temp == 0 and j >= 23 and j <= 27 ) 
-                    continue; 
+            if( _temp == 0 and j >= 23 and j <= 27 )
+                    continue;
             if( h_err(i,j) > 1e-10 ) {
-                errfile << "rho " << rho[i] << ", " << j 
-                          << ", err " << h_err(i,j) << std::endl ; 
+                errfile << "rho " << rho[i] << ", " << j
+                          << ", err " << h_err(i,j) << std::endl ;
             }
             CHECK_THAT(
             h_err(i,j),
             Catch::Matchers::WithinAbs(0., 1e-10)
-        ) ; 
+        ) ;
         }
         CHECK_THAT(
             fabs(h_press(i)-press[i]),
             Catch::Matchers::WithinAbs(0., 1e-8)
-        ) ; 
+        ) ;
         CHECK_THAT(
             fabs(h_eps(i)-eps[i]),
             Catch::Matchers::WithinAbs(0., 1e-8)
-        ) ; 
+        ) ;
         CHECK_THAT(
             fabs(h_h(i)-h[i]),
             Catch::Matchers::WithinAbs(0., 1e-8)
-        ) ; 
-        
+        ) ;
+
         CHECK_THAT(
             fabs(h_ent(i)-entropy[i]),
             Catch::Matchers::WithinAbs(0., 1e-8)
-        ) ; 
-        
+        ) ;
+
         CHECK_THAT(
             fabs(h_csnd(i)-csnd[i]),
             Catch::Matchers::WithinAbs(0., 1e-8)
         ) ;
         #if 0
-        resfile << std::setprecision(15) 
+        resfile << std::setprecision(15)
                 << std::left << std::setw(40) << rho[i]
                 << std::left << std::setw(40) << h_press(i)
-                << std::left << std::setw(40) << h_eps(i) 
-                << std::left << std::setw(40) << h_h(i) 
-                << std::left << std::setw(40) << h_ent(i) 
-                << std::left << std::setw(40) << h_csnd(i)<< '\n' ; 
-        #endif 
+                << std::left << std::setw(40) << h_eps(i)
+                << std::left << std::setw(40) << h_h(i)
+                << std::left << std::setw(40) << h_ent(i)
+                << std::left << std::setw(40) << h_csnd(i)<< '\n' ;
+        #endif
     }
-    errfile.close() ; 
-    resfile.close() ; 
+    errfile.close() ;
+    resfile.close() ;
 }
 
 TEST_CASE("EOS", "[pwpolytrope]") {
-    
-    std::vector<double> const temperatures { 0.,  10.,  20.,  30.,  40.,  50.,  60.,  70.,  80.,  90., 100. }; 
+
+    std::vector<double> const temperatures { 0.,  10.,  20.,  30.,  40.,  50.,  60.,  70.,  80.,  90., 100. };
 
     auto const eos_type = grace::get_param<std::string>("eos", "eos_type") ;
     if( eos_type == "hybrid" ) {
-        auto const cold_eos_type = 
+        auto const cold_eos_type =
             grace::get_param<std::string>("eos", "cold_eos_type") ;
         if( cold_eos_type == "piecewise_polytrope" ) {
-            int i{0} ; 
+            int i{0} ;
             for( auto temp: temperatures ) {
-                test_eos_implementation<grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>>(temp,std::to_string(i),"sly.h5") ; 
+                test_eos_implementation<grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>>(temp,std::to_string(i),"sly.h5") ;
                 ++i;
             }
         } else if ( cold_eos_type == "tabulated" ) {
             ERROR("Not implemented yet.") ;
         }
     } else if ( eos_type == "tabulated" ) {
-        ERROR("Not implemented yet.") ; 
+        ERROR("Not implemented yet.") ;
+    } else if ( eos_type == "leptonic" ) {
+        ERROR("Not implemented yet.") ;
     }
 }
 
