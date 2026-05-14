@@ -209,6 +209,13 @@ atmo_params_t get_atmo_params()
         grace::eos::get().get_eos<grace::tabulated_eos_t>().ymu_atmosphere() ;
     atmo_params.temp_fl =
         grace::eos::get().get_eos<grace::tabulated_eos_t>().temp_atmosphere() ;
+  } else if ( eos_type == "leptonic" ) {
+    atmo_params.ye_fl =
+        grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().ye_atmosphere() ;
+    atmo_params.ymu_fl =
+        grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().ymu_atmosphere() ;
+    atmo_params.temp_fl =
+        grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().temp_atmosphere() ;
   } else if ( eos_type == "ideal_gas" ) {
     atmo_params.ye_fl =
         grace::eos::get().get_eos<grace::ideal_gas_eos_t>().ye_atmosphere() ;
@@ -307,6 +314,13 @@ excision_params_t get_excision_params()
           grace::eos::get().get_eos<grace::tabulated_eos_t>().ymu_atmosphere() ;
       excision_params.temp_ex =
           grace::eos::get().get_eos<grace::tabulated_eos_t>().temp_atmosphere() ;
+    } else if ( eos_type == "leptonic" ) {
+      excision_params.ye_ex =
+          grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().ye_atmosphere() ;
+      excision_params.ymu_ex =
+          grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().ymu_atmosphere() ;
+      excision_params.temp_ex =
+          grace::eos::get().get_eos<grace::leptonic_eos_4d_t>().temp_atmosphere() ;
     }
 
     return excision_params ;

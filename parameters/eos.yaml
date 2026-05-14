@@ -1,16 +1,16 @@
 eos:
-  type: schema 
+  type: schema
   description: >
-    EOS parameters 
-  
+    EOS parameters
+
   eos_type:
     type: keyword
     default: "hybrid"
-    allowed: ["ideal_gas", "hybrid", "tabulated"]
+    allowed: ["ideal_gas", "hybrid", "tabulated", "leptonic"]
     description: >
-      Kind of EOS 
+      Kind of EOS
 
-  ideal_gas_eos: 
+  ideal_gas_eos:
     type: schema
     description: >
       Parameters for the ideal gas eos
@@ -19,10 +19,10 @@ eos:
       default: 2
       range: "(1,*)"
       description: >
-        Adiabatic index 
+        Adiabatic index
     entropy_min:
-      type: double 
-      default: 1e-12 
+      type: double
+      default: 1e-12
       range: "(0,*)"
       description: >
         Lower bound on entropy to avoid log(0)
@@ -34,16 +34,16 @@ eos:
         If the initial data is a polytrope, kappa of that polytrope in geom units
 
   hybrid_eos:
-    type: schema 
-    description: > 
-      Parameters for the hybrid eos 
-    
-    cold_eos_type: 
-      type: keyword 
+    type: schema
+    description: >
+      Parameters for the hybrid eos
+
+    cold_eos_type:
+      type: keyword
       default: "piecewise_polytrope"
       allowed: ["piecewise_polytrope", "tabulated"]
       description: >
-        For hybrid_eos: kind of cold eos 
+        For hybrid_eos: kind of cold eos
 
     gamma_th:
       type: double
@@ -60,55 +60,55 @@ eos:
         cold_eos_type == "tabulated".  Ignored otherwise.
 
   piecewise_polytrope:
-    type: schema 
+    type: schema
     description: >
-      Piecewise polytrope parameters 
+      Piecewise polytrope parameters
 
     n_pieces:
-      type: unsigned int 
-      default: 7 
+      type: unsigned int
+      default: 7
       range: "[1,*)"
-      description: > 
-        Number of pieces 
+      description: >
+        Number of pieces
 
-    gammas: 
-      type: list 
-      item_type: double 
+    gammas:
+      type: list
+      item_type: double
       range: "(0,*)"
       default: [1.58425 , 1.28733     , 0.62223     , 1.35692     , 3.005       , 2.988       , 2.851]
       description: >
-        Gammas of piecewise polytrope 
+        Gammas of piecewise polytrope
 
-    rhos: 
-      type: list 
-      item_type: double 
+    rhos:
+      type: list
+      item_type: double
       range: "(0,*)"
       default: [ 3.951156e-11, 6.125960e-07, 4.254672e-06, 2.367449e-04, 8.114721e-04, 1.619100e-03]
       description: >
-        rhos of piecewise polytrope   
+        rhos of piecewise polytrope
 
-    kappa_0: 
-      type: double 
+    kappa_0:
+      type: double
       default: 1.685819e+02
       range: "[0,*)"
       description: >
-        Kappa of first piece 
+        Kappa of first piece
 
   tabulated_eos:
     type: schema
     description: >
-      Parameters for nuclear tabulated eos 
-    table_filename: 
+      Parameters for nuclear tabulated eos
+    table_filename:
       type: string
       default: "blah.h5"
       description: >
-        File name of tabulated eos 
+        File name of tabulated eos
     table_format:
-      type: keyword 
+      type: keyword
       allowed: ["compose", "stellarcollapse"]
       default: "compose"
       description: >
-        Format of 3D table 
+        Format of 3D table
     cold_table_filename:
       type: string
       default: "blah.grace"
@@ -140,19 +140,15 @@ eos:
         a small relative tolerance.
 
   eps_maximum:
-    type: double 
-    default: 1.e5 
+    type: double
+    default: 1.e5
     range: "(0,*)"
     description: >
-      Maximum allowed specific internal energy 
+      Maximum allowed specific internal energy
 
   entropy_minimum:
-    type: double 
-    default: 1e-13 
+    type: double
+    default: 1e-13
     range: "(0,*)"
     description: >
-      Minimum allowed entropy per particle 
-
-  
-
-  
+      Minimum allowed entropy per particle

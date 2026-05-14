@@ -68,16 +68,9 @@ struct bondi_params_t {
     double B0;
 } ;
 
-<<<<<<< HEAD
 //! Find temperature where residual sign changes.
 static double KOKKOS_INLINE_FUNCTION
 find_temp_range(double r, bondi_params_t const& par)
-=======
-//! Find temperature where residual sign changes
-//! inspired by Athena !!!
-static double KOKKOS_INLINE_FUNCTION
-find_temp_range(double r, bondi_params_t const& par)
->>>>>>> 224b3b4 (Added muons to base_eos++)
 {
     double t_min{par.t_min}, t_max{par.t_max} ;
 

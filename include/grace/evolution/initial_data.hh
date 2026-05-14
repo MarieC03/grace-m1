@@ -3,26 +3,26 @@
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
  * @brief Initial-data dispatch within the evolution module, plus logical-frame transformation hook used after ID is laid down on the AMR grid.
  * @date 2024-05-15
- * 
+ *
  * @copyright This file is part of of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 #ifndef GRACE_EVOLUTION_INITIAL_DATA_HH
 #define GRACE_EVOLUTION_INITIAL_DATA_HH
@@ -33,14 +33,14 @@
 namespace grace {
 /**
  * \defgroup initial_data Initial data
- * 
+ *
  */
 
 /**
  * @brief Set the initial data.
  * \ingroup initial_data
  */
-void set_initial_data() ; 
+void set_initial_data() ;
 /**
  * @brief Implementation of set_initial_data for a concrete EOS type.
  * \ingroup initial_data
@@ -54,9 +54,9 @@ void set_initial_data_impl() ;
  * @brief Transform vector and tensor variables
  *        from physical coordinates grid coordinates.
  * \ingroup initial_data
- * \cond detail 
+ * \cond detail
  */
-void transform_to_logical_frame() ; 
+void transform_to_logical_frame() ;
 
 #define INSTANTIATE_TEMPLATE(EOS)   \
 extern template                     \
@@ -64,8 +64,9 @@ void set_initial_data_impl<EOS>()
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
 }
 
-#endif 
+#endif
