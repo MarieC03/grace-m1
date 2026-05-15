@@ -1,16 +1,63 @@
 /**
  * @file read_leptonic_4d_table.cpp
- * @brief  Implementation of the 4D leptonic EOS table reader for GRACE.
- *         Reads the 4-axis (rho, T, Y_e, Y_mu) tables in the native
- *         GRACE leptonic-4D HDF5 format.
- * @date   2025
+ * @author Marie Cassing (mcassing@itp.uni-frankfurt.de)
+ * @author Keneth Miler (miler@itp.uni-frankfurt.de)
+ * @brief  Reader for the Margherita-style leptonic EOS HDF5, combined
+ *         with a GRACE-native baryon table.
  *
- * @copyright This file is part of GRACE.  GPL-3 or later.
+ *         The baryon side is loaded via the existing read_eos_table()
+ *         pipeline (so it honours [eos.tabulated_eos.table_format] =
+ *         "stellarcollapse" or "compose").  The leptonic side is read
+ *         here: the electronic and muonic 9-variable tables are
+ *         layered on top of the same (rho, T, Y_e) grid as the baryon
+ *         table.
+ *
+ *         Lepton-table conventions:
+ *           - Pressures, epsilons, entropies, chemical potentials are
+ *             stored in their final units (geometric pressure / eps,
+ *             k_B/baryon for s, MeV for mu).  No unit conversion is
+ *             applied here.
+ *           - The (rho, T) axes from the leptonic file are not used:
+ *             we reuse the baryon table's natural-log (rho, T) axes.
+ *           - yle_table stores linear Y_le values; ymu_table stores
+ *             log(Ymu) values (Margherita convention).
+ *           - eos_ylemin/max should equal eos_yemin/max of the baryon
+ *             table (Margherita convention; a warning is issued if not).
+ *
+ *         File layout (h5ls -r):
+ *             /nrho /ntemp /nyle /nymu             int
+ *             /logrho_table /logtemp_table          double  -- unused
+ *             /yle_table  /ymu_table                double[nyle], double[nymu]
+ *             /eos_ylemin /eos_ylemax /eos_ymumin /eos_ymumax  double
+ *             /electronic_eos_tables   double[9, nyle, nT, nrho]
+ *             /muonic_eos_tables       double[9, nymu, nT, nrho]
+ *
+ * @date   2026-05-15
+ *
+ * @copyright This file is part of the General Relativistic Astrophysics
+ * Code for Exascale (GRACE).
+ * GRACE is an evolution framework that uses Finite Volume
+ * methods to simulate relativistic spacetimes and plasmas.
+ * Copyright (C) 2026 Marie Cassing, Keneth Miler
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <grace/physics/eos/leptonic_eos_4d.hh>
 #include <grace/physics/eos/read_leptonic_4d_table.hh>
-#include <grace/physics/eos/physical_constants.hh>
+#include <grace/physics/eos/read_eos_table.hh>
+#include <grace/physics/eos/tabulated_eos.hh>
 #include <grace/physics/eos/unit_system.hh>
 #include <grace/utils/grace_utils.hh>
 #include <grace/system/grace_system.hh>
@@ -21,50 +68,35 @@
 
 #include <Kokkos_Core.hpp>
 
-#include <array>
+#include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iostream>
 #include <limits>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-//  HDF5 helpers (consistent style with read_eos_table.cpp)
-// ---------------------------------------------------------------------------
-#define HDF5_CALL(ret, fn_call) \
-    do { (ret) = (fn_call) ; \
-         if ((ret) < 0) { ERROR("HDF5 call failed: " #fn_call) ; } \
-    } while(0)
-
-// Read a top-level dataset from `file` into VAR with element type TYPE,
-// using memory dataspace MEM. (H5S_ALL is fine when VAR matches the file.)
-#define READ_4D_EOS_HDF5(NAME, VAR, TYPE, MEM)                              \
-    do {                                                                    \
-        hid_t _ds ;                                                         \
-        HDF5_CALL(_ds, H5Dopen(file, NAME, H5P_DEFAULT)) ;                  \
-        HDF5_CALL(h5err, H5Dread(_ds, TYPE, MEM, H5S_ALL, H5P_DEFAULT, VAR));\
-        HDF5_CALL(h5err, H5Dclose(_ds)) ;                                   \
-    } while(0)
-
-// Read one variable slice from a packed (NTAB, NP4) HDF5 dataset into
-// alltables_temp (nrho*ntemp*nye*nymu doubles, starting at OFF).
-// `mem5` and `var5` (= {1, NP4}) must already be set up by the caller.
-#define READ_4D_EOSTABLE_HDF5(NAME, OFF)                                    \
-    do {                                                                    \
-        hsize_t offset5[2] = {(hsize_t)(OFF), 0} ;                          \
-        H5Sselect_hyperslab(mem5, H5S_SELECT_SET, offset5, NULL, var5, NULL);\
-        READ_4D_EOS_HDF5(NAME, alltables_temp, H5T_NATIVE_DOUBLE, mem5) ;   \
-    } while(0)
-
 namespace grace {
 
 // ============================================================
-//  Helper: read the 1-D cold-slice table.
-//  Format per row (after a 2-line header):
-//      log(rho)  temp  ye_cold  ymu_cold  press  eps  cs2  entropy
+//  Small HDF5 helper.
+// ============================================================
+namespace {
+
+template <typename T>
+inline void h5_read(hid_t file, const char* name, T* out, hid_t type)
+{
+    hid_t ds = H5Dopen(file, name, H5P_DEFAULT) ;
+    ASSERT(ds >= 0, "Could not open HDF5 dataset '" << name << "'") ;
+    herr_t e = H5Dread(ds, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, out) ;
+    ASSERT(e >= 0, "Failed to read HDF5 dataset '" << name << "'") ;
+    H5Dclose(ds) ;
+}
+
+} // anonymous
+
+// ============================================================
+//  Cold-table reader (8 cols).
 // ============================================================
 static void read_leptonic_cold_table(
     const std::string& filename,
@@ -75,8 +107,8 @@ static void read_leptonic_cold_table(
     ASSERT(f.is_open(), "Cannot open leptonic cold table: " << filename) ;
 
     std::string line ;
-    std::getline(f, line) ;                  // description
-    std::getline(f, line) ;                  // number of rows
+    std::getline(f, line) ;  // description
+    std::getline(f, line) ;  // nrows
     std::istringstream iss_n(line) ;
     size_t nrows ;
     iss_n >> nrows ;
@@ -93,17 +125,37 @@ static void read_leptonic_cold_table(
         ASSERT(std::getline(f,line),
                "Unexpected EOF in leptonic cold table at row " << i) ;
         std::istringstream iss(line) ;
-        double logrho_val ;
-        iss >> logrho_val ;
-        h_rho(i) = logrho_val ;
-        for (int j = 0; j < NCOLS; ++j) {
-            double val ;
-            iss >> val ;
-            h_data(i,j) = val ;
-        }
+        double v ;
+        iss >> v ; h_rho(i) = v ;
+        for (int j = 0; j < NCOLS; ++j) { iss >> v ; h_data(i,j) = v ; }
     }
     Kokkos::deep_copy(d_data, h_data) ;
     Kokkos::deep_copy(d_rho,  h_rho)  ;
+}
+
+// ============================================================
+//  Reshape a flat (NVAR, ny, nT, nrho) HDF5 buffer into a
+//  Kokkos View [irho, iT, iy, ivar] (tabeos_linterp_t layout).
+//
+//  HDF5 is row-major, slowest = variable, fastest = rho:
+//      flat = iv*ny*nT*nrho + iy*nT*nrho + it*nrho + ir
+// ============================================================
+template <typename HostView4d>
+static void deal_species_into_view(
+    const std::vector<double>& buf,
+    int nrho, int ntemp, int ny, int nvar,
+    HostView4d& hv)
+{
+    for (int iv=0; iv<nvar; ++iv)
+    for (int iy=0; iy<ny;   ++iy)
+    for (int it=0; it<ntemp;++it)
+    for (int ir=0; ir<nrho; ++ir) {
+        size_t flat = static_cast<size_t>(iv)*ny*ntemp*nrho
+                    + static_cast<size_t>(iy)*ntemp*nrho
+                    + static_cast<size_t>(it)*nrho
+                    + static_cast<size_t>(ir) ;
+        hv(ir, it, iy, iv) = buf[flat] ;
+    }
 }
 
 // ============================================================
@@ -111,361 +163,250 @@ static void read_leptonic_cold_table(
 // ============================================================
 grace::leptonic_eos_4d_t read_leptonic_4d_table()
 {
-    using namespace grace::physical_constants ;
+    // -------------------------------------------------------
+    //  1) Load the baryon EOS via the existing GRACE pipeline.
+    //     Honours [eos.tabulated_eos.*] settings in the parfile.
+    // -------------------------------------------------------
+    GRACE_INFO("Reading baryon EOS for leptonic_4d setup...") ;
+    tabulated_eos_t baryon_eos = read_eos_table() ;
+    auto const& bt = baryon_eos.tables ;
 
-    // CGS-to-geometric unit conversion factors (same idiom as
-    // read_eos_table.cpp). uconv.pressure converts CGS pressure to
-    // geometric pressure; uconv.velocity^2 is the eps factor; etc.
-    auto const uconv = CGS_units / GEOM_units ;
+    int const nrho_b  = baryon_eos.nrho ;
+    int const ntemp_b = baryon_eos.nT   ;
 
-    auto const fname      = grace::get_param<std::string>("eos","leptonic_4d","table_filename") ;
-    auto const cold_fname = grace::get_param<std::string>("eos","leptonic_4d","cold_table_filename") ;
-    auto const tab_format = grace::get_param<std::string>("eos","leptonic_4d","table_format") ;
-
-    bool const do_energy_shift =
-        grace::get_param<bool>("eos","leptonic_4d","do_energy_shift") ;
-    bool const use_muonic_eos =
-        grace::get_param<bool>("eos","leptonic_4d","use_muonic_eos") ;
-    bool const atm_beta_eq =
-        grace::get_param<bool>("grmhd","atmosphere","atmosphere_is_beta_eq") ;
+    // -------------------------------------------------------
+    //  2) Open the leptonic HDF5 file.
+    // -------------------------------------------------------
+    auto const fname      = grace::get_param<std::string>("eos","leptonic","table_filename") ;
+    auto const cold_fname = grace::get_param<std::string>("eos","leptonic","cold_table_filename") ;
 
     GRACE_INFO("Reading 4D leptonic EOS table: {}", fname) ;
-    GRACE_INFO("Format: {}", tab_format) ;
+    GRACE_INFO("Leptonic cold table:           {}", cold_fname) ;
 
-    herr_t h5err ;
-    hid_t  file  ;
-    HDF5_CALL(file, H5Fopen(fname.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT)) ;
+    hid_t file = H5Fopen(fname.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT) ;
+    ASSERT(file >= 0, "Could not open leptonic HDF5: " << fname) ;
 
-    // -------------------------------------------------------
-    //  Grid sizes
-    // -------------------------------------------------------
-    int nrho, ntemp, nye, nymu ;
-    READ_4D_EOS_HDF5("pointsrho",  &nrho,  H5T_NATIVE_INT, H5S_ALL) ;
-    READ_4D_EOS_HDF5("pointstemp", &ntemp, H5T_NATIVE_INT, H5S_ALL) ;
-    READ_4D_EOS_HDF5("pointsye",   &nye,   H5T_NATIVE_INT, H5S_ALL) ;
-    READ_4D_EOS_HDF5("pointsymu",  &nymu,  H5T_NATIVE_INT, H5S_ALL) ;
+    // Grid sizes
+    int nrho, ntemp, nyle, nymu ;
+    h5_read(file, "nrho",  &nrho,  H5T_NATIVE_INT) ;
+    h5_read(file, "ntemp", &ntemp, H5T_NATIVE_INT) ;
+    h5_read(file, "nyle",  &nyle,  H5T_NATIVE_INT) ;
+    h5_read(file, "nymu",  &nymu,  H5T_NATIVE_INT) ;
 
-    GRACE_INFO("4D EOS grid: nrho={} nT={} nye={} nymu={}",
-               nrho, ntemp, nye, nymu) ;
+    GRACE_INFO("Leptonic file: nrho={} nT={} nyle={} nymu={}",
+               nrho, ntemp, nyle, nymu) ;
 
-    // -------------------------------------------------------
-    //  Allocate the flat temp buffer used for every hyperslab read.
-    // -------------------------------------------------------
-    const size_t NTAB_B = leptonic_eos_4d_t::TEOS_VIDX::N_TAB_VARS_BARYON ;
-    const size_t NTAB_E = leptonic_eos_4d_t::ELE_VIDX ::N_TAB_VARS_ELE   ;
-    const size_t NTAB_M = leptonic_eos_4d_t::MUON_VIDX::N_TAB_VARS_MUON  ;
-    const size_t NP4    = static_cast<size_t>(nrho)*ntemp*nye*nymu ;
+    // The lepton tables must live on exactly the same (rho, T) grid as
+    // the baryon table (the additive sum is pointwise).  The Y_le axis
+    // of the electronic table is independent of the baryon Y_e axis --
+    // only the physical bounds need to agree, not the grid size.
+    ASSERT(nrho  == nrho_b,
+           "Leptonic and baryon tables disagree on nrho ("
+           << nrho << " vs " << nrho_b << ")") ;
+    ASSERT(ntemp == ntemp_b,
+           "Leptonic and baryon tables disagree on ntemp ("
+           << ntemp << " vs " << ntemp_b << ")") ;
 
-    std::vector<double> buf(NP4) ;
-    double* alltables_temp = buf.data() ;
-
-    // HDF5 dataspace describing the on-disk layout (NTAB, NP4).
-    // We re-set its first extent before reading each of the three groups
-    // (baryon, ele, muon) so that hyperslab selection on row OFF is valid.
-    hsize_t table_dims[2] = { NTAB_B, NP4 } ;
-    hsize_t var5[2]       = { 1, NP4 } ;
-    hid_t   mem5 = H5Screate_simple(2, table_dims, NULL) ;
-
-    // -------------------------------------------------------
-    //  Axes
-    // -------------------------------------------------------
-    std::vector<double> logrho(nrho), logtemp(ntemp), yes(nye), ymus(nymu) ;
-    double energy_shift_raw{0.} ;
-
-    READ_4D_EOS_HDF5("logrho",       logrho.data(),       H5T_NATIVE_DOUBLE, H5S_ALL) ;
-    READ_4D_EOS_HDF5("logtemp",      logtemp.data(),      H5T_NATIVE_DOUBLE, H5S_ALL) ;
-    READ_4D_EOS_HDF5("ye",           yes.data(),          H5T_NATIVE_DOUBLE, H5S_ALL) ;
-    READ_4D_EOS_HDF5("ymu",          ymus.data(),         H5T_NATIVE_DOUBLE, H5S_ALL) ;
-    READ_4D_EOS_HDF5("energy_shift", &energy_shift_raw,   H5T_NATIVE_DOUBLE, H5S_ALL) ;
-
-    double baryon_mass = mn_MeV * MeV_to_g * uconv.mass ;
-    if (H5Lexists(file, "/mass_factor", H5P_DEFAULT) > 0) {
-        hid_t mb_ds ;
-        HDF5_CALL(mb_ds, H5Dopen(file, "mass_factor", H5P_DEFAULT)) ;
-        H5Dread(mb_ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &baryon_mass) ;
-        H5Dclose(mb_ds) ;
-        GRACE_INFO("Baryon mass from file: {}", baryon_mass) ;
-    } else {
-        GRACE_INFO("Using default baryon mass: {}", baryon_mass) ;
-    }
-
-    // energy_shift is read in CGS-eps units; convert to geometric.
-    double energy_shift = do_energy_shift ? energy_shift_raw * SQR(uconv.velocity) : 0.0 ;
+    // Axes.  yle and ymu are read in as the linear-valued axes used
+    // by the lepton interpolators.  logrho_table / logtemp_table are
+    // read in only to verify that the leptonic file lives on the
+    // same physical (rho, T) grid as the baryon table -- they're
+    // *not* used as axes downstream (the lepton interpolators reuse
+    // the baryon table's already-unit-converted natural-log axes).
+    std::vector<double> yle(nyle), ymu(nymu) ;
+    std::vector<double> logrho10(nrho), logtemp10(ntemp) ;
+    double ylemin_f, ylemax_f, ymumin_f, ymumax_f ;
+    h5_read(file, "logrho_table",  logrho10 .data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "logtemp_table", logtemp10.data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "yle_table",     yle      .data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "ymu_table",     ymu      .data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "eos_ylemin",    &ylemin_f,        H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "eos_ylemax",    &ylemax_f,        H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "eos_ymumin",    &ymumin_f,        H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "eos_ymumax",    &ymumax_f,        H5T_NATIVE_DOUBLE) ;
 
     // -------------------------------------------------------
-    //  Convert axes: log10 → loge + geometric units
+    //  Verify the leptonic file's (rho, T) grid matches the baryon
+    //  table's pointwise.  The leptonic file stores log10 of CGS
+    //  values; the baryon axes were already converted to natural log
+    //  in geometric units by read_eos_table().  The mapping is:
+    //      bt._logrho[i] = log(10) * logrho10[i]  + log(RHOGF)
+    //      bt._logT  [i] = log(10) * logtemp10[i]
+    //
+    //  A mismatch here means the two HDF5 files were generated on
+    //  different grids and the additive sum is unphysical.
     // -------------------------------------------------------
-    for (int i=0; i<nrho;  ++i) logrho[i]  = logrho[i]  * std::log(10.) + std::log(uconv.mass_density) ;
-    for (int i=0; i<ntemp; ++i) logtemp[i] = logtemp[i] * std::log(10.) ;
-
-    // -------------------------------------------------------
-    //  Allocate 5-D Kokkos views  [irho,iT,iye,iymu,ivar]
-    // -------------------------------------------------------
-    using view5d = Kokkos::View<double*****, grace::default_space> ;
-    view5d v_baryon("eos4d_baryon", nrho, ntemp, nye, nymu, NTAB_B) ;
-    view5d v_ele   ("eos4d_ele",    nrho, ntemp, nye, nymu, NTAB_E) ;
-    view5d v_muon  ("eos4d_muon",   nrho, ntemp, nye, nymu, NTAB_M) ;
-
-    auto h_baryon = Kokkos::create_mirror_view(v_baryon) ;
-    auto h_ele    = Kokkos::create_mirror_view(v_ele)    ;
-    auto h_muon   = Kokkos::create_mirror_view(v_muon)   ;
-
-    // Reorder the flat slice we just read into 5D view slot (i,j,k,lm,iv).
-    auto store_slot = [&](auto& hv, size_t iv)
     {
-        for (int lm=0; lm<nymu; ++lm)
-        for (int k=0;  k<nye;   ++k)
-        for (int j=0;  j<ntemp; ++j)
-        for (int i=0;  i<nrho;  ++i)
-        {
-            // Convention: the flattening in the file is
-            //   index = i + nrho*(j + ntemp*(k + nye*lm))
-            // for a single variable slice.
-            size_t indold = i + (size_t)nrho*(j + (size_t)ntemp*(k + (size_t)nye*lm)) ;
-            hv(i,j,k,lm,iv) = alltables_temp[indold] ;
+        auto const uconv = CGS_units / GEOM_units ;  // for log(RHOGF) == log(uconv.mass_density)
+        double const lnRHOGF = std::log(uconv.mass_density) ;
+        double const ln10    = std::log(10.) ;
+
+        auto h_bar_lr = Kokkos::create_mirror_view_and_copy(
+                            Kokkos::HostSpace(), bt._logrho) ;
+        auto h_bar_lT = Kokkos::create_mirror_view_and_copy(
+                            Kokkos::HostSpace(), bt._logT) ;
+
+        constexpr double axis_tol = 1e-8 ;  // log-axis spacing is typically ~1e-2
+        double max_drho = 0., max_dT = 0. ;
+        for (int i=0; i<nrho;  ++i) {
+            double const expected = ln10 * logrho10[i] + lnRHOGF ;
+            double const observed = h_bar_lr(i) ;
+            double const d = std::abs(expected - observed) ;
+            if (d > max_drho) max_drho = d ;
         }
-    } ;
-
-    // -------------------------------------------------------
-    //  Read baryon table
-    // -------------------------------------------------------
-    table_dims[0] = NTAB_B ;
-    H5Sset_extent_simple(mem5, 2, table_dims, NULL) ;
-
-    #define READ_BAR(NAME, IDX) \
-        do { READ_4D_EOSTABLE_HDF5(NAME, IDX) ; store_slot(h_baryon, IDX) ; } while(0)
-
-    READ_BAR("logpress",  leptonic_eos_4d_t::TEOS_VIDX::TABPRESS) ;
-    READ_BAR("logenergy", leptonic_eos_4d_t::TEOS_VIDX::TABEPS) ;
-    READ_BAR("entropy",   leptonic_eos_4d_t::TEOS_VIDX::TABENTROPY) ;
-    READ_BAR("cs2",       leptonic_eos_4d_t::TEOS_VIDX::TABCSND2) ;
-    READ_BAR("mu_e",      leptonic_eos_4d_t::TEOS_VIDX::TABMUE) ;
-    READ_BAR("mu_p",      leptonic_eos_4d_t::TEOS_VIDX::TABMUP) ;
-    READ_BAR("mu_n",      leptonic_eos_4d_t::TEOS_VIDX::TABMUN) ;
-    READ_BAR("Xa",        leptonic_eos_4d_t::TEOS_VIDX::TABXA) ;
-    READ_BAR("Xh",        leptonic_eos_4d_t::TEOS_VIDX::TABXH) ;
-    READ_BAR("Xn",        leptonic_eos_4d_t::TEOS_VIDX::TABXN) ;
-    READ_BAR("Xp",        leptonic_eos_4d_t::TEOS_VIDX::TABXP) ;
-    READ_BAR("Abar",      leptonic_eos_4d_t::TEOS_VIDX::TABABAR) ;
-    READ_BAR("Zbar",      leptonic_eos_4d_t::TEOS_VIDX::TABZBAR) ;
-    #undef READ_BAR
-
-    // -------------------------------------------------------
-    //  Electron lepton table
-    // -------------------------------------------------------
-    table_dims[0] = NTAB_E ;
-    H5Sset_extent_simple(mem5, 2, table_dims, NULL) ;
-
-    #define READ_ELE(NAME, IDX) \
-        do { READ_4D_EOSTABLE_HDF5(NAME, IDX) ; store_slot(h_ele, IDX) ; } while(0)
-
-    READ_ELE("ele/mu_ele",        leptonic_eos_4d_t::ELE_VIDX::TABMUELE) ;
-    READ_ELE("ele/yle_minus",     leptonic_eos_4d_t::ELE_VIDX::TABYLE_MINUS) ;
-    READ_ELE("ele/yle_plus",      leptonic_eos_4d_t::ELE_VIDX::TABYLE_PLUS) ;
-    READ_ELE("ele/press_e_minus", leptonic_eos_4d_t::ELE_VIDX::TABPRESS_E_MINUS) ;
-    READ_ELE("ele/press_e_plus",  leptonic_eos_4d_t::ELE_VIDX::TABPRESS_E_PLUS) ;
-    READ_ELE("ele/eps_e_minus",   leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_MINUS) ;
-    READ_ELE("ele/eps_e_plus",    leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_PLUS) ;
-    READ_ELE("ele/s_e_minus",     leptonic_eos_4d_t::ELE_VIDX::TABS_E_MINUS) ;
-    READ_ELE("ele/s_e_plus",      leptonic_eos_4d_t::ELE_VIDX::TABS_E_PLUS) ;
-    #undef READ_ELE
-
-    // -------------------------------------------------------
-    //  Muon lepton table  (optional)
-    // -------------------------------------------------------
-    if (use_muonic_eos) {
-        table_dims[0] = NTAB_M ;
-        H5Sset_extent_simple(mem5, 2, table_dims, NULL) ;
-
-        #define READ_MU(NAME, IDX) \
-            do { READ_4D_EOSTABLE_HDF5(NAME, IDX) ; store_slot(h_muon, IDX) ; } while(0)
-
-        READ_MU("muon/mu_mu",          leptonic_eos_4d_t::MUON_VIDX::TABMUMU) ;
-        READ_MU("muon/ymu_minus",      leptonic_eos_4d_t::MUON_VIDX::TABYMU_MINUS) ;
-        READ_MU("muon/ymu_plus",       leptonic_eos_4d_t::MUON_VIDX::TABYMU_PLUS) ;
-        READ_MU("muon/press_mu_minus", leptonic_eos_4d_t::MUON_VIDX::TABPRESS_MU_MINUS) ;
-        READ_MU("muon/press_mu_plus",  leptonic_eos_4d_t::MUON_VIDX::TABPRESS_MU_PLUS) ;
-        READ_MU("muon/eps_mu_minus",   leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_MINUS) ;
-        READ_MU("muon/eps_mu_plus",    leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_PLUS) ;
-        READ_MU("muon/s_mu_minus",     leptonic_eos_4d_t::MUON_VIDX::TABS_MU_MINUS) ;
-        READ_MU("muon/s_mu_plus",      leptonic_eos_4d_t::MUON_VIDX::TABS_MU_PLUS) ;
-        #undef READ_MU
+        for (int i=0; i<ntemp; ++i) {
+            double const expected = ln10 * logtemp10[i] ;
+            double const observed = h_bar_lT(i) ;
+            double const d = std::abs(expected - observed) ;
+            if (d > max_dT)   max_dT   = d ;
+        }
+        if (max_drho > axis_tol || max_dT > axis_tol) {
+            GRACE_WARN("Leptonic and baryon (rho, T) grids differ pointwise:"
+                       " max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}."
+                       " The lepton tables will be evaluated on the baryon"
+                       " grid regardless; results may be inconsistent if"
+                       " the two HDF5 files were generated on different grids.",
+                       max_drho, max_dT) ;
+        } else {
+            GRACE_INFO("Leptonic and baryon (rho, T) grids agree pointwise"
+                       " (max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}).",
+                       max_drho, max_dT) ;
+        }
     }
 
-    H5Sclose(mem5) ;
+    // Sanity-check Y_le bounds against the baryon Y_e bounds.
+    {
+        double const baryon_yemax = baryon_eos.get_c2p_ye_max() ;
+        double const baryon_yemin = baryon_eos.get_c2p_ye_min() ;
+        if (std::abs(ylemax_f - baryon_yemax) > 1e-10 ||
+            std::abs(ylemin_f - baryon_yemin) > 1e-10) {
+            GRACE_WARN("Leptonic ylemin/max = [{}, {}] differs from baryon "
+                       "yemin/max = [{}, {}]; this is required to be equal "
+                       "by Margherita.  Continuing but expect inconsistencies.",
+                       ylemin_f, ylemax_f, baryon_yemin, baryon_yemax) ;
+        }
+    }
+
+    // -------------------------------------------------------
+    //  3) Read both 9-variable lepton datasets.
+    // -------------------------------------------------------
+    constexpr int NVAR_ELE  = leptonic_eos_4d_t::ELE_VIDX::N_TAB_VARS_ELE  ;
+    constexpr int NVAR_MUON = leptonic_eos_4d_t::MUON_VIDX::N_TAB_VARS_MUON ;
+
+    std::vector<double> buf_ele (static_cast<size_t>(NVAR_ELE)*nyle*ntemp*nrho) ;
+    std::vector<double> buf_muon(static_cast<size_t>(NVAR_MUON)*nymu*ntemp*nrho) ;
+
+    h5_read(file, "electronic_eos_tables", buf_ele .data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "muonic_eos_tables",     buf_muon.data(), H5T_NATIVE_DOUBLE) ;
+
     H5Fclose(file) ;
 
-    // -------------------------------------------------------
-    //  Unit conversion over the baryon table.
-    //  Stored convention (raw, from disk):
-    //    logpress  : log10(P_cgs)
-    //    logenergy : log10(eps_cgs * c^2)  with shift
-    //    cs2       : (cm/s)^2
-    //    mu_e/p/n  : MeV/baryon
-    //    entropy   : k_B / baryon (dimensionless)
-    //    Xa/h/n/p, Abar, Zbar : dimensionless
-    // -------------------------------------------------------
-    double hmin{std::numeric_limits<double>::max()} ;
-    double hmax{std::numeric_limits<double>::lowest()} ;
-    double epsmin{std::numeric_limits<double>::max()} ;
-    double epsmax_val{std::numeric_limits<double>::lowest()} ;
+    using view4d = Kokkos::View<double****, grace::default_space> ;
+    view4d v_ele ("eos4d_ele",  nrho, ntemp, nyle, NVAR_ELE)  ;
+    view4d v_muon("eos4d_muon", nrho, ntemp, nymu, NVAR_MUON) ;
+    auto h_ele  = Kokkos::create_mirror_view(v_ele)  ;
+    auto h_muon = Kokkos::create_mirror_view(v_muon) ;
 
-    for (int lm=0; lm<nymu; ++lm)
-    for (int k=0;  k<nye;   ++k)
-    for (int j=0;  j<ntemp; ++j)
-    for (int i=0;  i<nrho;  ++i)
-    {
-        double rhoL = std::exp(logrho[i]) ;
+    deal_species_into_view(buf_ele,  nrho, ntemp, nyle, NVAR_ELE,  h_ele)  ;
+    deal_species_into_view(buf_muon, nrho, ntemp, nymu, NVAR_MUON, h_muon) ;
 
-        // pressure: log10 -> loge + log(uconv.pressure)
-        h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABPRESS) =
-            h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABPRESS) * std::log(10.)
-            + std::log(uconv.pressure) ;
-        double pressL = std::exp(h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABPRESS)) ;
-
-        // eps: 10^(logenergy) * c^2 (geometric) gives eps_shifted
-        double leps_raw = h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABEPS) ;
-        double epsT     = std::pow(10., leps_raw) * SQR(uconv.velocity) ;
-        double epsL     = epsT - energy_shift ;
-        h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABEPS) = std::log(epsT) ;
-
-        epsmin     = std::min(epsmin,     epsL) ;
-        epsmax_val = std::max(epsmax_val, epsL) ;
-
-        // sound speed: (cm/s)^2 -> dimensionless, then divide by h.
-        double& cs2 = h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABCSND2) ;
-        cs2 *= SQR(uconv.velocity) ;
-        if (cs2 < 0.) cs2 = 0. ;
-        double hL = 1. + epsL + pressL / rhoL ;
-        cs2 /= hL ;
-        cs2 = std::min(std::max(cs2, 1e-6), 1.-1e-10) ;
-
-        // chemical potentials: MeV/baryon -> dimensionless geometric
-        // mu_geom = mu_MeV * MeV_to_g * uconv.mass / baryon_mass
-        // (baryon_mass is already in geometric mass units from above.)
-        constexpr double MeV2g = MeV_to_g ;
-        double const mu_factor = MeV2g * uconv.mass / baryon_mass ;
-        h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABMUE) *= mu_factor ;
-        h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABMUP) *= mu_factor ;
-        h_baryon(i,j,k,lm, leptonic_eos_4d_t::TEOS_VIDX::TABMUN) *= mu_factor ;
-
-        hmin = std::min(hmin, hL) ;
-        hmax = std::max(hmax, hL) ;
-    }
-
-    // Convert lepton-table pressure and eps to geometric units.
-    auto convert_lepton_view = [&](auto& hv, int p1, int p2, int e1, int e2)
-    {
-        for (int lm=0; lm<nymu; ++lm)
-        for (int k=0;  k<nye;   ++k)
-        for (int j=0;  j<ntemp; ++j)
-        for (int i=0;  i<nrho;  ++i)
-        {
-            hv(i,j,k,lm,p1) *= uconv.pressure ;
-            hv(i,j,k,lm,p2) *= uconv.pressure ;
-            hv(i,j,k,lm,e1) *= SQR(uconv.velocity) ;
-            hv(i,j,k,lm,e2) *= SQR(uconv.velocity) ;
-        }
-    } ;
-    convert_lepton_view(h_ele,
-        leptonic_eos_4d_t::ELE_VIDX::TABPRESS_E_MINUS,
-        leptonic_eos_4d_t::ELE_VIDX::TABPRESS_E_PLUS,
-        leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_MINUS,
-        leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_PLUS) ;
-    if (use_muonic_eos) {
-        convert_lepton_view(h_muon,
-            leptonic_eos_4d_t::MUON_VIDX::TABPRESS_MU_MINUS,
-            leptonic_eos_4d_t::MUON_VIDX::TABPRESS_MU_PLUS,
-            leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_MINUS,
-            leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_PLUS) ;
-    }
+    Kokkos::deep_copy(v_ele,  h_ele)  ;
+    Kokkos::deep_copy(v_muon, h_muon) ;
 
     // -------------------------------------------------------
-    //  Deep copy to device
-    // -------------------------------------------------------
-    Kokkos::deep_copy(v_baryon, h_baryon) ;
-    Kokkos::deep_copy(v_ele,    h_ele)    ;
-    Kokkos::deep_copy(v_muon,   h_muon)   ;
-
-    // -------------------------------------------------------
-    //  Axes
+    //  4) Axis Kokkos views.  rho and T axes are shared with the
+    //     baryon table (we pass bt._logrho / bt._logT below).
+    //     yle stores linear Y_le values (Margherita convention).
+    //     ymu stores log(Y_mu) values — the HDF5 ymu_table is
+    //     log-spaced; queries must pass log(ymu) to muon_table.
     // -------------------------------------------------------
     using view1d = Kokkos::View<double*, grace::default_space> ;
-    view1d v_logrho ("eos4d_logrho",  nrho)  ;
-    view1d v_logT   ("eos4d_logT",    ntemp) ;
-    view1d v_ye     ("eos4d_ye",      nye)   ;
-    view1d v_ymu    ("eos4d_ymu",     nymu)  ;
-    auto h_lr = Kokkos::create_mirror_view(v_logrho) ;
-    auto h_lt = Kokkos::create_mirror_view(v_logT)   ;
-    auto h_ye = Kokkos::create_mirror_view(v_ye)     ;
-    auto h_ym = Kokkos::create_mirror_view(v_ymu)    ;
-    for (int i=0; i<nrho;  ++i) h_lr(i) = logrho[i]  ;
-    for (int i=0; i<ntemp; ++i) h_lt(i) = logtemp[i] ;
-    for (int i=0; i<nye;   ++i) h_ye(i) = yes[i]     ;
-    for (int i=0; i<nymu;  ++i) h_ym(i) = ymus[i]    ;
-    Kokkos::deep_copy(v_logrho, h_lr) ;
-    Kokkos::deep_copy(v_logT,   h_lt) ;
-    Kokkos::deep_copy(v_ye,     h_ye) ;
-    Kokkos::deep_copy(v_ymu,    h_ym) ;
+    view1d v_yle("eos4d_yle", nyle) ;
+    view1d v_ymu("eos4d_ymu", nymu) ;
+    auto h_yle = Kokkos::create_mirror_view(v_yle) ;
+    auto h_ymu = Kokkos::create_mirror_view(v_ymu) ;
+    for (int i=0; i<nyle; ++i) h_yle(i) = yle[i] ;
+    for (int i=0; i<nymu; ++i) h_ymu(i) = ymu[i] ;
+    Kokkos::deep_copy(v_yle, h_yle) ;
+    Kokkos::deep_copy(v_ymu, h_ymu) ;
 
     // -------------------------------------------------------
-    //  Cold slice
+    //  5) Cold slice.
     // -------------------------------------------------------
     Kokkos::View<double**, grace::default_space> cold_tabs ;
     Kokkos::View<double*,  grace::default_space> cold_lrho ;
-    GRACE_INFO("Reading 4D leptonic cold table: {}", cold_fname) ;
     read_leptonic_cold_table(cold_fname, cold_tabs, cold_lrho) ;
 
     // -------------------------------------------------------
-    //  EOS limits
+    //  6) Limits.  rho/T/Y_e/eps/h/atmosphere come from the
+    //     baryon table; Y_mu from the leptonic file.
     // -------------------------------------------------------
-    double rhomax  = std::exp(logrho[nrho-1])  ;
-    double rhomin  = std::exp(logrho[0])       ;
-    double tempmax = std::exp(logtemp[ntemp-1]) ;
-    double tempmin = std::exp(logtemp[0])       ;
-    double yemax   = yes[nye-1]                 ;
-    double yemin   = yes[0]                     ;
-    double ymumax  = ymus[nymu-1]               ;
-    double ymumin  = ymus[0]                    ;
+    double const rhomax  = baryon_eos.density_maximum() ;
+    double const rhomin  = baryon_eos.density_minimum() ;
+    double const tempmax = baryon_eos.temperature_maximum() ;
+    double const tempmin = baryon_eos.temperature_minimum() ;
+    double const yemax   = baryon_eos.get_c2p_ye_max() ;
+    double const yemin   = baryon_eos.get_c2p_ye_min() ;
 
-    auto usr_epsmax = grace::get_param<double>("eos","eps_maximum") ;
-    if (usr_epsmax < epsmax_val) epsmax_val = usr_epsmax ;
+    // ymu_table stores log(Ymu) (Margherita convention: "Ymu is in log
+    // scale just like rho, temp").  eos_ymumin/max are the linear Ymu
+    // bounds.  Convert axis endpoints before comparing.
+    double const ymumin = std::max(ymumin_f, std::exp(ymu.front())) ;
+    double const ymumax = std::min(ymumax_f, std::exp(ymu.back()))  ;
 
-    // Atmosphere defaults: floor temperature; ye/ymu either from parfile
-    // or, when requested, found by a host-side beta-equilibrium solve
-    // *after* construction (see press_eps_ye_ymu__beta_eq__rho_temp).
-    double temp_floor = grace::get_param<double>("grmhd","atmosphere","temp_fl") ;
-    double tmin_safe  = std::exp(logtemp[1]) ;
-    if (temp_floor < tmin_safe) {
-        GRACE_WARN("Atmosphere T_fl below second table point ({}); overriding.", tmin_safe) ;
-        temp_floor = tmin_safe ;
-    }
-    double ye_atm  = grace::get_param<double>("grmhd","atmosphere","ye_fl") ;
-    double ymu_atm = ymumin ;
+    double const epsmin = baryon_eos.get_c2p_eps_min() ;
+    double const epsmax = baryon_eos.get_c2p_eps_max() ;
+    double const hmin   = baryon_eos.enthalpy_minimum() ;
+    double const hmax   = baryon_eos.get_c2p_h_max() ;
 
-    if (atm_beta_eq) {
-        GRACE_INFO("Atmosphere: beta-equilibrium Y_e, Y_mu will be solved "
-                   "host-side after EOS construction.") ;
-    }
+    double const temp_atm = baryon_eos.temp_atmosphere() ;
+    double const ye_atm   = baryon_eos.ye_atmosphere() ;
+    double const ymu_atm  = ymumin ;
+
+    bool const atm_beta_eq =
+        grace::get_param<bool>("grmhd","atmosphere","atmosphere_is_beta_eq") ;
+
+    // add_ele_contribution: set true only if the baryon table was
+    // generated *without* electrons (uncommon).  For standard SFHo /
+    // DD2 / BHBlp tables the baryon table already includes electrons,
+    // so this must stay false to avoid double-counting.
+    bool const add_ele = grace::get_param<bool>("eos","leptonic","add_ele_contribution") ;
 
     GRACE_INFO("4D leptonic EOS rho [{:.4e}, {:.4e}]  T [{:.4e}, {:.4e}]  "
-               "Ye [{:.3f}, {:.3f}]  Ymu [{:.3f}, {:.3f}]",
-               rhomin, rhomax, tempmin, tempmax, yemin, yemax, ymumin, ymumax) ;
+               "Ye [{:.3f}, {:.3f}]  Ymu [{:.3e}, {:.3e}]  add_ele={}",
+               rhomin, rhomax, tempmin, tempmax, yemin, yemax, ymumin, ymumax, add_ele) ;
 
+    // Copy the baryon rho/T/ye axes into fresh managed views so the
+    // leptonic_eos_4d_t constructor receives View<double*> (not the
+    // readonly_view_t that tabeos_linterp_t stores internally).
+    view1d bar_logrho("eos4d_bar_logrho", bt._logrho.extent(0)) ;
+    view1d bar_logT  ("eos4d_bar_logT",   bt._logT  .extent(0)) ;
+    view1d bar_ye    ("eos4d_bar_ye",     bt._ye    .extent(0)) ;
+    Kokkos::deep_copy(bar_logrho, bt._logrho) ;
+    Kokkos::deep_copy(bar_logT,   bt._logT)   ;
+    Kokkos::deep_copy(bar_ye,     bt._ye)     ;
+
+    // -------------------------------------------------------
+    //  7) Construct.
+    // -------------------------------------------------------
     return leptonic_eos_4d_t(
-        v_baryon, v_logrho, v_logT, v_ye, v_ymu,
-        v_ele, v_muon,
+        bt._tables,
+        bar_logrho, bar_logT, bar_ye,
+        v_ele,  v_yle,
+        v_muon, v_ymu,
         cold_tabs, cold_lrho,
         rhomax, rhomin,
         tempmax, tempmin,
         yemax,  yemin,
         ymumax, ymumin,
-        baryon_mass, energy_shift,
-        epsmin, epsmax_val,
+        baryon_eos.get_baryon_mass(),
+        baryon_eos.energy_shift,
+        epsmin, epsmax,
         hmin,   hmax,
-        temp_floor,
+        temp_atm,
         ye_atm, ymu_atm,
-        atm_beta_eq
+        atm_beta_eq,
+        add_ele
     ) ;
 }
 

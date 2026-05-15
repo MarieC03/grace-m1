@@ -214,7 +214,7 @@ eos_storage_t::eos_storage_t() {
         }
     } else if ( eos_type == "tabulated") {
         _tabulated = read_eos_table() ;
-    } else if ( eos_type == "leptonic_4d") {
+    } else if ( eos_type == "leptonic") {
         _leptonic_4d = read_leptonic_4d_table() ;
     } else if ( eos_type == "ideal_gas") {
         _gammalaw = ideal_gas_eos_t(

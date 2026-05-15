@@ -1,153 +1,75 @@
 /**
  * @file leptonic_eos_4d.hh
- * @brief  4D tabulated EOS with muon fraction Y_mu as a fourth independent
- *         variable, consistent with the GRACE EOS framework (CRTP / eos_base_t)
- *         and Kokkos.
- * @date   2025
+ * @author Marie Cassing (mcassing@itp.uni-frankfurt.de)
+ * @author Keneth Miler (miler@itp.uni-frankfurt.de)
+ * @brief  GRACE wrapper around the Margherita-style additive leptonic EOS.
  *
- * @copyright This file is part of GRACE. GPL-3 or later.
+ *         The total thermodynamic state is built additively from three
+ *         independent 3D tables:
+ *
+ *             baryon     (rho, T, yp = Y_le + Y_mu) -- existing GRACE tabulated_eos
+ *             electronic (rho, T, Y_le)             -- from the leptonic HDF5
+ *             muonic     (rho, T, Y_mu)             -- from the leptonic HDF5
+ *
+ *         where yp is the proton (charge) fraction (charge neutrality)
+ *         clamped to the baryon-table Y_e axis bounds.
+ *
+ *         Margherita default semantics that this class follows:
+ *           - the baryon contribution already contains the electron
+ *             contribution, so the electronic table's pressure / eps /
+ *             entropy are NOT added into the totals.  The electronic
+ *             table is consulted only for mu_e.
+ *           - yp is clamped to the baryon table's [yemin, yemax] before
+ *             every baryon lookup (charge neutrality + Y_e axis range).
+ *           - when ye + ymu >= yemax, mu_e is taken from the baryon
+ *             table (the leptonic mu_e is unreliable in that corner)
+ *             and mu_mu is reported as its rest mass (atmosphere value).
+ *           - sound speed comes from the baryon table alone.
+ *           - the Y_le axis is linear; the Y_mu axis is log-spaced
+ *             (ymu_table in the HDF5 stores log(Ymu)).
+ *
+ *         The class follows the existing GRACE CRTP / eos_base_t pattern.
+ *
+ * @date   2026-05-15
+ *
+ * @copyright This file is part of the General Relativistic Astrophysics
+ * Code for Exascale (GRACE).
+ * GRACE is an evolution framework that uses Finite Volume
+ * methods to simulate relativistic spacetimes and plasmas.
+ * Copyright (C) 2026 Marie Cassing, Keneth Miler
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #ifndef GRACE_PHYSICS_EOS_LEPTONIC_4D_HH
 #define GRACE_PHYSICS_EOS_LEPTONIC_4D_HH
 
 #include <grace_config.h>
-
 #include <grace/utils/grace_utils.hh>
 #include <grace/utils/bitset.hh>
-#include <grace/physics/eos/eos_base.hh>
-#include <grace/data_structures/memory_defaults.hh>
-#include <grace/amr/ghostzone_kernels/type_helpers.hh>
 #include <grace/utils/rootfinding.hh>
+#include <grace/physics/eos/eos_base.hh>
+#include <grace/physics/eos/tabulated_eos.hh>   // tabeos_linterp_t, cold_eos_linterp_t
 
 #include <Kokkos_Core.hpp>
 
-
+#include <array>
+#include <cmath>
+#include <limits>
 
 namespace grace {
 
-// ============================================================
-//  4-D table interpolator
-//  Axes: log(rho), log(T), Y_e, Y_mu  (uniform spacing assumed
-//  for every axis, identical layout to tabeos_linterp_t)
-// ============================================================
-struct tabeos_linterp_4d_t {
-
-    tabeos_linterp_4d_t() = default ;
-
-    tabeos_linterp_4d_t(
-        Kokkos::View<double *****> tabs,   ///< [irho,iT,iye,iymu,ivar]
-        Kokkos::View<double *>     ar,     ///< log(rho) axis
-        Kokkos::View<double *>     at,     ///< log(T)   axis
-        Kokkos::View<double *>     ay,     ///< Y_e      axis
-        Kokkos::View<double *>     aym     ///< Y_mu     axis
-    ) : _logrho(ar), _logT(at), _ye(ay), _ymu(aym), _tables(tabs)
-    {
-        idr  = 1./(_logrho(1) - _logrho(0)) ;
-        idt  = 1./(_logT(1)   - _logT(0))   ;
-        idy  = 1./(_ye(1)     - _ye(0))     ;
-        idym = 1./(_ymu(1)    - _ymu(0))    ;
-    }
-
-    KOKKOS_INLINE_FUNCTION double lrho (int i) const { return _logrho(i) ; }
-    KOKKOS_INLINE_FUNCTION double ltemp(int i) const { return _logT(i)   ; }
-    KOKKOS_INLINE_FUNCTION double ye   (int i) const { return _ye(i)     ; }
-    KOKKOS_INLINE_FUNCTION double ymu  (int i) const { return _ymu(i)    ; }
-
-    KOKKOS_INLINE_FUNCTION
-    double interp(double lrho, double ltemp, double ye, double ymu, int idx) const
-    {
-        std::array<double,1> res ;
-        std::array<int,1>    _i{idx} ;
-        interp<1>(lrho,ltemp,ye,ymu,_i,res) ;
-        return res[0] ;
-    }
-
-    template< int N >
-    KOKKOS_INLINE_FUNCTION
-    void interp(double lrho, double ltemp, double ye, double ymu,
-                std::array<int,N> const& idx,
-                std::array<double,N>&    res) const
-    {
-        for( int iv=0; iv<N; ++iv) res[iv] = 0.0 ;
-        int ir, it, iy, iym ;
-        getidx(lrho,ltemp,ye,ymu, ir,it,iy,iym) ;
-        double wr[2], wt[2], wy[2], wym[2] ;
-        getw(lrho ,ir ,_logrho,idr ,wr ) ;
-        getw(ltemp,it ,_logT  ,idt ,wt ) ;
-        getw(ye   ,iy ,_ye    ,idy ,wy ) ;
-        getw(ymu  ,iym,_ymu   ,idym,wym) ;
-        for( int ii=0; ii<2; ++ii)
-        for( int jj=0; jj<2; ++jj)
-        for( int kk=0; kk<2; ++kk)
-        for( int ll=0; ll<2; ++ll) {
-            double w = wr[ii]*wt[jj]*wy[kk]*wym[ll] ;
-            for( int iv=0; iv<N; ++iv)
-                res[iv] += w * _tables(ir+ii, it+jj, iy+kk, iym+ll, idx[iv]) ;
-        }
-    }
-
-    KOKKOS_INLINE_FUNCTION
-    void getidx(double lr, double lt, double ye_, double ym_,
-                int& ir, int& it, int& iy, int& iym) const
-    {
-        ir  = Kokkos::max(0UL,
-              Kokkos::min( static_cast<size_t>((lr  - _logrho(0))*idr ),
-                           _logrho.extent(0)-2 )) ;
-        it  = Kokkos::max(0UL,
-              Kokkos::min( static_cast<size_t>((lt  - _logT(0)  )*idt ),
-                           _logT.extent(0)-2   )) ;
-        iy  = Kokkos::max(0UL,
-              Kokkos::min( static_cast<size_t>((ye_ - _ye(0)    )*idy ),
-                           _ye.extent(0)-2     )) ;
-        iym = Kokkos::max(0UL,
-              Kokkos::min( static_cast<size_t>((ym_ - _ymu(0)   )*idym),
-                           _ymu.extent(0)-2    )) ;
-    }
-
-    KOKKOS_INLINE_FUNCTION
-    void getw(double x, int i,
-              Kokkos::View<const double*> ax, double ih, double* w) const
-    {
-        double lam = (x - ax(i)) * ih ;
-        w[0] = 1. - lam ;
-        w[1] = lam      ;
-    }
-
-    Kokkos::View<const double*> _logrho, _logT, _ye, _ymu ;
-    Kokkos::View<double *****>  _tables ;
-    double idr, idt, idy, idym ;
-} ;
-
-// ============================================================
-//  Cold-slice 1-D table  (rho, T_cold, Y_e_cold, Y_mu_cold,
-//                         press_cold, eps_cold, cs2_cold, s_cold)
-// ============================================================
-struct cold_eos_linterp_4d_t {
-    cold_eos_linterp_4d_t() = default ;
-    cold_eos_linterp_4d_t(
-        Kokkos::View<double **> tabs,
-        Kokkos::View<double *>  ar
-    ) : _logrho(ar), _tables(tabs)
-    { idr = 1./(_logrho(1)-_logrho(0)) ; }
-
-    KOKKOS_INLINE_FUNCTION double interp(double lrho, int idx) const {
-        int i = Kokkos::max(0UL,
-                Kokkos::min( static_cast<size_t>((lrho-_logrho(0))*idr),
-                             _logrho.extent(0)-2 )) ;
-        double lam = (lrho - _logrho(i)) * idr ;
-        return (1.-lam)*_tables(i,idx) + lam*_tables(i+1,idx) ;
-    }
-    Kokkos::View<const double*> _logrho ;
-    Kokkos::View<double **>     _tables  ;
-    double idr ;
-} ;
-
-// ============================================================
-//  leptonic_eos_4d_t
-//  Concrete EOS type: 4D tabulated (rho, T, Y_e, Y_mu).
-//  Inherits the standard GRACE CRTP interface from eos_base_t.
-// ============================================================
 class leptonic_eos_4d_t
     : public eos_base_t<leptonic_eos_4d_t>
 {
@@ -157,7 +79,7 @@ class leptonic_eos_4d_t
   public:
 
     // ----------------------------------------------------------
-    //  Table variable indices – baryon table
+    //  Baryon table variable indices (same as tabulated_eos_t).
     // ----------------------------------------------------------
     enum TEOS_VIDX : int {
         TABPRESS = 0,
@@ -177,7 +99,7 @@ class leptonic_eos_4d_t
     } ;
 
     // ----------------------------------------------------------
-    //  Table variable indices – electron lepton table
+    //  Electronic table (9 vars, Margherita EELE ordering).
     // ----------------------------------------------------------
     enum ELE_VIDX : int {
         TABMUELE = 0,
@@ -193,7 +115,7 @@ class leptonic_eos_4d_t
     } ;
 
     // ----------------------------------------------------------
-    //  Table variable indices – muon lepton table
+    //  Muonic table (9 vars, Margherita EMUON ordering).
     // ----------------------------------------------------------
     enum MUON_VIDX : int {
         TABMUMU = 0,
@@ -209,9 +131,8 @@ class leptonic_eos_4d_t
     } ;
 
     // ----------------------------------------------------------
-    //  Cold-slice table indices. File layout is:
-    //   col 0  : log(rho)         (stripped into a separate axis view)
-    //   col 1+ : the entries indexed by COLD_VIDX below.
+    //  Cold-slice file layout: 8 columns
+    //   log(rho)  temp  ye_cold  ymu_cold  press  eps  cs2  entropy
     // ----------------------------------------------------------
     enum COLD_VIDX : int {
         CTABTEMP = 0,
@@ -224,25 +145,33 @@ class leptonic_eos_4d_t
         N_CTAB_VARS
     } ;
 
-    // ----------------------------------------------------------
-    //  Default / constructors
-    // ----------------------------------------------------------
     leptonic_eos_4d_t() = default ;
 
+    /**
+     * @brief Construct from pre-built interpolators.
+     *
+     * The baryon-table 4D view, axes and energy_shift come from the
+     * GRACE read_eos_table() pipeline; the lepton views and Y_e/Y_mu
+     * axes come from the leptonic HDF5.  rho and T axes are *always*
+     * those of the baryon table (the reader asserts the leptonic file
+     * lives on the same (rho,T) grid).
+     */
     leptonic_eos_4d_t(
-        // 4-D baryon table  [irho,iT,iye,iymu,ivar]
-        Kokkos::View<double *****, grace::default_space> tab_baryon,
-        Kokkos::View<double *,     grace::default_space> logrho,
-        Kokkos::View<double *,     grace::default_space> logT,
-        Kokkos::View<double *,     grace::default_space> ye_ax,
-        Kokkos::View<double *,     grace::default_space> ymu_ax,
-        // 4-D lepton tables
-        Kokkos::View<double *****, grace::default_space> tab_ele,
-        Kokkos::View<double *****, grace::default_space> tab_muon,
-        // Cold slice  [irho, ivar]
-        Kokkos::View<double **,    grace::default_space> cold_tab,
-        Kokkos::View<double *,     grace::default_space> cold_logrho,
-        // Thermodynamic range parameters
+        // baryon table (shape and layout of tabulated_eos_t::tables)
+        Kokkos::View<double ****, grace::default_space> tab_baryon,
+        Kokkos::View<double *,    grace::default_space> bar_logrho,
+        Kokkos::View<double *,    grace::default_space> bar_logT,
+        Kokkos::View<double *,    grace::default_space> bar_ye,
+        // electronic table  (axis = linear Y_le)
+        Kokkos::View<double ****, grace::default_space> tab_ele,
+        Kokkos::View<double *,    grace::default_space> ele_yle,
+        // muonic table      (axis = log Y_mu, as stored in HDF5 ymu_table)
+        Kokkos::View<double ****, grace::default_space> tab_muon,
+        Kokkos::View<double *,    grace::default_space> mu_ymu,
+        // cold slice  [nrho, N_CTAB_VARS]
+        Kokkos::View<double **,   grace::default_space> cold_tab,
+        Kokkos::View<double *,    grace::default_space> cold_logrho,
+        // thermodynamic ranges
         double rhomax,   double rhomin,
         double tempmax,  double tempmin,
         double yemax,    double yemin,
@@ -254,7 +183,12 @@ class leptonic_eos_4d_t
         double c2p_temp_atm,
         double c2p_ye_atm,
         double c2p_ymu_atm,
-        bool   atmo_is_beta_eq
+        bool   atmo_is_beta_eq,
+        // When false (default): the baryon table already includes the
+        // electron contribution; the electronic table is used only for
+        // mu_e.  Set true only if the baryon table was generated
+        // without electrons and the electronic table must be added.
+        bool   add_ele_contribution_ = false
     )
     : base_t( rhomax, rhomin,
               tempmax, tempmin,
@@ -267,28 +201,23 @@ class leptonic_eos_4d_t
               c2p_ye_atm,
               c2p_ymu_atm,
               atmo_is_beta_eq )
-    , tables     (tab_baryon, logrho, logT, ye_ax, ymu_ax)
-    , tables_ele (tab_ele,    logrho, logT, ye_ax, ymu_ax)
-    , tables_muon(tab_muon,   logrho, logT, ye_ax, ymu_ax)
-    , cold_table (cold_tab,   cold_logrho)
-    , nrho(logrho.size()), nT(logT.size())
-    , nye(ye_ax.size()),   nymu(ymu_ax.size())
+    , baryon_table(tab_baryon, bar_logrho, bar_logT, bar_ye)
+    , ele_table   (tab_ele,    bar_logrho, bar_logT, ele_yle)
+    , muon_table  (tab_muon,   bar_logrho, bar_logT, mu_ymu)
+    , cold_table  (cold_tab,   cold_logrho)
+    , nrho(bar_logrho.size()), nT(bar_logT.size())
+    , nye(ele_yle.size()),     nymu(mu_ymu.size())
     , energy_shift(energy_shift_)
+    , add_ele_contribution(add_ele_contribution_)
     {
-        lrhomin  = logrho[0] ; lrhomax  = logrho[logrho.size()-1] ;
-        ltempmin = logT[0]   ; ltempmax = logT[logT.size()-1]     ;
+        lrhomin  = bar_logrho[0] ; lrhomax  = bar_logrho[bar_logrho.size()-1] ;
+        ltempmin = bar_logT[0]   ; ltempmax = bar_logT[bar_logT.size()-1]    ;
     }
 
     // ===========================================================
-    //  CRTP implementation methods (called by eos_base_t)
-    //
-    //  All names end in "_ymu_impl" to match eos_base_t's CRTP
-    //  dispatchers in the muon-extended API.
+    //  CRTP _impl methods
     // ===========================================================
 
-    // -----------------------------------------------------------
-    //  press given eps, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press__eps_rho_ye_ymu_impl(double& eps, double& rho,
                                double& ye, double& ymu, err_t& err) const
@@ -296,14 +225,11 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho  = Kokkos::log(rho) ;
-        double ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
-        return press__lrho_ltemp_ye_ymu(lrho, ltemp, ye, ymu) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press + temp given eps, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_temp__eps_rho_ye_ymu_impl(double& temp, double& eps, double& rho,
                                     double& ye, double& ymu, err_t& err) const
@@ -311,15 +237,12 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho  = Kokkos::log(rho) ;
-        double ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
-        return press__lrho_ltemp_ye_ymu(lrho, ltemp, ye, ymu) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press__temp_rho_ye_ymu_impl(double& temp, double& rho,
                                 double& ye, double& ymu, err_t& err) const
@@ -328,14 +251,9 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        return press__lrho_ltemp_ye_ymu(lrho, ltemp, ye, ymu) ;
+        return total_press(Kokkos::log(rho), Kokkos::log(temp), ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  eps given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     eps__temp_rho_ye_ymu_impl(double& temp, double& rho,
                               double& ye, double& ymu, err_t& err) const
@@ -344,14 +262,9 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        return Kokkos::exp(tables.interp(lrho,ltemp,ye,ymu,TABEPS)) - energy_shift ;
+        return total_eps(Kokkos::log(rho), Kokkos::log(temp), ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  eps range  (min/max over temperature at fixed rho,ye,ymu)
-    // -----------------------------------------------------------
     void GRACE_HOST_DEVICE
     eps_range__rho_ye_ymu_impl(double& epsmin, double& epsmax,
                                double& rho, double& ye, double& ymu,
@@ -360,14 +273,11 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho = Kokkos::log(rho) ;
-        epsmin = Kokkos::exp(tables.interp(lrho,ltempmin,ye,ymu,TABEPS)) - energy_shift ;
-        epsmax = Kokkos::exp(tables.interp(lrho,ltempmax,ye,ymu,TABEPS)) - energy_shift ;
+        double const lrho = Kokkos::log(rho) ;
+        epsmin = total_eps(lrho, ltempmin, ye, ymu) ;
+        epsmax = total_eps(lrho, ltempmax, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  entropy range
-    // -----------------------------------------------------------
     void GRACE_HOST_DEVICE
     entropy_range__rho_ye_ymu_impl(double& smin, double& smax,
                                    double& rho, double& ye, double& ymu,
@@ -376,14 +286,11 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho = Kokkos::log(rho) ;
-        smin = tables.interp(lrho, ltempmin, ye, ymu, TABENTROPY) ;
-        smax = tables.interp(lrho, ltempmax, ye, ymu, TABENTROPY) ;
+        double const lrho = Kokkos::log(rho) ;
+        smin = total_entropy(lrho, ltempmin, ye, ymu) ;
+        smax = total_entropy(lrho, ltempmax, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press + h + cs2  given eps, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_h_csnd2__eps_rho_ye_ymu_impl( double& h, double& csnd2, double& eps,
                                         double& rho, double& ye, double& ymu,
@@ -392,17 +299,14 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho  = Kokkos::log(rho) ;
-        double ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
-        double press = press__lrho_ltemp_ye_ymu(lrho, ltemp, ye, ymu) ;
-        csnd2 = tables.interp(lrho,ltemp,ye,ymu,TABCSND2) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
+        double const press = total_press(lrho, ltemp, ye, ymu) ;
+        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press/rho ;
         return press ;
     }
 
-    // -----------------------------------------------------------
-    //  press + h + cs2 given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_h_csnd2__temp_rho_ye_ymu_impl( double& h, double& csnd2, double& temp,
                                          double& rho, double& ye, double& ymu,
@@ -412,21 +316,15 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        std::array<int,3> _v{ TABPRESS, TABCSND2, TABEPS } ;
-        std::array<double,3> res ;
-        tables.interp<3>(lrho, ltemp, ye, ymu, _v, res) ;
-        double press = Kokkos::exp(res[0]) ;
-        double eps   = Kokkos::exp(res[2]) - energy_shift ;
-        csnd2 = res[1] ;
+        double const lrho  = Kokkos::log(rho)  ;
+        double const ltemp = Kokkos::log(temp) ;
+        double const press = total_press(lrho, ltemp, ye, ymu) ;
+        double const eps   = total_eps  (lrho, ltemp, ye, ymu) ;
+        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press/rho ;
         return press ;
     }
 
-    // -----------------------------------------------------------
-    //  press + eps + cs2 given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_eps_csnd2__temp_rho_ye_ymu_impl(double& eps, double& csnd2,
                                           double& temp, double& rho,
@@ -437,20 +335,13 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        std::array<int,3> _v{ TABPRESS, TABEPS, TABCSND2 } ;
-        std::array<double,3> res ;
-        tables.interp<3>(lrho, ltemp, ye, ymu, _v, res) ;
-        double press = Kokkos::exp(res[0]) ;
-        eps   = Kokkos::exp(res[1]) - energy_shift ;
-        csnd2 = res[2] ;
-        return press ;
+        double const lrho  = Kokkos::log(rho)  ;
+        double const ltemp = Kokkos::log(temp) ;
+        eps   = total_eps  (lrho, ltemp, ye, ymu) ;
+        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press + h + cs2 + temp + entropy  given eps, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_h_csnd2_temp_entropy__eps_rho_ye_ymu_impl(
         double& h, double& csnd2, double& temp, double& entropy,
@@ -459,24 +350,16 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
-        double lrho  = Kokkos::log(rho) ;
-        double ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
-
-        std::array<int,3> _v{ TABPRESS, TABCSND2, TABENTROPY } ;
-        std::array<double,3> res ;
-        tables.interp<3>(lrho, ltemp, ye, ymu, _v, res) ;
-
-        double press = Kokkos::exp(res[0]) ;
-        csnd2   = res[1] ;
-        entropy = res[2] ;
+        double const press = total_press   (lrho, ltemp, ye, ymu) ;
+        csnd2   = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         h = 1. + eps + press / rho ;
         return press ;
     }
 
-    // -----------------------------------------------------------
-    //  eps + cs2 + entropy given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     eps_csnd2_entropy__temp_rho_ye_ymu_impl(
         double& csnd2, double& entropy, double& temp,
@@ -486,19 +369,13 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        std::array<int,3> _v{ TABEPS, TABCSND2, TABENTROPY } ;
-        std::array<double,3> res ;
-        tables.interp<3>(lrho, ltemp, ye, ymu, _v, res) ;
-        csnd2   = res[1] ;
-        entropy = res[2] ;
-        return Kokkos::exp(res[0]) - energy_shift ;
+        double const lrho  = Kokkos::log(rho)  ;
+        double const ltemp = Kokkos::log(temp) ;
+        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        entropy = total_entropy(lrho, ltemp, ye, ymu) ;
+        return total_eps(lrho, ltemp, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press + eps + cs2 + entropy  given temp, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
         double& eps, double& csnd2, double& entropy,
@@ -508,21 +385,14 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        std::array<int,4> _v{ TABPRESS, TABEPS, TABCSND2, TABENTROPY } ;
-        std::array<double,4> res ;
-        tables.interp<4>(lrho, ltemp, ye, ymu, _v, res) ;
-        double press = Kokkos::exp(res[0]) ;
-        eps     = Kokkos::exp(res[1]) - energy_shift ;
-        csnd2   = res[2] ;
-        entropy = res[3] ;
-        return press ;
+        double const lrho  = Kokkos::log(rho)  ;
+        double const ltemp = Kokkos::log(temp) ;
+        eps     = total_eps    (lrho, ltemp, ye, ymu) ;
+        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        entropy = total_entropy(lrho, ltemp, ye, ymu) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
     }
 
-    // -----------------------------------------------------------
-    //  press + h + cs2 + temp + eps  given entropy, rho, ye, ymu
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     press_h_csnd2_temp_eps__entropy_rho_ye_ymu_impl(
         double& h, double& csnd2, double& temp, double& eps,
@@ -533,38 +403,36 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ymu, err) ;
         limit_entropy_rho_ye_ymu(entropy, rho, ye, ymu, err) ;
-        double lrho  = Kokkos::log(rho) ;
-        double ltemp = ltemp__entropy_lrho_ye_ymu(entropy, lrho, ye, ymu) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__entropy_lrho_ye_ymu(entropy, lrho, ye, ymu) ;
         temp = Kokkos::exp(ltemp) ;
-
-        std::array<int,3> _v{ TABPRESS, TABCSND2, TABEPS } ;
-        std::array<double,3> res ;
-        tables.interp<3>(lrho, ltemp, ye, ymu, _v, res) ;
-
-        double press = Kokkos::exp(res[0]) ;
-        csnd2 = res[1] ;
-        eps   = Kokkos::exp(res[2]) - energy_shift ;
+        double const press = total_press   (lrho, ltemp, ye, ymu) ;
+        eps   = total_eps    (lrho, ltemp, ye, ymu) ;
+        csnd2 = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press / rho ;
         return press ;
     }
 
-    // -----------------------------------------------------------
-    //  Not implemented for tabulated EOSs.
-    // -----------------------------------------------------------
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     eps_h_csnd2_temp_entropy__press_rho_ye_ymu_impl(
-        double& h, double& csnd2, double& temp,
-        double& entropy, double& press, double& rho,
-        double& ye, double& ymu, err_t& err) const
+        double&, double&, double&, double&, double&, double&,
+        double&, double&, err_t&) const
     {
         Kokkos::abort("eps_h_csnd2_temp_entropy__press_rho_ye_ymu_impl"
                       " is not implemented for leptonic_eos_4d_t.") ;
         return 0. ;
     }
 
-    // -----------------------------------------------------------
-    //  Chemical potentials + composition  (baryon table)
-    // -----------------------------------------------------------
+    /**
+     * @brief Chemical potentials and composition.
+     *
+     * mu_p, mu_n, X_*, Abar, Zbar are taken from the baryon table at
+     * yp = clamp(ye + ymu, yemin, yemax) (charge neutrality);
+     * mu_e is taken from the electronic table at Y_le = ye, unless
+     * ye + ymu has saturated at yemax -- in that case we fall back
+     * to the baryon table's mu_e, since the leptonic mu_e becomes
+     * unreliable there (Margherita's convention).
+     */
     double GRACE_HOST_DEVICE
     mue_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu_impl(
         double& mup, double& mun, double& Xa, double& Xh,
@@ -576,107 +444,100 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ymu,  err) ;
         limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        double mue = tables.interp(lrho,ltemp,ye,ymu,TABMUE)  ;
-        mup  = tables.interp(lrho,ltemp,ye,ymu,TABMUP)  ;
-        mun  = tables.interp(lrho,ltemp,ye,ymu,TABMUN)  ;
-        Xa   = tables.interp(lrho,ltemp,ye,ymu,TABXA)   ;
-        Xh   = tables.interp(lrho,ltemp,ye,ymu,TABXH)   ;
-        Xn   = tables.interp(lrho,ltemp,ye,ymu,TABXN)   ;
-        Xp   = tables.interp(lrho,ltemp,ye,ymu,TABXP)   ;
-        Abar = tables.interp(lrho,ltemp,ye,ymu,TABABAR) ;
-        Zbar = tables.interp(lrho,ltemp,ye,ymu,TABZBAR) ;
-        return mue ;
+        double const lrho  = Kokkos::log(rho)  ;
+        double const ltemp = Kokkos::log(temp) ;
+        double const yp    = clamp_yp(ye + ymu) ;
+
+        mup  = baryon_table.interp(lrho,ltemp,yp,TABMUP)  ;
+        mun  = baryon_table.interp(lrho,ltemp,yp,TABMUN)  ;
+        Xa   = baryon_table.interp(lrho,ltemp,yp,TABXA)   ;
+        Xh   = baryon_table.interp(lrho,ltemp,yp,TABXH)   ;
+        Xn   = baryon_table.interp(lrho,ltemp,yp,TABXN)   ;
+        Xp   = baryon_table.interp(lrho,ltemp,yp,TABXP)   ;
+        Abar = baryon_table.interp(lrho,ltemp,yp,TABABAR) ;
+        Zbar = baryon_table.interp(lrho,ltemp,yp,TABZBAR) ;
+
+        if (ye + ymu >= this->eos_yemax) {
+            return baryon_table.interp(lrho, ltemp, yp, TABMUE) ;
+        }
+        return ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABMUELE) ;
     }
 
-    // ===========================================================
-    //  Cold-slice accessors  (CRTP impls)
-    // ===========================================================
+    /**
+     * @brief Muon chemical potential.  Not part of the standard CRTP
+     *        API but needed by the M1 muon-leakage and beta-equilibrium
+     *        solvers.
+     */
     double GRACE_HOST_DEVICE
-    press_cold__rho_impl(double& rho, err_t& err) const
+    mumu__temp_rho_ye_ymu(double& temp, double& rho,
+                          double& ye, double& ymu, err_t& err) const
     {
-        limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return Kokkos::exp(cold_table.interp(lrho, CTABPRESS)) ;
+        limit_rho (rho,  err) ;
+        limit_ye  (ye,   err) ;
+        limit_ymu (ymu,  err) ;
+        limit_temp(temp, err) ;
+        if (ye + ymu >= this->eos_yemax) {
+            return 105.6583755 ;        // muon rest mass [MeV] -- atmosphere
+        }
+        return muon_table.interp(Kokkos::log(rho),
+                                 Kokkos::log(temp),
+                                 Kokkos::log(ymu),
+                                 MUON_VIDX::TABMUMU) ;
     }
 
+    // ----- Cold-slice accessors -----
     double GRACE_HOST_DEVICE
-    eps_cold__rho_impl(double& rho, err_t& err) const
-    {
+    press_cold__rho_impl(double& rho, err_t& err) const {
         limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return Kokkos::exp(cold_table.interp(lrho, CTABEPS)) - energy_shift ;
+        return Kokkos::exp(cold_table.interp(Kokkos::log(rho), CTABPRESS)) ;
     }
-
     double GRACE_HOST_DEVICE
-    ye_cold__rho_impl(double& rho, err_t& err) const
-    {
+    eps_cold__rho_impl(double& rho, err_t& err) const {
         limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return cold_table.interp(lrho, CTABYE) ;
+        return Kokkos::exp(cold_table.interp(Kokkos::log(rho), CTABEPS))
+               - energy_shift ;
     }
-
     double GRACE_HOST_DEVICE
-    ymu_cold__rho_impl(double& rho, err_t& err) const
-    {
+    ye_cold__rho_impl(double& rho, err_t& err) const {
         limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return cold_table.interp(lrho, CTABYMU) ;
+        return cold_table.interp(Kokkos::log(rho), CTABYE) ;
     }
-
     double GRACE_HOST_DEVICE
-    temp_cold__rho_impl(double& rho, err_t& err) const
-    {
+    ymu_cold__rho_impl(double& rho, err_t& err) const {
         limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return Kokkos::exp(cold_table.interp(lrho, CTABTEMP)) ;
+        return cold_table.interp(Kokkos::log(rho), CTABYMU) ;
     }
-
     double GRACE_HOST_DEVICE
-    entropy_cold__rho_impl(double& rho, err_t& err) const
-    {
+    temp_cold__rho_impl(double& rho, err_t& err) const {
         limit_rho(rho, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return cold_table.interp(lrho, CTABENTROPY) ;
+        return Kokkos::exp(cold_table.interp(Kokkos::log(rho), CTABTEMP)) ;
     }
-
-    // -----------------------------------------------------------
-    //  rho given cold pressure  (root-find on the cold slice)
-    // -----------------------------------------------------------
+    double GRACE_HOST_DEVICE
+    entropy_cold__rho_impl(double& rho, err_t& err) const {
+        limit_rho(rho, err) ;
+        return cold_table.interp(Kokkos::log(rho), CTABENTROPY) ;
+    }
     double GRACE_HOST_DEVICE
     rho__press_cold_impl(double& press_cold, err_t& err) const
     {
-        double lp = cold_lpress__press_limited(press_cold, err) ;
+        double const lp = cold_lpress__press_limited(press_cold, err) ;
         auto rootfun = [this, lp] (double lrho) {
             return cold_table.interp(lrho, CTABPRESS) - lp ;
         } ;
-        double lrmin = cold_table._logrho(0) ;
-        double lrmax = cold_table._logrho(cold_table._logrho.size()-1) ;
+        double const lrmin = cold_table._logrho(0) ;
+        double const lrmax = cold_table._logrho(cold_table._logrho.size()-1) ;
         return Kokkos::exp(utils::brent(rootfun, lrmin, lrmax, 1e-14)) ;
     }
-
-    // -----------------------------------------------------------
-    //  rho given cold energy density  e = rho (1+eps)
-    // -----------------------------------------------------------
     double GRACE_HOST_DEVICE
     rho__energy_cold_impl(double& e_cold, err_t& err) const
     {
-        int n = cold_table._logrho.size() ;
-        double eps_min = Kokkos::exp(cold_table._tables(0,   CTABEPS)) - energy_shift ;
-        double eps_max = Kokkos::exp(cold_table._tables(n-1, CTABEPS)) - energy_shift ;
-        double e_min   = (1.+eps_min) * Kokkos::exp(cold_table._logrho(0))   ;
-        double e_max   = (1.+eps_max) * Kokkos::exp(cold_table._logrho(n-1)) ;
-        if (e_cold < e_min) {
-            e_cold = e_min ;
-            err.set(EOS_EPS_TOO_LOW) ;
-            return Kokkos::exp(cold_table._logrho(0)) ;
-        }
-        if (e_cold > e_max) {
-            e_cold = e_max ;
-            err.set(EOS_EPS_TOO_HIGH) ;
-            return Kokkos::exp(cold_table._logrho(n-1)) ;
-        }
+        int const n = cold_table._logrho.size() ;
+        double const eps_min = Kokkos::exp(cold_table._tables(0,   CTABEPS)) - energy_shift ;
+        double const eps_max = Kokkos::exp(cold_table._tables(n-1, CTABEPS)) - energy_shift ;
+        double const e_min   = (1.+eps_min) * Kokkos::exp(cold_table._logrho(0))   ;
+        double const e_max   = (1.+eps_max) * Kokkos::exp(cold_table._logrho(n-1)) ;
+        if (e_cold < e_min) { e_cold = e_min ; err.set(EOS_EPS_TOO_LOW)  ; return Kokkos::exp(cold_table._logrho(0))   ; }
+        if (e_cold > e_max) { e_cold = e_max ; err.set(EOS_EPS_TOO_HIGH) ; return Kokkos::exp(cold_table._logrho(n-1)) ; }
         auto rootfun = [this, e_cold] (double lrho) {
             double eps = Kokkos::exp(cold_table.interp(lrho, CTABEPS)) - energy_shift ;
             return (1.+eps) * Kokkos::exp(lrho) - e_cold ;
@@ -684,79 +545,123 @@ class leptonic_eos_4d_t
         return Kokkos::exp(utils::brent(rootfun,
             cold_table._logrho(0), cold_table._logrho(n-1), 1e-14)) ;
     }
-
     double GRACE_HOST_DEVICE
     energy_cold__press_cold_impl(double& press_cold, err_t& err) const
     {
-        double lp = cold_lpress__press_limited(press_cold, err) ;
+        double const lp = cold_lpress__press_limited(press_cold, err) ;
         auto rootfun = [this, lp] (double lrho) {
             return cold_table.interp(lrho, CTABPRESS) - lp ;
         } ;
-        double lrmin = cold_table._logrho(0) ;
-        double lrmax = cold_table._logrho(cold_table._logrho.size()-1) ;
-        double lrho  = utils::brent(rootfun, lrmin, lrmax, 1e-14) ;
-        double eps   = Kokkos::exp(cold_table.interp(lrho, CTABEPS)) - energy_shift ;
+        double const lrmin = cold_table._logrho(0) ;
+        double const lrmax = cold_table._logrho(cold_table._logrho.size()-1) ;
+        double const lrho  = utils::brent(rootfun, lrmin, lrmax, 1e-14) ;
+        double const eps   = Kokkos::exp(cold_table.interp(lrho, CTABEPS)) - energy_shift ;
         return Kokkos::exp(lrho) * (1.+eps) ;
     }
-
     double GRACE_HOST_DEVICE
-    ye_cold__press_impl(double& press, err_t& err) const
-    {
+    ye_cold__press_impl(double& press, err_t& err) const {
         double rho = rho__press_cold_impl(press, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return cold_table.interp(lrho, CTABYE) ;
+        return cold_table.interp(Kokkos::log(rho), CTABYE) ;
     }
-
     double GRACE_HOST_DEVICE
-    ymu_cold__press_impl(double& press, err_t& err) const
-    {
+    ymu_cold__press_impl(double& press, err_t& err) const {
         double rho = rho__press_cold_impl(press, err) ;
-        double lrho = Kokkos::log(rho) ;
-        return cold_table.interp(lrho, CTABYMU) ;
+        return cold_table.interp(Kokkos::log(rho), CTABYMU) ;
     }
 
     // ===========================================================
-    //  Public extras (specific to the 4D leptonic EOS)
+    //  Public data members (captured into kernels by value)
     // ===========================================================
-
-    /// Muon chemical potential  mu_mu(rho, T, ye, ymu)
-    KOKKOS_INLINE_FUNCTION double
-    mumu__temp_rho_ye_ymu(double& temp, double& rho, double& ye, double& ymu,
-                          err_t& err) const
-    {
-        limit_rho (rho,  err) ;
-        limit_ye  (ye,   err) ;
-        limit_ymu (ymu,  err) ;
-        limit_temp(temp, err) ;
-        double lrho  = Kokkos::log(rho)  ;
-        double ltemp = Kokkos::log(temp) ;
-        return tables_muon.interp(lrho, ltemp, ye, ymu, TABMUMU) ;
-    }
-
-    /// Host-side beta-equilibrium solve (declared here, defined in .cpp).
-    void
-    press_eps_ye_ymu__beta_eq__rho_temp(
-        double& press, double& eps,
-        double& ye, double& ymu,
-        double& rho, double& temp, err_t& err) const ;
-
-    // ===========================================================
-    //  Public data members (captured by value into GPU kernels)
-    // ===========================================================
-    tabeos_linterp_4d_t tables      ;
-    tabeos_linterp_4d_t tables_ele  ;
-    tabeos_linterp_4d_t tables_muon ;
-    cold_eos_linterp_4d_t cold_table ;
+    tabeos_linterp_t   baryon_table ;  ///< rho, T, yp = ye + ymu  (clamped)
+    tabeos_linterp_t   ele_table    ;  ///< rho, T, Y_le (linear axis)
+    tabeos_linterp_t   muon_table   ;  ///< rho, T, log(Y_mu) axis — queries must pass log(ymu)
+    cold_eos_linterp_t cold_table   ;
 
     int nrho, nT, nye, nymu ;
     double energy_shift ;
     double lrhomin, lrhomax ;
     double ltempmin, ltempmax ;
+    // If true, add electronic pressure/eps/entropy on top of the
+    // baryon table.  Keep false when the baryon table already
+    // contains the electron contribution (the usual case for SFHo,
+    // DD2, etc.).  Mirrors Margherita's add_ele_contribution flag.
+    bool add_ele_contribution = false ;
 
   private:
 
     // ----------------------------------------------------------
-    //  Clamping helpers
+    //  Effective proton fraction yp = clamp(ye + ymu, yemin, yemax).
+    //  Charge neutrality: the baryon table is sampled at the total
+    //  charge fraction, which is the sum of the lepton fractions.
+    // ----------------------------------------------------------
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double clamp_yp(double yp_raw) const {
+        if (yp_raw < this->eos_yemin) return this->eos_yemin ;
+        if (yp_raw > this->eos_yemax) return this->eos_yemax ;
+        return yp_raw ;
+    }
+
+    // ----------------------------------------------------------
+    //  Total quantities: baryon + muon, optionally + electron.
+    //  add_ele_contribution = false (default): the baryon table
+    //  already includes electrons; the electronic table is used
+    //  only for mu_e.  Set true only if the baryon table was built
+    //  without electrons.  Mirrors Margherita's add_ele_contribution.
+    // ----------------------------------------------------------
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    total_press(double lrho, double ltemp, double ye, double ymu) const
+    {
+        double const yp   = clamp_yp(ye + ymu) ;
+        double const lymu = Kokkos::log(ymu) ;
+        double const pb   = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABPRESS)) ;
+        double const pmm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_MINUS) ;
+        double const pmp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_PLUS)  ;
+        double const pe   = add_ele_contribution
+            ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_MINUS)
+            + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_PLUS)
+            : 0.0 ;
+        return pb + pmm + pmp + pe ;
+    }
+
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    total_eps(double lrho, double ltemp, double ye, double ymu) const
+    {
+        double const yp   = clamp_yp(ye + ymu) ;
+        double const lymu = Kokkos::log(ymu) ;
+        double const eb   = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABEPS)) - energy_shift ;
+        double const emm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_MINUS) ;
+        double const emp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_PLUS)  ;
+        double const ee   = add_ele_contribution
+            ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_MINUS)
+            + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_PLUS)
+            : 0.0 ;
+        return eb + emm + emp + ee ;
+    }
+
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    total_entropy(double lrho, double ltemp, double ye, double ymu) const
+    {
+        double const yp   = clamp_yp(ye + ymu) ;
+        double const lymu = Kokkos::log(ymu) ;
+        double const sb   = baryon_table.interp(lrho, ltemp, yp, TABENTROPY) ;
+        double const smm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_MINUS) ;
+        double const smp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_PLUS)  ;
+        double const se   = add_ele_contribution
+            ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_MINUS)
+            + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_PLUS)
+            : 0.0 ;
+        return sb + smm + smp + se ;
+    }
+
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    baryon_csnd2(double lrho, double ltemp, double ye, double ymu) const
+    {
+        return baryon_table.interp(lrho, ltemp,
+                                   clamp_yp(ye + ymu),
+                                   TABCSND2) ;
+    }
+
+    // ----------------------------------------------------------
+    //  Bounds clamping
     // ----------------------------------------------------------
     KOKKOS_INLINE_FUNCTION void limit_rho(double& rho, err_t& err) const {
         if ( rho < this->eos_rhomin ) { rho = (1.+1e-5)*this->eos_rhomin ; err.set(EOS_RHO_TOO_LOW)  ; }
@@ -785,13 +690,13 @@ class leptonic_eos_4d_t
         }
     }
     KOKKOS_INLINE_FUNCTION void limit_temp(double& temp, err_t& err) const {
-        double tmin = Kokkos::exp(ltempmin) ;
-        double tmax = Kokkos::exp(ltempmax) ;
+        double const tmin = Kokkos::exp(ltempmin) ;
+        double const tmax = Kokkos::exp(ltempmax) ;
         if ( temp < tmin ) { temp = (1.+1e-2)*tmin ; err.set(EOS_TEMPERATURE_TOO_LOW)  ; }
         if ( temp > tmax ) { temp = (1.-1e-2)*tmax ; err.set(EOS_TEMPERATURE_TOO_HIGH) ; }
     }
     KOKKOS_INLINE_FUNCTION void limit_entropy_rho_ye_ymu(double& entropy,
-            double& rho, double& ye, double& ymu, err_t& err) const
+        double& rho, double& ye, double& ymu, err_t& err) const
     {
         double smin, smax ;
         entropy_range__rho_ye_ymu_impl(smin, smax, rho, ye, ymu, err) ;
@@ -800,92 +705,45 @@ class leptonic_eos_4d_t
     }
 
     // ----------------------------------------------------------
-    //  Root-find for log(T) given eps – 4D path.
-    //  Uses the same bisect-then-linear-slab approach as
-    //  tabulated_eos_t::ltemp__eps_lrho_ye for efficiency.
+    //  Brent on the additive totals.  eps and entropy are monotone
+    //  in T over the table range, so a single Brent in lT works.
     // ----------------------------------------------------------
     KOKKOS_INLINE_FUNCTION double
     ltemp__eps_lrho_ye_ymu(double& eps, double lrho,
                            double ye, double ymu, err_t& err) const
     {
-        double leps    = Kokkos::log(eps + energy_shift) ;
-        double lepsmin = tables.interp(lrho, ltempmin, ye, ymu, TABEPS) ;
-        double lepsmax = tables.interp(lrho, ltempmax, ye, ymu, TABEPS) ;
-        if ( leps <= lepsmin ) {
-            eps = Kokkos::exp(lepsmin) - energy_shift ;
-            err.set(EOS_EPS_TOO_LOW) ;
-            return ltempmin ;
-        }
-        if ( leps >= lepsmax ) {
-            eps = Kokkos::exp(lepsmax) - energy_shift ;
-            err.set(EOS_EPS_TOO_HIGH) ;
-            return ltempmax ;
-        }
-        // Bisect on the logT grid axis.
-        int il = 0, ih = nT - 1 ;
-        double el = lepsmin, eh = lepsmax ;
-        while ( (ih - il) > 1 ) {
-            int im = (il + ih) / 2 ;
-            double em = tables.interp(lrho, tables.ltemp(im), ye, ymu, TABEPS) ;
-            if ( em > leps ) { ih = im ; eh = em ; }
-            else             { il = im ; el = em ; }
-        }
-        double ltl = tables.ltemp(il) ;
-        double lth = tables.ltemp(ih) ;
-        return ltl + (leps - el) * (lth - ltl) / (eh - el) ;
+        double const eps_lo = total_eps(lrho, ltempmin, ye, ymu) ;
+        double const eps_hi = total_eps(lrho, ltempmax, ye, ymu) ;
+        if (eps <= eps_lo) { eps = eps_lo ; err.set(EOS_EPS_TOO_LOW)  ; return ltempmin ; }
+        if (eps >= eps_hi) { eps = eps_hi ; err.set(EOS_EPS_TOO_HIGH) ; return ltempmax ; }
+        auto rootfun = [this, lrho, ye, ymu, eps] (double lt) {
+            return total_eps(lrho, lt, ye, ymu) - eps ;
+        } ;
+        return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
     }
 
-    // ----------------------------------------------------------
-    //  Root-find for log(T) given entropy – 4D path.
-    // ----------------------------------------------------------
     KOKKOS_INLINE_FUNCTION double
     ltemp__entropy_lrho_ye_ymu(double entropy, double lrho,
                                double ye, double ymu) const
     {
-        double smin = tables.interp(lrho, ltempmin, ye, ymu, TABENTROPY) ;
-        double smax = tables.interp(lrho, ltempmax, ye, ymu, TABENTROPY) ;
-        if ( entropy <= smin ) return ltempmin ;
-        if ( entropy >= smax ) return ltempmax ;
-        int il = 0, ih = nT - 1 ;
-        double sl = smin, sh = smax ;
-        while ( (ih - il) > 1 ) {
-            int im = (il + ih) / 2 ;
-            double sm = tables.interp(lrho, tables.ltemp(im), ye, ymu, TABENTROPY) ;
-            if ( sm > entropy ) { ih = im ; sh = sm ; }
-            else                { il = im ; sl = sm ; }
-        }
-        double ltl = tables.ltemp(il) ;
-        double lth = tables.ltemp(ih) ;
-        return ltl + (entropy - sl) * (lth - ltl) / (sh - sl) ;
+        double const s_lo = total_entropy(lrho, ltempmin, ye, ymu) ;
+        double const s_hi = total_entropy(lrho, ltempmax, ye, ymu) ;
+        if (entropy <= s_lo) return ltempmin ;
+        if (entropy >= s_hi) return ltempmax ;
+        auto rootfun = [this, lrho, ye, ymu, entropy] (double lt) {
+            return total_entropy(lrho, lt, ye, ymu) - entropy ;
+        } ;
+        return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
     }
 
-    // ----------------------------------------------------------
-    //  Direct pressure lookup
-    // ----------------------------------------------------------
-    KOKKOS_INLINE_FUNCTION double
-    press__lrho_ltemp_ye_ymu(double lrho, double ltemp,
-                             double ye,   double ymu) const
-    {
-        return Kokkos::exp(tables.interp(lrho, ltemp, ye, ymu, TABPRESS)) ;
-    }
-
-    // ----------------------------------------------------------
-    //  Limit cold pressure to table range, return log(p).
-    // ----------------------------------------------------------
     KOKKOS_INLINE_FUNCTION double
     cold_lpress__press_limited(double& press_cold, err_t& err) const
     {
-        int n = cold_table._logrho.size() ;
-        double p_min = Kokkos::exp(cold_table._tables(0,   CTABPRESS)) ;
-        double p_max = Kokkos::exp(cold_table._tables(n-1, CTABPRESS)) ;
-        if (press_cold < p_min) {
-            press_cold = p_min * (1.+1e-10) ;
-            err.set(EOS_RHO_TOO_LOW) ;
-        }
-        if (press_cold > p_max) {
-            press_cold = p_max * (1.-1e-10) ;
-            err.set(EOS_RHO_TOO_HIGH) ;
-        }
+        int const n = cold_table._logrho.size() ;
+        double const p_min = Kokkos::exp(cold_table._tables(0,   CTABPRESS)) ;
+        double const p_max = Kokkos::exp(cold_table._tables(n-1, CTABPRESS)) ;
+        if (press_cold < p_min) { press_cold = p_min * (1.+1e-10) ; err.set(EOS_RHO_TOO_LOW)  ; }
+        if (press_cold > p_max) { press_cold = p_max * (1.-1e-10) ; err.set(EOS_RHO_TOO_HIGH) ; }
         return Kokkos::log(press_cold) ;
     }
 
