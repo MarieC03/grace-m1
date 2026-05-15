@@ -135,6 +135,42 @@ eos:
         emitted if the original spacing deviates from uniform by more than
         a small relative tolerance.
 
+  leptonic:
+    type: schema
+    description: >
+      Parameters for the 4D leptonic (Margherita-style) EOS.
+      The baryon contribution is loaded via [eos.tabulated_eos.*];
+      these parameters control the lepton tables that are layered on top.
+
+    table_filename:
+      type: string
+      default: "leptonic.h5"
+      description: >
+        HDF5 file containing the electronic and muonic lepton tables
+        (datasets: electronic_eos_tables, muonic_eos_tables, yle_table,
+        ymu_table, eos_yle{min,max}, eos_ymu{min,max}, nrho, ntemp,
+        nyle, nymu, logrho_table, logtemp_table).
+
+    cold_table_filename:
+      type: string
+      default: "leptonic_cold.dat"
+      description: >
+        ASCII cold-slice table produced by GRACEpy.
+        Format: header line, nrows line, then nrows lines each containing
+        log(rho) temp ye ymu press eps cs2 entropy (8 columns).
+
+    add_ele_contribution:
+      type: bool
+      default: false
+      description: >
+        If false (default): the baryon table already contains the electron
+        contribution (the standard convention for SFHo, DD2, BHBlp, etc.);
+        the electronic lepton table is consulted only for mu_e.
+        Set to true only if the baryon table was generated without electrons
+        and the full electronic thermodynamics must be added explicitly.
+        Setting this incorrectly (true when the baryon table already includes
+        electrons) causes double-counting of the electron contribution.
+
   eps_maximum:
     type: double
     default: 1.e5

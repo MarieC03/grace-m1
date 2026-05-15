@@ -610,6 +610,31 @@ class eos_base_t {
      */
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     density_maximum() const { return eos_rhomax ; }
+    /**
+     * @brief Get the maximum temperature.
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    temperature_maximum() const { return eos_tempmax ; }
+    /**
+     * @brief Get the minimum temperature.
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    temperature_minimum() const { return eos_tempmin ; }
+    /**
+     * @brief Get the minimum specific internal energy.
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    get_c2p_eps_min() const { return c2p_eps_min ; }
+    /**
+     * @brief Get the maximum specific enthalpy.
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    get_c2p_h_max() const { return c2p_h_max ; }
+    /**
+     * @brief Get the baryon mass.
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    get_baryon_mass() const { return baryon_mass ; }
  protected:
     //! Maximum and minimum rest-mass densities.
     double eos_rhomax, eos_rhomin ;
