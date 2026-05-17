@@ -96,43 +96,234 @@ inline void h5_read(hid_t file, const char* name, T* out, hid_t type)
 } // anonymous
 
 // ============================================================
-//  Cold-table reader (8 cols).
+//  Constants
 // ============================================================
-static void read_leptonic_cold_table_0(
-    const std::string& filename,
-    Kokkos::View<double**, grace::default_space>& d_data,
-    Kokkos::View<double*,  grace::default_space>& d_rho)
+namespace {
+    // Muon rest mass [MeV] — same value used in leptonic_eos_4d.hh
+    constexpr double MU_MASS_MEV = 105.6583755 ;
+} // anonymous namespace
+
+
+// ============================================================
+//  npe beta equilibrium (Y_mu fixed)
+//
+//  Solves  mu_e(Y_e) + mu_p(Y_e + Y_mu) - mu_n(Y_e + Y_mu) = 0
+//  for Y_e, with Y_mu held constant.  Used both as the pure-npe
+//  fallback and as the inner solve inside solve_muon_beta_eq.
+// ============================================================
+static double
+solve_npe_beta_eq(
+    const leptonic_eos_4d_t& eos,
+    double lrho, double ltemp,
+    double ymu,          ///< fixed muon fraction for this solve
+    double ye_guess,
+    double tol = 1e-14)
 {
-    std::ifstream f(filename) ;
-    ASSERT(f.is_open(), "Cannot open leptonic cold table: " << filename) ;
+    using E = leptonic_eos_4d_t ;
 
-    std::string line ;
-    std::getline(f, line) ;  // description
-    std::getline(f, line) ;  // nrows
-    std::istringstream iss_n(line) ;
-    size_t nrows ;
-    iss_n >> nrows ;
-    ASSERT(iss_n, "Failed to read nrows in leptonic cold table") ;
+    double const ye_lo = eos.ele_table._ye(0) ;
+    double const ye_hi = eos.ele_table._ye(eos.nye - 1) ;
 
-    constexpr int NCOLS = leptonic_eos_4d_t::COLD_VIDX::N_CTAB_VARS ;
+    auto residual = [&](double ye) -> double {
+        double const yp  = std::min(eos.get_c2p_ye_max(),
+                           std::max(eos.get_c2p_ye_min(), ye + ymu)) ;
+        double const mue = eos.ele_table   .interp(lrho, ltemp, ye, E::TABMUELE) ;
+        double const mup = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUP)   ;
+        double const mun = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUN)   ;
+        return mue + mup - mun ;
+    } ;
 
-    Kokkos::realloc(d_data, nrows, NCOLS) ;
-    Kokkos::realloc(d_rho,  nrows) ;
-    auto h_data = Kokkos::create_mirror_view(d_data) ;
-    auto h_rho  = Kokkos::create_mirror_view(d_rho)  ;
-
-    for (size_t i = 0; i < nrows; ++i) {
-        ASSERT(std::getline(f,line),
-               "Unexpected EOF in leptonic cold table at row " << i) ;
-        std::istringstream iss(line) ;
-        double v ;
-        iss >> v ; h_rho(i) = v ;
-        for (int j = 0; j < NCOLS; ++j) { iss >> v ; h_data(i,j) = v ; }
+    // Try a narrow bracket around the guess first; widen to full range
+    // if there is no sign change.
+    double a = std::max(ye_lo, ye_guess - 0.05) ;
+    double b = std::min(ye_hi, ye_guess + 0.05) ;
+    if (residual(a) * residual(b) > 0.) {
+        a = ye_lo ;
+        b = ye_hi ;
     }
-    Kokkos::deep_copy(d_data, h_data) ;
-    Kokkos::deep_copy(d_rho,  h_rho)  ;
+
+    auto f_npe = [&](double ye){ return residual(ye) ; } ;
+    return utils::brent(f_npe, a, b, tol) ;
 }
 
+
+// ============================================================
+//  Full npe-mu beta equilibrium
+//
+//  Two coupled conditions:
+//      (1)  mu_e(Y_e) = mu_mu(Y_mu)        => Y_e = f(Y_mu)
+//      (2)  mu_n - mu_p - mu_mu = 0        => outer Brent on log(Y_mu)
+//
+//  Algorithm (mirrors Margherita / leptonic_eos_impl.hh):
+//    Outer Brent over log(Y_mu) in [log(ymu_min), log(ymu_max)]:
+//      a. Evaluate mu_mu from the muon table at the trial log(Y_mu).
+//      b. Find Y_e such that mu_e(Y_e) = mu_mu  [inner Brent on Y_e].
+//      c. yp = clamp(Y_e + Y_mu, yemin, yemax)  (charge neutrality).
+//      d. Residual = mu_n(yp) - mu_p(yp) - mu_mu.
+//
+//  If mu_mu < m_mu even at ymu_min (muons energetically forbidden),
+//  fall back to a pure npe solve with Y_mu = ymu_min.
+//
+//  Returns {Y_e, Y_mu}.
+// ============================================================
+static std::pair<double,double>
+solve_muon_beta_eq(
+    const leptonic_eos_4d_t& eos,
+    double lrho, double ltemp,
+    double ye_guess, double /*ymu_guess*/,
+    double tol = 1e-14)
+{
+    using E = leptonic_eos_4d_t ;
+
+    double const lymu_lo = std::log(eos.get_c2p_ymu_min()) ;
+    double const lymu_hi = std::log(eos.get_c2p_ymu_max()) ;
+    double const ye_lo   = eos.ele_table._ye(0) ;
+    double const ye_hi   = eos.ele_table._ye(eos.nye - 1) ;
+
+    // ---- Inner solve: Y_e such that mu_e(Y_e) = mu_mu_target ----
+    auto find_ye_for_mue = [&](double mu_mu_target) -> double {
+        double const mue_lo = eos.ele_table.interp(lrho, ltemp, ye_lo, E::TABMUELE) ;
+        double const mue_hi = eos.ele_table.interp(lrho, ltemp, ye_hi, E::TABMUELE) ;
+        // Clamp if the target lies outside the table's mu_e range.
+        if (mu_mu_target <= std::min(mue_lo, mue_hi)) return ye_lo ;
+        if (mu_mu_target >= std::max(mue_lo, mue_hi)) return ye_hi ;
+        auto f_inner = [&](double ye){
+            return eos.ele_table.interp(lrho, ltemp, ye, E::TABMUELE)
+                   - mu_mu_target ;
+        } ;
+        return utils::brent(f_inner, ye_lo, ye_hi, tol) ;
+    } ;
+
+    // ---- Check muon onset ----
+    // If mu_mu at the minimum Y_mu is below the rest mass, there are
+    // no physical muons at this (rho, T): fall back to npe.
+    double const mu_mu_at_min = eos.muon_table.interp(
+        lrho, ltemp, lymu_lo, E::TABMUMU) ;
+    if (mu_mu_at_min < MU_MASS_MEV) {
+        double const ye = solve_npe_beta_eq(
+            eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_guess, tol) ;
+        return { ye, eos.get_c2p_ymu_min() } ;
+    }
+
+    // ---- Outer Brent over log(Y_mu) ----
+    // ye_running is updated as a side-effect so the converged Y_e is
+    // available without an extra table call after the root is found.
+    double ye_running = ye_guess ;
+
+    auto outer_residual = [&](double lymu) -> double {
+        double const ymu_loc = std::exp(lymu) ;
+        double const mu_mu   = eos.muon_table.interp(
+            lrho, ltemp, lymu, E::TABMUMU) ;
+        ye_running           = find_ye_for_mue(mu_mu) ;
+        double const yp      = std::min(eos.get_c2p_ye_max(),
+                               std::max(eos.get_c2p_ye_min(),
+                                        ye_running + ymu_loc)) ;
+        double const mu_p    = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUP) ;
+        double const mu_n    = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUN) ;
+        return mu_n - mu_p - mu_mu ;   // = 0 at equilibrium
+    } ;
+
+    // If no sign change across the full Y_mu range, muons are
+    // suppressed at this thermodynamic point: fall back to npe.
+    double const f_lo = outer_residual(lymu_lo) ;
+    double const f_hi = outer_residual(lymu_hi) ;
+    if (f_lo * f_hi > 0.) {
+        double const ye = solve_npe_beta_eq(
+            eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_running, tol) ;
+        return { ye, eos.get_c2p_ymu_min() } ;
+    }
+
+    auto f_outer = [&](double lymu){ return outer_residual(lymu) ; } ;
+    double const lymu_eq = utils::brent(f_outer, lymu_lo, lymu_hi, tol) ;
+
+
+    // One final evaluation at the converged log(Y_mu) to get the
+    // consistent Y_e (outer_residual updates ye_running each call,
+    // but the last internal call in brent may not be at the root).
+    double const ymu_eq = std::exp(lymu_eq) ;
+    double const mu_mu  = eos.muon_table.interp(
+        lrho, ltemp, lymu_eq, E::TABMUMU) ;
+    double const ye_eq  = find_ye_for_mue(mu_mu) ;
+
+    return { ye_eq, ymu_eq } ;
+}
+
+
+// ============================================================
+//  Public entry point
+// ============================================================
+void generate_leptonic_cold_table(
+    const leptonic_eos_4d_t& eos,
+    double T_cold,
+    Kokkos::View<double**, grace::default_execution_space>& d_data,
+    Kokkos::View<double*,  grace::default_execution_space>& d_rho)
+{
+    constexpr int NCOLS = leptonic_eos_4d_t::COLD_VIDX::N_CTAB_VARS ;
+
+    auto h_logrho = Kokkos::create_mirror_view_and_copy(
+                        Kokkos::HostSpace(), eos.baryon_table._logrho) ;
+    int const nrho = static_cast<int>(h_logrho.extent(0)) ;
+    double const lT = std::log(T_cold) ;
+
+    Kokkos::View<double**, Kokkos::HostSpace> h_data("cold_data_h", nrho, NCOLS) ;
+    Kokkos::View<double*,  Kokkos::HostSpace> h_rho ("cold_rho_h",  nrho)        ;
+
+    GRACE_INFO("Generating leptonic cold table at T = {:.4f} MeV "
+               "over {} rho points.", T_cold, nrho) ;
+
+    double ye_guess  = 0.10 ;
+    double ymu_guess = eos.get_c2p_ymu_min() ;
+
+    for (int i = 0; i < nrho; ++i) {
+        double const lrho = h_logrho(i) ;
+
+        // ---- Beta equilibrium ----
+        auto [ye_eq, ymu_eq] = solve_muon_beta_eq(
+            eos, lrho, lT, ye_guess, ymu_guess) ;
+
+        ye_guess  = ye_eq  ;    // warm start for next density
+        ymu_guess = ymu_eq ;
+
+        // ---- EOS evaluation ----
+        double rho_q  = std::exp(lrho) ;
+        double temp_q = T_cold ;
+        double ye_q   = ye_eq  ;
+        double ymu_q  = ymu_eq ;
+        eos_err_t err{} ;
+
+        double eps_q{}, csnd2_q{}, entropy_q{} ;
+        double const press_q =
+            eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                eps_q, csnd2_q, entropy_q,
+                temp_q, rho_q, ye_q, ymu_q, err) ;
+
+        //if (!err.none()) {
+        //    GRACE_WARN("Cold table row {}: EOS clamping at lrho={:.4f} "
+        //               "Ye={:.4f} Ymu={:.4e}", i, lrho, ye_eq, ymu_eq) ;
+        //}
+
+        // ---- Store (COLD_VIDX order) ----
+        h_rho(i) = lrho ;
+        h_data(i, leptonic_eos_4d_t::CTABTEMP)    = lT ;
+        h_data(i, leptonic_eos_4d_t::CTABYE)       = ye_q ;
+        h_data(i, leptonic_eos_4d_t::CTABYMU)      = ymu_q ;         // plain fraction
+        h_data(i, leptonic_eos_4d_t::CTABPRESS)    = std::log(press_q) ;
+        h_data(i, leptonic_eos_4d_t::CTABEPS)      = std::log(eps_q + eos.energy_shift) ;
+        h_data(i, leptonic_eos_4d_t::CTABCSND2)    = csnd2_q ;
+        h_data(i, leptonic_eos_4d_t::CTABENTROPY)  = entropy_q ;
+    }
+
+    Kokkos::realloc(d_data, nrho, NCOLS) ;
+    Kokkos::realloc(d_rho,  nrho)        ;
+    Kokkos::deep_copy(d_data, h_data)    ;
+    Kokkos::deep_copy(d_rho,  h_rho)     ;
+
+    GRACE_INFO("Leptonic cold table done: {} rows x {} cols.", nrho, NCOLS) ;
+}
+
+// ============================================================
+//  Cold-table reader (8 cols).
+// ============================================================
 static void
 read_leptonic_cold_table(
     const std::string& filename,
@@ -479,10 +670,33 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     Kokkos::deep_copy(bar_logT,   bt._logT)   ;
     Kokkos::deep_copy(bar_ye,     bt._ye)     ;
 
+    //// -------------------------------------------------------
+    ////  7) Construct.
+    //// -------------------------------------------------------
+    //return leptonic_eos_4d_t(
+    //    bt._tables,
+    //    bar_logrho, bar_logT, bar_ye,
+    //    v_ele,  v_yle,
+    //    v_muon, v_ymu,
+    //    cold_tabs, cold_lrho,
+    //    rhomax, rhomin,
+    //    tempmax, tempmin,
+    //    yemax,  yemin,
+    //    ymumax, ymumin,
+    //    baryon_eos.get_baryon_mass(),
+    //    baryon_eos.energy_shift,
+    //    epsmin, epsmax,
+    //    hmin,   hmax,
+    //    temp_atm,
+    //    ye_atm, ymu_atm,
+    //    atm_beta_eq,
+    //    add_ele
+    //) ;
     // -------------------------------------------------------
-    //  7) Construct.
+    //  7) Construct with the file-read cold table as a placeholder,
+    //     then overwrite it with the generated beta-eq slice.
     // -------------------------------------------------------
-    return leptonic_eos_4d_t(
+    leptonic_eos_4d_t eos(
         bt._tables,
         bar_logrho, bar_logT, bar_ye,
         v_ele,  v_yle,
@@ -501,6 +715,23 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         atm_beta_eq,
         add_ele
     ) ;
+
+    // -------------------------------------------------------
+    //  8) Generate cold slice via beta equilibrium and patch in.
+    // -------------------------------------------------------
+    double T_cold = grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
+    if ( T_cold < 0 ) {
+        T_cold = std::exp(eos.ltempmin) ;
+    }
+
+
+    Kokkos::View<double**, grace::default_execution_space> gen_cold_tabs ;
+    Kokkos::View<double*,  grace::default_execution_space> gen_cold_lrho ;
+    generate_leptonic_cold_table(eos, T_cold, gen_cold_tabs, gen_cold_lrho) ;
+
+    eos.cold_table = cold_eos_linterp_t(gen_cold_tabs, gen_cold_lrho) ;
+
+    return eos ;
 }
 
 } /* namespace grace */

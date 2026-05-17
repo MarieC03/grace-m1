@@ -45,6 +45,23 @@ namespace grace {
  */
 grace::leptonic_eos_4d_t read_leptonic_4d_table() ;
 
+/**
+ * @brief Generate a cold-slice table for leptonic_eos_4d_t by solving
+ *        muon-inclusive beta equilibrium at T = T_cold over the full
+ *        rho axis of the baryon table.
+ *
+ * @param eos       Fully initialised leptonic EOS (baryon + lepton tables
+ *                  must be valid; cold_table is not used).
+ * @param T_cold    Temperature [MeV] at which to evaluate beta equilibrium.
+ * @param d_data    Output: [nrho, N_CTAB_VARS] table data on device.
+ * @param d_rho     Output: [nrho] log(rho) axis on device.
+ */
+void generate_leptonic_cold_table(
+    const leptonic_eos_4d_t& eos,
+    double T_cold,
+    Kokkos::View<double**, grace::default_execution_space>& d_data,
+    Kokkos::View<double*,  grace::default_execution_space>& d_rho) ;
+
 } /* namespace grace */
 
 #endif /* GRACE_PHYS_EOS_READ_LEPTONIC_4D_TABLE_HH */
