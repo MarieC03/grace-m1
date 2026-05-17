@@ -201,9 +201,9 @@ solve_muon_beta_eq(
     double const mu_mu_at_min = eos.muon_table.interp(
         lrho, ltemp, lymu_lo, E::TABMUMU) ;
     GRACE_TRACE("Cold table solve: lrho={:.3f} (rho={:.3e})  "
-                "mu_mu(Ymu_min)={:.3f} MeV  threshold={:.3f} MeV",
-                lrho, std::exp(lrho), mu_mu_at_min, MU_MASS_MEV) ;
-    if (mu_mu_at_min < MU_MASS_MEV) {
+                "mu_mu_excess(Ymu_min)={:.3f} MeV  (onset at > 0)",
+                lrho, std::exp(lrho), mu_mu_at_min) ;
+    if (mu_mu_at_min < 0.0) {
         double const ye = solve_npe_beta_eq(
             eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_guess, tol) ;
         return { ye, eos.get_c2p_ymu_min(), false } ;
@@ -251,6 +251,14 @@ solve_muon_beta_eq(
     double const mu_mu  = eos.muon_table.interp(
         lrho, ltemp, lymu_eq, E::TABMUMU) ;
     double const ye_eq  = find_ye_for_mue(mu_mu) ;
+
+    // If Ye is pinned to the ceiling, the solution is unphysical
+    // — fall back to npe
+    if (ye_eq >= ye_hi * 0.9999) {
+        double const ye = solve_npe_beta_eq(
+            eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_running, tol) ;
+        return { ye, eos.get_c2p_ymu_min(), false } ;
+    }
 
     return { ye_eq, ymu_eq, true } ;
 }
