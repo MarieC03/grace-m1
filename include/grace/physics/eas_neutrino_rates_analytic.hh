@@ -529,15 +529,12 @@ fugacity_state make_fugacity_state(
     double ye_eos  = ye;
     double ymu_eos = ymu;
     eos_err_t err;
-    // TODO!! EOS framework and get chm. pot!
-    // Called it here like in FIL
+
     F.mu_e = eos.mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
         F.mu_mu, F.mu_p, F.mu_n,
         F.Xa, F.Xh, F.Xn, F.Xp,
         F.Abar, F.Zbar,
         T_eos, rho_eos, ye_eos, ymu_eos, err);
-    // TODO MUONS: when leptonic eos call here to get eta_mu
-    // FIL: eta[NUMU] = eta[MUON] + eta[PROTON] - eta[NEUTRON] - Qnp;
 
     F.Xa = (F.Xa > 0.0 ? F.Xa : 0.0);
     F.Xh = (F.Xh > 0.0 ? F.Xh : 0.0);
@@ -548,22 +545,6 @@ fugacity_state make_fugacity_state(
 
     using namespace grace::physical_constants;
     F.nb = safe_pos(F.rho_cgs) * nu_constants::avogadro ;// nu_constants::mnuc_cgs;
-
-    // ---- DEBUG ----
-    if(rho_code > 1.23857e-03 && false ) {
-        Kokkos::printf("=== make_fugacity_state CENTER DEBUG ===\n");
-        Kokkos::printf("  rho_code = %e\n", rho_code);
-        Kokkos::printf("  rho_cgs  = %e\n", F.rho_cgs);
-        Kokkos::printf("  temp_mev = %e\n", F.temp_mev);
-        Kokkos::printf("  ye       = %e\n", ye);
-        Kokkos::printf("  mu_e     = %e\n", F.mu_e);
-        Kokkos::printf("  mu_p     = %e\n", F.mu_p);
-        Kokkos::printf("  mu_n     = %e\n", F.mu_n);
-        Kokkos::printf("  Xn       = %e\n", F.Xn);
-        Kokkos::printf("  Xp       = %e\n", F.Xp);
-        Kokkos::printf("  nb       = %e\n", F.nb);
-    }
-    // ---- end of first debug block, put the rest AFTER eta_np/eta_pn are computed ----
 
     const double mu_hat = F.mu_n - F.mu_p - Qnp;
     const double mu_nue = F.mu_e + F.mu_p - F.mu_n - Qnp;
@@ -576,9 +557,13 @@ fugacity_state make_fugacity_state(
     // and mu_numubar by -mu_numu.  The current GRACE EOS call above does not
     // return mu_mu, so the analytic 5-species mode is non-muonic unless that
     // EOS interface is extended.
-    double mu_numu = 0.0;
-    double mu_numubar = 0.0;
+    //
+    // KEN maybe an if statement is needed, maybe not
+    double mu_numu = F.mu_mu + F.mu_p - F.mu_n - Qnp;
+    double mu_numubar = - mu_numu;
     double mu_nux = 0.0;
+
+    //F.mu_p = F.mu_p + Qnp; //Harry does this for eta_p?
 
     const double T = safe_pos(F.temp_mev);
     F.eta_e   = F.mu_e / T;
@@ -601,19 +586,6 @@ fugacity_state make_fugacity_state(
     }
     if (!Kokkos::isfinite(F.eta_np) || !(F.eta_np > 0.0)) F.eta_np = 0.0;
     if (!Kokkos::isfinite(F.eta_pn) || !(F.eta_pn > 0.0)) F.eta_pn = 0.0;
-
-    // ---- DEBUG ----
-    if(rho_code > 1.23857e-03 && false) {
-        Kokkos::printf("  eta_hat  = %e\n", F.eta_hat);
-        Kokkos::printf("  eta_e    = %e\n", F.eta_e);
-        Kokkos::printf("  eta_nu[NUE]    = %e\n", F.eta_nu[NUE]);
-        Kokkos::printf("  eta_nu[NUEBAR] = %e\n", F.eta_nu[NUEBAR]);
-        Kokkos::printf("  eta_pn   = %e  (proton phase-space factor; drives NUE emission)\n", F.eta_pn);
-        Kokkos::printf("  eta_np   = %e  (neutron phase-space factor; drives NUEBAR emission)\n", F.eta_np);
-        Kokkos::printf("========================================\n");
-    }
-    // ---- end DEBUG ----
-
 
     // ---------------------------------------------------------------------------
     // Optical-depth based suppression of neutrino fugacities (Foucart/Bollig trick):
