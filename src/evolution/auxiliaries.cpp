@@ -70,9 +70,9 @@ void compute_auxiliary_quantities() {
         } else if ( cold_eos_type == "tabulated" ) {
             compute_auxiliary_quantities<grace::hybrid_eos_t<grace::tabulated_cold_eos_t>>(state,sstate,aux) ;
         }
-    } else if ( eos_type == "leptonic" ) {
-        compute_auxiliary_quantities<grace::tabulated_eos_t>(state,sstate,aux) ;
     } else if ( eos_type == "tabulated" ) {
+        compute_auxiliary_quantities<grace::tabulated_eos_t>(state,sstate,aux) ;
+    } else if ( eos_type == "leptonic" ) {
         compute_auxiliary_quantities<grace::leptonic_eos_4d_t>(state,sstate,aux) ;
     } else if ( eos_type == "ideal_gas" ) {
         compute_auxiliary_quantities<grace::ideal_gas_eos_t>(state,sstate,aux) ;

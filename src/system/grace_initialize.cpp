@@ -315,7 +315,7 @@ void initialize(int& argc, char* argv[])
         }
     } else {
         // aux vars are not in the checkpoint
-        GRACE_INFO("Performing auxiliareis quantities calculation.") ;
+        GRACE_TRACE("Performing first compute_auxiliary_quantities.") ;
         grace::compute_auxiliary_quantities() ;
     }
     //--
