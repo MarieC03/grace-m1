@@ -1075,48 +1075,64 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 1: Beta — absorption opacity is primary, emissivity derived via Kirchhoff.
-    //   This is the physically correct direction for charged-current reactions:
-    //   kappa is computed from nucleon blocking/availability (Ruffert B5-6),
-    //   and Q/R follow from detailed balance.
+    // Step 1: Beta — charged-current absorption opacity (primary quantity).
+    //   kappa_a, kappa_n for NUE/NUEBAR computed directly from nucleon
+    //   densities and blocking factors (Ruffert+ B5-6).
     // -------------------------------------------------------------------------
     rates_accum rates{};
-    if (beta_decay) {
+    if (beta_decay)
         add_charged_current_absorption_opacity(F, rates);
-        // Derive beta emissivities from Kirchhoff: Q = kappa_a * B_E, R = kappa_n * B_N
-        add_kirchhoff_emission_from_absorption_opacity(
-            F, g_nu, rates.kappa_a, rates.kappa_n, rates.Q, rates.R);
-    }
 
     // -------------------------------------------------------------------------
-    // Step 2: Thermal channels — emissivity is primary, absorption opacity derived.
-    //   pair/plasmon/brems have no direct opacity formula, so go the other way.
+    // Step 2: Thermal emissivities (pair/plasmon/brems).
+    //   These processes have no direct opacity formula; emissivity is primary.
+    //   Effectively only contributes to NUX (and heavy leptons in 5-species).
     // -------------------------------------------------------------------------
     rates_accum thermal{};
     if (pair_annihilation) add_pair_process_emission(F, thermal);
     if (plasmon_decay)     add_plasmon_decay_emission(F, thermal);
     if (bremsstrahlung)    add_brems_emission(F, thermal);
 
+    // -------------------------------------------------------------------------
+    // Step 3: Kirchhoff absorption opacity from thermal emissivities.
+    //   kappa_a = Q / B_E,  kappa_n = R / B_N  (NUX only effectively).
+    //   Accumulated into rates so that Step 4 sees the full kappa for NUE/NUEBAR.
+    // -------------------------------------------------------------------------
     std::array<double, NUMSPECIES> kappa_a_th{{0,0,0,0,0}};
     std::array<double, NUMSPECIES> kappa_n_th{{0,0,0,0,0}};
     add_kirchhoff_absorption_opacity_from_QR(
         F, g_nu, thermal.Q, thermal.R, kappa_a_th, kappa_n_th);
-
     for (int s = 0; s < NUMSPECIES; ++s) {
-        rates.Q[s]       += thermal.Q[s];
-        rates.R[s]       += thermal.R[s];
         rates.kappa_a[s] += kappa_a_th[s];
         rates.kappa_n[s] += kappa_n_th[s];
     }
 
     // -------------------------------------------------------------------------
-    // Step 3: Scattering — independent of emission.
+    // Step 4: Kirchhoff emission for NUE/NUEBAR from beta absorption opacity.
+    //   Q = kappa_a * B_E,  R = kappa_n * B_N.
+    //   Called after Step 3 so kappa includes thermal contributions.
+    //   Only writes NUE/NUEBAR (need_nux_emission=false equivalent).
+    // -------------------------------------------------------------------------
+    add_kirchhoff_emission_from_absorption_opacity(
+        F, g_nu, rates.kappa_a, rates.kappa_n, rates.Q, rates.R);
+
+    // -------------------------------------------------------------------------
+    // Step 5: Add thermal emissivities for NUX.
+    //   Added after Step 4 so NUX emissivity comes directly from thermal
+    //   processes, not from Kirchhoff inversion of kappa.
+    // -------------------------------------------------------------------------
+    for (int s = 0; s < NUMSPECIES; ++s) {
+        rates.Q[s] += thermal.Q[s];
+        rates.R[s] += thermal.R[s];
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 6: Scattering opacity — independent of emission, added directly.
     // -------------------------------------------------------------------------
     add_scattering_opacity(F, rates);
 
-
     // -------------------------------------------------------------------------
-    // Step 4 (optional): suppress muon species below threshold.
+    // Step 7: Suppress muon species below threshold (5-species mode only).
     // -------------------------------------------------------------------------
 #ifdef M1_NU_FIVESPECIES
     if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
@@ -1126,7 +1142,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
 #endif
 
     // -------------------------------------------------------------------------
-    // Step 5 (optional): neutrino-temperature correction.
+    // Step 8: Neutrino-temperature correction (optional).
     // -------------------------------------------------------------------------
     if (apply_temp_correction) {
         for (int s = 0; s < NUMSPECIES; ++s) {
@@ -1159,7 +1175,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     }
 
     // -------------------------------------------------------------------------
-    // Step 6: tau post-estimate (side-effect only, result discarded for now).
+    // Step 9: Tau post-estimate (side-effect only, result discarded for now).
     // -------------------------------------------------------------------------
     for (int s = 0; s < NUMSPECIES; ++s) {
         const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
@@ -1168,7 +1184,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     }
 
     // -------------------------------------------------------------------------
-    // Step 7: convert to code units and sanitise.
+    // Step 10: Convert to code units and sanitise.
     // -------------------------------------------------------------------------
     nu_rates_all_out all;
     for (int s = 0; s < NUMSPECIES; ++s) {
