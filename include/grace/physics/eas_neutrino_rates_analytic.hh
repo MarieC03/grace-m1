@@ -580,10 +580,10 @@ fugacity_state make_fugacity_state(
     const double denom_pn = (Kokkos::exp(+F.eta_hat) - 1.0);
     F.eta_np = (denom_np != 0.0) ? (F.nb * (Yp - Yn) / denom_np) : 0.0;
     F.eta_pn = (denom_pn != 0.0) ? (F.nb * (Yn - Yp) / denom_pn) : 0.0;
-    //if (F.rho_cgs < 2.e11) {
-    //    F.eta_pn = F.nb * Yp;
-    //    F.eta_np = F.nb * Yn;
-    //}
+    if (F.rho_cgs < 2.e11) {
+        F.eta_pn = F.nb * Yp;
+        F.eta_np = F.nb * Yn;
+    }
     if (!Kokkos::isfinite(F.eta_np) || (F.eta_np < 0.0)) F.eta_np = 0.0;
     if (!Kokkos::isfinite(F.eta_pn) || (F.eta_pn < 0.0)) F.eta_pn = 0.0;
 
@@ -1069,8 +1069,8 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     //   densities and blocking factors (Ruffert+ B5-6).
     // -------------------------------------------------------------------------
     rates_accum rates{};
-    if (beta_decay)
-        add_charged_current_absorption_opacity(F, rates);
+    //if (beta_decay)
+        //add_charged_current_absorption_opacity(F, rates);
 
     // -------------------------------------------------------------------------
     // Step 2: Thermal emissivities (pair/plasmon/brems).
