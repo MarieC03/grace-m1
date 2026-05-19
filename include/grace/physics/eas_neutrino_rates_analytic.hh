@@ -580,12 +580,12 @@ fugacity_state make_fugacity_state(
     const double denom_pn = (Kokkos::exp(+F.eta_hat) - 1.0);
     F.eta_np = (denom_np != 0.0) ? (F.nb * (Yp - Yn) / denom_np) : 0.0;
     F.eta_pn = (denom_pn != 0.0) ? (F.nb * (Yn - Yp) / denom_pn) : 0.0;
-    if (F.rho_cgs < 2.e11) {
-        F.eta_pn = F.nb * Yp;
-        F.eta_np = F.nb * Yn;
-    }
-    if (!Kokkos::isfinite(F.eta_np) || !(F.eta_np > 0.0)) F.eta_np = 0.0;
-    if (!Kokkos::isfinite(F.eta_pn) || !(F.eta_pn > 0.0)) F.eta_pn = 0.0;
+    //if (F.rho_cgs < 2.e11) {
+    //    F.eta_pn = F.nb * Yp;
+    //    F.eta_np = F.nb * Yn;
+    //}
+    if (!Kokkos::isfinite(F.eta_np) || (F.eta_np < 0.0)) F.eta_np = 0.0;
+    if (!Kokkos::isfinite(F.eta_pn) || (F.eta_pn < 0.0)) F.eta_pn = 0.0;
 
     // ---------------------------------------------------------------------------
     // Optical-depth based suppression of neutrino fugacities (Foucart/Bollig trick):
@@ -938,17 +938,6 @@ nu_rates_all_out compute_all_species_weakhub(
     const tau_policy_t& tau_policy,
     bool apply_temp_correction)
 {
-    //fugacity_state F{};
-    //F.rho_code = rho_code;
-    //F.temp_code = temp_code;
-    //F.ye = ye;
-    //F.ymu = ymu;
-    //F.mass_scale = mass_scale;
-    //F.rho_cgs = rho_code_to_cgs(rho_code, mass_scale);
-    //F.temp_mev = temp_code_to_mev(temp_code);
-    //F.eta_nu.fill(0.0);
-    //F.tau_n.fill(0.0);
-
     fugacity_state F = make_fugacity_state(eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
 
 
@@ -1121,10 +1110,11 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     //   Added after Step 4 so NUX emissivity comes directly from thermal
     //   processes, not from Kirchhoff inversion of kappa.
     // -------------------------------------------------------------------------
-    for (int s = 0; s < NUMSPECIES; ++s) {
-        rates.Q[s] += thermal.Q[s];
-        rates.R[s] += thermal.R[s];
-    }
+    // NOT NEEDED, thermal rates are in kappa_a/n already
+    //for (int s = 0; s < NUMSPECIES; ++s) {
+    //    rates.Q[s] += thermal.Q[s];
+    //    rates.R[s] += thermal.R[s];
+    //}
 
     // -------------------------------------------------------------------------
     // Step 6: Scattering opacity — independent of emission, added directly.
