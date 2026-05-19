@@ -1066,130 +1066,108 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     const tau_policy_t& tau_policy,
     bool apply_temp_correction)
 {
-    fugacity_state F = make_fugacity_state(eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
-
-    rates_accum rates;
-
-    // Charged-current beta processes are handled explicitly:
-    //   emissivities from Ruffert/Rosswog formulae,
-    //   absorption opacities from the inverse charged-current reactions.
-    // Do not overwrite these opacities by Kirchhoff below.
-    //if (beta_decay) {
-    //    add_charged_current_emission(F, rates);
-    //    add_charged_current_absorption_opacity(F, rates);
-    //}
-
-    // TEST
-    // COMPUTE BETA EMISSION FROM KIRCHHOFF AND OPACITIES
-
-    if (beta_decay) {
-        // First compute charged-current absorption opacities:
-        //   ν_e  + n -> p + e-
-        //   ν̄_e + p -> n + e+
-        add_charged_current_absorption_opacity(F, rates);
-        // Then compute beta emissivities from Kirchhoff:
-        //   Q = kappa_a * B_E
-        //   R = kappa_n * B_N
-        std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
-        #ifdef M1_NU_FIVESPECIES
-            g_nu = {{1,1,1,1,2}};
-        #endif
-
-        std::array<double, NUMSPECIES> Q_beta{{0,0,0,0,0}};
-        std::array<double, NUMSPECIES> R_beta{{0,0,0,0,0}};
-
-        add_kirchhoff_emission_from_absorption_opacity(
-            F, g_nu, rates.kappa_a, rates.kappa_n, Q_beta, R_beta);
-
-        rates.Q[NUE]    += Q_beta[NUE];
-        rates.R[NUE]    += R_beta[NUE];
-        rates.Q[NUEBAR] += Q_beta[NUEBAR];
-        rates.R[NUEBAR] += R_beta[NUEBAR];
-    }
-
-    // Scattering is independent of thermal emissivity.
-    add_scattering_opacity(F, rates);
-
-    // Thermal pair/plasmon/bremsstrahlung channels provide emissivities.
-    // Their inverse absorption opacities are added through Kirchhoff, like in FIL.
-    rates_accum thermal_rates;
-    if (pair_annihilation) add_pair_process_emission(F, thermal_rates);
-    if (plasmon_decay)     add_plasmon_decay_emission(F, thermal_rates);
-    if (bremsstrahlung)    add_brems_emission(F, thermal_rates);
-
+    fugacity_state F = make_fugacity_state(
+        eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
 
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
 #ifdef M1_NU_FIVESPECIES
     g_nu = {{1,1,1,1,2}};
 #endif
 
-    if (beta_decay) {
-        add_charged_current_emission(F,thermal_rates);
+    // -------------------------------------------------------------------------
+    // Step 1: Collect all emissivities (Q, R) into one accumulator.
+    //   - beta:   direct Ruffert formula
+    //   - pair/plasmon/brems: their respective kernels
+    // -------------------------------------------------------------------------
+    rates_accum emiss{};
+    if (beta_decay)        add_charged_current_emission(F, emiss);
+    if (pair_annihilation) add_pair_process_emission(F, emiss);
+    if (plasmon_decay)     add_plasmon_decay_emission(F, emiss);
+    if (bremsstrahlung)    add_brems_emission(F, emiss);
+
+    // -------------------------------------------------------------------------
+    // Step 2: Derive absorption opacities from emissivities via Kirchhoff.
+    //   kappa_a = Q / B_E,   kappa_n = R / B_N
+    // -------------------------------------------------------------------------
+    rates_accum rates{};
+    for (int s = 0; s < NUMSPECIES; ++s) {
+        rates.Q[s] = emiss.Q[s];
+        rates.R[s] = emiss.R[s];
     }
-    std::array<double, NUMSPECIES> kappa_a_thermal{{0,0,0,0,0}};
-    std::array<double, NUMSPECIES> kappa_n_thermal{{0,0,0,0,0}};
     add_kirchhoff_absorption_opacity_from_QR(
-        F, g_nu, thermal_rates.Q, thermal_rates.R,
-        kappa_a_thermal, kappa_n_thermal);
+        F, g_nu, emiss.Q, emiss.R,
+        rates.kappa_a, rates.kappa_n);
 
-    for (int s = 0; s < NUMSPECIES; ++s) {
-        rates.Q[s]       += thermal_rates.Q[s];
-        rates.R[s]       += thermal_rates.R[s];
-        rates.kappa_a[s] += kappa_a_thermal[s];
-        rates.kappa_n[s] += kappa_n_thermal[s];
+    // -------------------------------------------------------------------------
+    // Step 3: Scattering opacity — independent of emission, added directly.
+    // -------------------------------------------------------------------------
+    add_scattering_opacity(F, rates);
+
+    // -------------------------------------------------------------------------
+    // Step 4 (optional): suppress muon species below threshold.
+    // -------------------------------------------------------------------------
+#ifdef M1_NU_FIVESPECIES
+    if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
+        rates.Q[NUMU]    = rates.R[NUMU]    = rates.kappa_a[NUMU]    = rates.kappa_n[NUMU]    = 0.0;
+        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
     }
+#endif
 
-    // Tau post-estimate (optional; now not stored)
-    // TODO implement proper tau path integral handeling here
-    for (int s = 0; s < NUMSPECIES; ++s) {
-        const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
-        (void)tau_policy.tau_post(kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
-    }
-
-    // Neutrino-temperature correction
+    // -------------------------------------------------------------------------
+    // Step 5 (optional): neutrino-temperature correction.
+    // -------------------------------------------------------------------------
     if (apply_temp_correction) {
         for (int s = 0; s < NUMSPECIES; ++s) {
             const double Rloc = rates.R[s];
             const double Qloc = rates.Q[s];
-            if (Rloc > 0.0 && Qloc > 0.0) {
-                // TODO: calculate eps from W(E-Fv)/N
-                // here eps just approximate
-                const double eps_mev = Qloc / Rloc;
-                const double Tnu_mev = fermi::FDR<2,3>::get(F.eta_nu[s]) * eps_mev;
-                const double Tf_mev  = safe_pos(F.temp_mev);
-                double fact = 1.0;
-                if (Kokkos::isfinite(Tnu_mev) && Tnu_mev > 0.0) {
-                    const double ratio = Tnu_mev / Tf_mev;
-                    fact = ratio * ratio;
-                    if (fact < 1.0) fact = 1.0;
-                }
-                if (Kokkos::isfinite(fact) && fact > 0.0) {
-                    // TODO is it correct like that?
-                    if(s == NUX){
-                        rates.kappa_s[s] *= fact;
-                    }else{
-                        rates.Q[s]       *= fact;
-                        rates.R[s]       *= fact;
-                        rates.kappa_a[s] *= fact;
-                        rates.kappa_n[s] *= fact;
-                        rates.kappa_s[s] *= fact;
-                    }
-                }
+            if (!(Rloc > 0.0) || !(Qloc > 0.0)) continue;
+
+            const double eps_mev = Qloc / Rloc;
+            const double Tnu_mev = fermi::FDR<2,3>::get(F.eta_nu[s]) * eps_mev;
+            const double Tf_mev  = safe_pos(F.temp_mev);
+
+            double fact = 1.0;
+            if (Kokkos::isfinite(Tnu_mev) && Tnu_mev > 0.0) {
+                const double ratio = Tnu_mev / Tf_mev;
+                fact = ratio * ratio;
+                if (fact < 1.0) fact = 1.0;
+            }
+            if (!Kokkos::isfinite(fact) || !(fact > 0.0)) continue;
+
+            if (s == NUX) {
+                rates.kappa_s[s] *= fact;
+            } else {
+                rates.Q[s]       *= fact;
+                rates.R[s]       *= fact;
+                rates.kappa_a[s] *= fact;
+                rates.kappa_n[s] *= fact;
+                rates.kappa_s[s] *= fact;
             }
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Step 6: tau post-estimate (side-effect only, result discarded for now).
+    // -------------------------------------------------------------------------
+    for (int s = 0; s < NUMSPECIES; ++s) {
+        const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
+        (void)tau_policy.tau_post(
+            kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 7: convert to code units and sanitise.
+    // -------------------------------------------------------------------------
     nu_rates_all_out all;
     for (int s = 0; s < NUMSPECIES; ++s) {
         nu_rates_out out;
-        out.eta_E   = Q_mev_to_code(rates.Q[s], mass_scale);
-        out.eta_N   = R_to_code(rates.R[s], mass_scale);
-        out.kappa_a = kappa_to_code(rates.kappa_a[s], mass_scale);
-        out.kappa_n = kappa_to_code(rates.kappa_n[s], mass_scale);
-        out.kappa_s = kappa_to_code(rates.kappa_s[s], mass_scale);
-
-        if (!Kokkos::isfinite(out.eta_E)) out.eta_E = 0.0;
-        if (!Kokkos::isfinite(out.eta_N)) out.eta_N = 0.0;
+        out.eta_E   = Q_mev_to_code(rates.Q[s],       mass_scale);
+        out.eta_N   = R_to_code(rates.R[s],            mass_scale);
+        out.kappa_a = kappa_to_code(rates.kappa_a[s],  mass_scale);
+        out.kappa_n = kappa_to_code(rates.kappa_n[s],  mass_scale);
+        out.kappa_s = kappa_to_code(rates.kappa_s[s],  mass_scale);
+        if (!Kokkos::isfinite(out.eta_E))   out.eta_E   = 0.0;
+        if (!Kokkos::isfinite(out.eta_N))   out.eta_N   = 0.0;
         if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 0.0;
         if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 0.0;
         if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 0.0;
