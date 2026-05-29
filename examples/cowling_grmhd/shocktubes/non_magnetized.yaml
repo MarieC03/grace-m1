@@ -1,5 +1,5 @@
 # Unmagnetized shocktube (setup A in GRACE paper)
-# Npoints along x is 32 x 2 (ref level) x 5 (stacked trees)
+# Npoints along x is 32 x 2 (ref level) x 20 (stacked trees) = 1280 
 name: "balsara2"
 amr: {
   # Points per quadrant
@@ -9,10 +9,10 @@ amr: {
   # Grid extents 
   xmin: -0.5,
   xmax: 0.5,
-  ymin: -0.1,
-  ymax: 0.1,
-  zmin: -0.1,
-  zmax: 0.1,
+  ymin: -0.025,
+  ymax: 0.025,
+  zmin: -0.025,
+  zmax: 0.025,
   # Uniform grid level
   initial_refinement_level: 1,
   # Don't touch this 
