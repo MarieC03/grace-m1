@@ -561,30 +561,42 @@ void flag_fofc_cells(
         /************************************************************************************/
 
         /************************************************************************************/
-        // Discrete maximum principle (Jacobs+2025, Zanotti+2015).  
-        // Flag the cell when the tentative D or tau lies outside the 27-cell neighborhood
-        // [min/dmp_M, max*dmp_M] window of the base state. Catches "thin
-        // air" extrema (e.g. dissipative LLF leakage into atmospheric
-        // cells) that satisfy a lenient c2p but are clearly unphysical.
+        // Discrete maximum principle (Jacobs+2025, Zanotti+2015).
+        // Flag the cell when the tentative D or E lies outside the 27-cell
+        // neighborhood [min/dmp_M, max*dmp_M] window of the base state.
+        // Catches "thin air" extrema (e.g. dissipative LLF leakage into
+        // atmospheric cells) that satisfy a lenient c2p but are clearly
+        // unphysical.
+        //
+        // The energy variable is the SIGN-DEFINITE total energy E = tau + D,
+        // NOT tau. tau = sqrt(g)(rho h W^2 - p) - D is energy-minus-rest-mass
+        // and goes NEGATIVE wherever eps < 0 (the entire cold atmosphere). The
+        // multiplicative window [min/M, max*M] only widens for positive
+        // quantities: for negative tau, M*vmax sits BELOW vmax, inverting the
+        // window so every cold-atmosphere cell trivially trips it (blanket
+        // false-positive). E = tau + D > 0 always, so the principle is
+        // well-posed and reduces to the intended 20% band. D and E share the
+        // cons/new_state index order with DENS_/TAU_.
         bool dmp_violated = false ;
         if (fofc_pars.dmp_enable) {
             double const inv_M = 1.0 / fofc_pars.dmp_M ;
-            constexpr int loc_idx[2] = { DENS_, TAU_ } ;
-            for (int n = 0; n < 2; ++n) {
-                int const ivar = loc_idx[n] ;
+            for (int n = 0; n < 2; ++n) {  // n=0: D ; n=1: E = tau + D
                 double vmax = -std::numeric_limits<double>::max() ;
                 double vmin =  std::numeric_limits<double>::max() ;
                 for (int kt = -1; kt <= 1; ++kt) {
                     for (int jt = -1; jt <= 1; ++jt) {
                         for (int it = -1; it <= 1; ++it) {
-                            double const v =
-                                new_state(VEC(i+it, j+jt, k+kt), ivar, q) ;
+                            double const Dn =
+                                new_state(VEC(i+it, j+jt, k+kt), DENS_, q) ;
+                            double const v = (n == 0) ? Dn
+                                : Dn + new_state(VEC(i+it, j+jt, k+kt), TAU_, q) ;
                             vmax = Kokkos::fmax(vmax, v) ;
                             vmin = Kokkos::fmin(vmin, v) ;
                         }
                     }
                 }
-                double const test = cons[ivar] ;
+                double const test = (n == 0) ? cons[DENS_]
+                                             : cons[DENS_] + cons[TAU_] ;
                 if (test > fofc_pars.dmp_M * vmax || test < vmin * inv_M) {
                     dmp_violated = true ;
                     break ;
