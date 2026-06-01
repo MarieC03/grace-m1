@@ -487,6 +487,10 @@ void flag_fofc_cells(
     auto& fofc_edges    = grace::variable_list::get().getfofcedgetags() ;
     auto& fofc_face_cnt = grace::variable_list::get().getfofcfcnt() ;
     auto& fofc_edge_cnt = grace::variable_list::get().getfofcecnt() ;
+    // Diagnostic: record the FOFC trigger per cell into the sticky-OR
+    // aux(C2P_ERR_) field (bits C2P_FOFC_FLOORED / C2P_FOFC_DMP), so the
+    // FOFC flag — and which path triggered it — is visible in c2p_err output.
+    auto& aux           = grace::variable_list::get().getaux() ;
 
     auto eos      = eos::get().get_eos<eos_t>() ;
     auto atmo     = get_atmo_params() ;
@@ -606,6 +610,17 @@ void flag_fofc_cells(
 
         /************************************************************************************/
         if (floored || dmp_violated) {
+            // Diagnostic: stamp the FOFC trigger into the sticky-OR c2p_err
+            // field for this cell.  One thread per (i,j,k,q) here, so a plain
+            // read-modify-write is race-free (unlike the shared face/edge tags
+            // below, which need atomics).  Bits survive to output because the
+            // production c2p only OR-accumulates into aux(C2P_ERR_).
+            uint64_t fofc_bits =
+                  (floored      ? (uint64_t{1} << c2p_err_enum_t::C2P_FOFC_FLOORED) : uint64_t{0})
+                | (dmp_violated ? (uint64_t{1} << c2p_err_enum_t::C2P_FOFC_DMP)     : uint64_t{0}) ;
+            uint64_t prev_err = static_cast<uint64_t>(aux(VEC(i,j,k), C2P_ERR_, q)) ;
+            aux(VEC(i,j,k), C2P_ERR_, q) = static_cast<double>(prev_err | fofc_bits) ;
+
             // 6 faces touching cell (i,j,k):
             Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), int8_t{1});  // -x face
             Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), int8_t{1});  // +x face

@@ -74,6 +74,14 @@ enum c2p_sig_enum_t : uint8_t {
 //              T (and derived eps, press, entropy) were reset while velocity
 //              was preserved. Disjoint from C2P_ATMO_RESET — that branch is
 //              the full atmosphere reset which also zeros velocity.
+//   bit 22:    FOFC-floored-trigger. Set in flag_fofc_cells when this cell's
+//              tentative post-substep c2p dry-run would floor/reset — i.e. the
+//              cell triggered FOFC via the c2p-failure path. (Diagnostic only;
+//              written directly into aux(C2P_ERR_), see flag_fofc_cells.)
+//   bit 23:    FOFC-DMP-trigger. Set in flag_fofc_cells when this cell's
+//              tentative D or tau violated the discrete-maximum-principle
+//              window (thin-air extremum the lenient c2p would NOT have
+//              flagged). Disjoint diagnostic from bit 22.
 //
 // Together bits 19-21 distinguish four diagnostic outcomes per cell:
 //   - all clear:                       clean c2p (any SIG_* bits = quiet clamp)
@@ -89,9 +97,11 @@ enum c2p_sig_enum_t : uint8_t {
 //   entropy_backup_used = bool(v & (1<<19))
 //   atmosphere_reset    = bool(v & (1<<20))
 //   t_floored           = bool(v & (1<<21))
+//   fofc_floored        = bool(v & (1<<22))
+//   fofc_dmp            = bool(v & (1<<23))
 //   ...
 //
-// Total bits used: 22 — comfortably below double mantissa (2^53).
+// Total bits used: 24 — comfortably below double mantissa (2^53).
 enum c2p_err_enum_t : uint8_t {
     C2P_RESET_DENS=0,
     C2P_RESET_TAU,
@@ -121,6 +131,11 @@ enum c2p_err_enum_t : uint8_t {
     C2P_ENT_BACKUP_USED,
     C2P_ATMO_RESET,
     C2P_T_FLOORED,
+    // FOFC diagnostic bits — NOT set by conservs_to_prims; written directly
+    // into aux(C2P_ERR_) by flag_fofc_cells so the FOFC trigger (and which
+    // path: c2p-floor vs DMP) is visible in the c2p_err output field.
+    C2P_FOFC_FLOORED,
+    C2P_FOFC_DMP,
     C2P_N_ERR
 } ;
 
