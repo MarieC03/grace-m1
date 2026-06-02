@@ -1907,14 +1907,19 @@ void compute_limiter_ratios(
             double const azp = -l2*(fluxes(VEC(i,j,k+1),u,2,q) - fluxes_lo(VEC(i,j,k+1),u,2,q)) ;
             double const Pp = fmax(0.,axm)+fmax(0.,axp)+fmax(0.,aym)+fmax(0.,ayp)+fmax(0.,azm)+fmax(0.,azp) ;
             double const Pm = fmin(0.,axm)+fmin(0.,axp)+fmin(0.,aym)+fmin(0.,ayp)+fmin(0.,azm)+fmin(0.,azp) ;
-            // 7-pt neighborhood extrema of u^n
-            double umx = un, umn = un, vv_ ;
-            vv_=old_state(VEC(i-1,j,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
-            vv_=old_state(VEC(i+1,j,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
-            vv_=old_state(VEC(i,j-1,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
-            vv_=old_state(VEC(i,j+1,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
-            vv_=old_state(VEC(i,j,k-1),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
-            vv_=old_state(VEC(i,j,k+1),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            // 27-pt (3x3x3) neighborhood extrema of u^n, matching the FOFC DMP
+            // stencil (flag_fofc_cells). The low-order anchor u^LO lies in the
+            // 6-face range, hence also in this wider one, so Q+/- >= 0 and the
+            // FCT bound-preserving property still holds — this just relaxes the
+            // bound to include diagonal neighbors (no clipping of smooth corner
+            // extrema), at the cost of a slightly looser DMP.
+            double umx = un, umn = un ;
+            for (int kt=-1; kt<=1; ++kt)
+            for (int jt=-1; jt<=1; ++jt)
+            for (int it=-1; it<=1; ++it) {
+                double const nv = old_state(VEC(i+it,j+jt,k+kt),u,q) ;
+                umx = fmax(umx, nv) ; umn = fmin(umn, nv) ;
+            }
             // sign-safe magnitude relaxation
             double umax = umx + (M-1.)*fabs(umx) ;
             double umin = umn - (M-1.)*fabs(umn) ;
