@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # yaml-cpp dependency resolution.
 #
 #   GRACE_USE_BUNDLED_DEPS = ON  →  in-tree submodule (extern/yaml-cpp).
@@ -56,4 +57,23 @@ else()
                          INTERFACE_LINK_LIBRARIES "${YAML_CPP_LIBRARIES}")
         endif()
     endif()
+=======
+if(NOT YAML_ROOT )
+  set(YAML_ROOT "")
+  set(YAML_ROOT "$ENV{YAML_ROOT}")
+endif()
+# Set the path to the cmake config file (try lib then lib64 for macOS/Linux compat)
+if(YAML_ROOT)
+  if(EXISTS "${YAML_ROOT}/lib/cmake/yaml-cpp")
+    set(yaml-cpp_DIR "${YAML_ROOT}/lib/cmake/yaml-cpp")
+  else()
+    set(yaml-cpp_DIR "${YAML_ROOT}/lib64/cmake/yaml-cpp")
+  endif()
+else()
+  if(EXISTS "$ENV{HOME}/libs/yaml-cpp-install/lib/cmake/yaml-cpp")
+    set(yaml-cpp_DIR "$ENV{HOME}/libs/yaml-cpp-install/lib/cmake/yaml-cpp")
+  else()
+    set(yaml-cpp_DIR "$ENV{HOME}/libs/yaml-cpp-install/lib64/cmake/yaml-cpp")
+  endif()
+>>>>>>> 0eec17c (setup_yaml fix for mac os)
 endif()
