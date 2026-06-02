@@ -9,7 +9,12 @@ option(GRACE_FREEZE_HYDRO "Freeze hydrodynamics evolution" OFF)
 # c2p flooring.  Default ON — it's a safety net with negligible cost on
 # clean states.  Disable for symmetry-preservation diagnostics or when
 # bisecting a flux-related bug.
-option(GRACE_ENABLE_FOFC "Enable First-Order Flux Correction" ON)
+
+# Diagnostic: after each full step, dump conserved + face fluxes + fofc flags
+# for cells with tau/D > 1 or eps > 0.5 to hot_flux_dump.<rank>.dat.  Used to
+# pin the superheated-atmosphere-cell mechanism (does the cell drain?).  OFF by
+# default; adds a full-grid scan + per-step host copy when ON.
+option(GRACE_DUMP_HOT_CELLS "Dump fluxes at hot (high tau/D or eps) cells" OFF)
 
 # GRMHD Riemann solver selection (compile-time).
 #   HLL — 2-wave HLLE (default).
@@ -38,6 +43,17 @@ if(NOT GRACE_EMF_SCHEME MATCHES "^(GS|UCT)$")
         "GRACE_EMF_SCHEME=${GRACE_EMF_SCHEME} is not one of GS, UCT.")
 endif()
 message(STATUS "EMF scheme: ${GRACE_EMF_SCHEME}")
+
+# Flux limiter scheme 
+# FOFC - FOFC a la AthenaK, run mock c2p and correct fluxes 
+# FB  - Convex flux blend, only checks positivity of D and a relaxed DMP 
+set(GRACE_FLUX_LIMITER "FOFC" CACHE STRING
+    "Flux limiting scheme (FOFC|CFB)")
+set_property(CACHE GRACE_FLUX_LIMITER PROPERTY STRINGS FOFC CFB)
+if (NOT GRACE_FLUX_LIMITER MATCHES "^(FOFC|CFB)$")
+    message(FATAL_ERROR "GRACE_FLUX_LIMITER=${GRACE_FLUX_LIMITER} is not one of FOFC, CFB.")
+endif() 
+message(STATUS "Flux limiting scheme: ${GRACE_FLUX_LIMITER}")
 
 if( GRACE_ENABLE_FUKA )
     message(STATUS "FUKA module enabled.")

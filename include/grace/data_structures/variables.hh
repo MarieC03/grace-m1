@@ -146,6 +146,22 @@ public:
      */
     GRACE_ALWAYS_INLINE flux_array_t& 
     getfluxesarray() { return _fluxes ; }
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+    //*****************************************************************************************************
+    /**
+     * @brief Get the low-order fluxes vector 
+     * 
+     * @return The low-order fluxes vector, used during time 
+     *         evolution to hold the fluxes. 
+     */
+    GRACE_ALWAYS_INLINE flux_array_t&
+    getlofluxesarray() { return _lo_fluxes ; }
+    /**
+     * @brief Per-cell convex-limiter ratios (4 comps: 0:R_D+ 1:R_D- 2:R_tau+ 3:R_tau-).
+     */
+    GRACE_ALWAYS_INLINE var_array_t&
+    getlimiterratios() { return _limiter_ratios ; }
+    #endif
     //*****************************************************************************************************
     #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS 
     /**
@@ -162,6 +178,16 @@ public:
      */
     GRACE_ALWAYS_INLINE flux_array_t& 
     getefarray() { return _Eface ; }
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+    //*****************************************************************************************************
+    /**
+     * @brief Get the low-order face-staggered electric field 
+     * 
+     * @return The low order face-staggered electric field. 
+     */
+    GRACE_ALWAYS_INLINE flux_array_t& 
+    getloefarray() { return _lo_Eface ; }
+    #endif
     #else 
     /**
      * @brief Get the fluxes vector 
@@ -171,6 +197,16 @@ public:
      */
     GRACE_ALWAYS_INLINE flux_array_t& 
     getvbararray() { return _vbar ; }
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+    //*****************************************************************************************************
+    /**
+     * @brief Get the low-order face-staggered electric field 
+     * 
+     * @return The low order face-staggered electric field. 
+     */
+    GRACE_ALWAYS_INLINE flux_array_t& 
+    getlovbararray() { return _lo_vbar ; }
+    #endif
     #endif 
     //*****************************************************************************************************
     /**
@@ -267,11 +303,21 @@ private:
     staggered_variable_arrays_t   _staggered_vars_p ; //!< Staggered scratch state
     std::vector<staggered_variable_arrays_t> _stag_staging_buffer ; //!< Additional storage for timestepper 
     flux_array_t   _fluxes              ; //!< Fluxes for time evolution.
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+    flux_array_t   _lo_fluxes ; //!< Low order fluxes for correction
+    var_array_t    _limiter_ratios ; //!< Convex-limiter ratios, 4 comps: 0:R_D+ 1:R_D- 2:R_tau+ 3:R_tau-
+    #endif
     #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS 
     var_array_t  _Ecenter ; //!< Cell centered E field 
     flux_array_t _Eface   ; //!< Face staggered E field
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB 
+    flux_array_t _lo_Eface; //!< Low order Face staggered E field
+    #endif 
     #else 
     flux_array_t   _vbar              ; //!< Fluxes for time evolution.
+    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB 
+    flux_array_t _lo_vbar; //!< Low order Face staggered E field
+    #endif 
     #endif 
     emf_array_t   _emf                  ; //!< EMF for time evolution of ideal MHD.
     Kokkos::View<int*****, grace::default_space> _fofc_face_tags ;     //!< Tag faces for fofc, atomically.

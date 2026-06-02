@@ -44,6 +44,7 @@
 #include <grace/data_structures/grace_data_structures.hh>
 #include <grace/profiling/profiling.hh>
 #include <grace/utils/grace_utils.hh>
+#include <grace/parallel/mpi_wrappers.hh>
 #include <grace/utils/reconstruction.hh>
 #include <grace/utils/weno_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
@@ -114,9 +115,94 @@ void evolve() {
     }
 }
 
+#ifdef GRACE_DUMP_HOT_CELLS
+// Diagnostic (opt-in: -DGRACE_DUMP_HOT_CELLS). After a full timestep, scan all
+// interior cells and dump, for any cell with tau/D > THR_TAUD OR eps > THR_EPS
+// (eps is the aux value, one c2p behind the conserved -- kept as a backstop so
+// we never miss a hot cell), one row to hot_flux_dump.<rank>.dat:
+//   q i j k iter t | D Sx Sy Sz tau Yes Ents | eps tau/D |
+//   F_{D,Sx,Sy,Sz,tau} on faces (-x,+x,-y,+y,-z,+z)  [5 vars x 6 faces = 30] |
+//   fofc face flags (-x,+x,-y,+y,-z,+z)  [6]
+// Fluxes are the actual post-FOFC values used in the update. Reconstructed face
+// states are not stored anywhere, so they are NOT dumped here (would require
+// re-running the recon+Riemann inline); the realized fluxes answer "does the
+// cell drain?" directly.
+void dump_hot_cells() {
+    using namespace grace ; using namespace Kokkos ;
+    DECLARE_GRID_EXTENTS ;
+    auto& state  = variable_list::get().getstate() ;
+    auto& aux    = variable_list::get().getaux() ;
+    auto& fluxes = variable_list::get().getfluxesarray() ;
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+    auto& fofc   = variable_list::get().getfofcfacetags() ;
+#endif
+    int    const iter = static_cast<int>(get_iteration()) ;
+    double const tnow = get_simulation_time() ;
+
+    constexpr double THR_TAUD = 1.0 ;   // tau/D trigger
+    constexpr double THR_EPS  = 0.5 ;   // eps trigger (lags conserved by one c2p)
+    constexpr int    MAXHITS  = 50000 ; // generously sized; bad-cell count is << this
+    constexpr int    NCOL     = 51 ;
+
+    View<double**> rec("hot_dump", MAXHITS, NCOL) ;
+    View<int[1]>   cnt("hot_dump_cnt") ; // Kokkos zero-initializes
+
+    auto policy = MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
+        {VEC(ngz,ngz,ngz),0}, {VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ;
+    parallel_for(GRACE_EXECUTION_TAG("EVOL","dump_hot_cells"), policy,
+        KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k), int const& q) {
+        double const D    = state(VEC(i,j,k), DENS_, q) ;
+        double const tau  = state(VEC(i,j,k), TAU_,  q) ;
+        double const eps  = aux(VEC(i,j,k), EPS_, q) ;
+        double const tauD = (D != 0.0) ? tau/D : 0.0 ;
+        if (tauD > THR_TAUD || eps > THR_EPS) {
+            int const s = atomic_fetch_add(&cnt(0), 1) ;
+            if (s < MAXHITS) {
+                rec(s,0)=q; rec(s,1)=i; rec(s,2)=j; rec(s,3)=k;
+                rec(s,4)=static_cast<double>(iter); rec(s,5)=tnow ;
+                for (int v=0; v<7; ++v) rec(s,6+v) = state(VEC(i,j,k), v, q) ;
+                rec(s,13)=eps; rec(s,14)=tauD ;
+                int c=15 ;
+                for (int v=0; v<5; ++v) {  // DENS_,SX_,SY_,SZ_,TAU_ == 0,1,2,3,4
+                    rec(s,c++) = fluxes(VEC(i,  j,  k  ), v,0,q) ; // -x
+                    rec(s,c++) = fluxes(VEC(i+1,j,  k  ), v,0,q) ; // +x
+                    rec(s,c++) = fluxes(VEC(i,  j,  k  ), v,1,q) ; // -y
+                    rec(s,c++) = fluxes(VEC(i,  j+1,k  ), v,1,q) ; // +y
+                    rec(s,c++) = fluxes(VEC(i,  j,  k  ), v,2,q) ; // -z
+                    rec(s,c++) = fluxes(VEC(i,  j,  k+1), v,2,q) ; // +z
+                }
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+                rec(s,45)=fofc(VEC(i,  j,  k  ),0,q) ;
+                rec(s,46)=fofc(VEC(i+1,j,  k  ),0,q) ;
+                rec(s,47)=fofc(VEC(i,  j,  k  ),1,q) ;
+                rec(s,48)=fofc(VEC(i,  j+1,k  ),1,q) ;
+                rec(s,49)=fofc(VEC(i,  j,  k  ),2,q) ;
+                rec(s,50)=fofc(VEC(i,  j,  k+1),2,q) ;
+#else
+                for (int c2=45; c2<=50; ++c2) rec(s,c2) = -1.0 ;
+#endif
+            }
+        }
+    }) ;
+
+    auto h_cnt = create_mirror_view_and_copy(HostSpace(), cnt) ;
+    int const n = h_cnt(0) < MAXHITS ? h_cnt(0) : MAXHITS ;
+    if (n > 0) {
+        auto h_rec = create_mirror_view_and_copy(HostSpace(), rec) ;
+        std::string const fname =
+            "hot_flux_dump." + std::to_string(parallel::mpi_comm_rank()) + ".dat" ;
+        std::ofstream f(fname, std::ios::app) ;
+        f.setf(std::ios::scientific) ; f.precision(12) ;
+        for (int s=0; s<n; ++s) {
+            for (int c=0; c<NCOL; ++c) f << h_rec(s,c) << (c<NCOL-1 ? ' ' : '\n') ;
+        }
+    }
+}
+#endif // GRACE_DUMP_HOT_CELLS
+
 template< typename eos_t >
 void evolve_impl() {
-    using namespace grace ; 
+    using namespace grace ;
     DECLARE_GRID_EXTENTS ; 
     auto& parser = grace::config_parser::get() ;
 
@@ -422,8 +508,13 @@ void evolve_impl() {
     } else if (tstepper == "imex232" ) { 
         ERROR("Imex 3 not implemented yet") ; 
     } else {
-        ERROR("Unrecognised time-stepper.") ; 
+        ERROR("Unrecognised time-stepper.") ;
     }
+#ifdef GRACE_DUMP_HOT_CELLS
+    // After the full step: state/aux/fluxes/fofc tags all hold the final-substage
+    // values. Dump conserved + face fluxes + fofc flags for any hot cell.
+    dump_hot_cells() ;
+#endif
     Kokkos::deep_copy(state_p,state) ;
     grace::deep_copy(sstate_p,sstate) ;
 
@@ -453,6 +544,7 @@ void evolve_impl() {
  * from old_stag_state (CT hasn't run yet); metric from old_state, matching
  * the geometry compute_fluxes used.
  */
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
 template< typename eos_t >
 void flag_fofc_cells(
     double const t, double const dt, double const dtfact
@@ -836,10 +928,11 @@ void apply_fofc_correction(
     }) ;
     #endif
 }
+#endif // GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
 
 template< typename eos_t >
 void compute_fluxes(
-    double const t, double const dt, double const dtfact 
+    double const t, double const dt, double const dtfact
     , var_array_t& new_state 
     , var_array_t& old_state 
     , staggered_variable_arrays_t & new_stag_state 
@@ -1695,9 +1788,252 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     Kokkos::fence() ; 
 }
 
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+//==================================================================================================
+// Convex (continuous) flux limiter — sibling to FOFC. Three kernels, all run after
+// compute_fluxes and before compute_emfs, so the EMF is built from the blended flux:
+//   1. compute_low_order_fluxes : donor+LLF at ALL faces -> _fluxes_lo (+ _Eface_lo)
+//   2. compute_limiter_ratios   : per-cell Zalesak ratios R_{D,tau}^{+,-} -> _limiter_ratios
+//   3. blend_fluxes             : per-face theta = min over {D,tau}; blend fluxes (+Eface)
+// Control variables {D, tau}; sign-safe (magnitude-relaxed) DMP + density floor on D.
+// See ~/notes/convex_flux_limiter.md.
+//==================================================================================================
+
+// 1. Low-order (donor + LLF) flux at ALL faces, into the LO buffers.
 template< typename eos_t >
-void advance_substep( double const t, double const dt, double const dtfact 
-                    , var_array_t& new_state 
+void compute_low_order_fluxes(
+    double const t, double const dt, double const dtfact
+    , var_array_t& new_state
+    , var_array_t& old_state
+    , staggered_variable_arrays_t & new_stag_state
+    , staggered_variable_arrays_t & old_stag_state )
+{
+    using namespace grace ; using namespace Kokkos ;
+    DECLARE_GRID_EXTENTS ;
+    auto& dx        = grace::variable_list::get().getspacings() ;
+    auto& fluxes_lo = grace::variable_list::get().getlofluxesarray() ;
+    auto& aux       = grace::variable_list::get().getaux() ;
+    #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS 
+    auto& ef_lo     = grace::variable_list::get().getloefarray() ;   // LO Eface (GS byproduct)
+    #else 
+    static_assert(0, "flux blend and UCT are incompatible"); 
+    #endif 
+    using recon_t   = donor_cell_reconstructor_t ;
+    using riemann_t = llf_riemann_tag_t ;
+    auto eos = eos::get().get_eos<eos_t>() ;
+    grmhd_equations_system_t<eos_t> grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
+
+    // Same widened (MHD) face ranges as compute_fluxes so the LO flux exists
+    // wherever the HO flux does.
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_x_policy(
+          {VEC(ngz-1,0,0),0}, {VEC(nx+ngz+2,ny+2*ngz,nz+2*ngz),nq}, {VEC(16,4,4),1}) ;
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_y_policy(
+          {VEC(0,ngz-1,0),0}, {VEC(nx+2*ngz,ny+ngz+2,nz+2*ngz),nq}, {VEC(16,4,4),1}) ;
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_z_policy(
+          {VEC(0,0,ngz-1),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+ngz+2),nq}, {VEC(16,4,4),1}) ;
+    #ifndef GRACE_FREEZE_HYDRO
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_lo_x_flux"), flux_x_policy,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(q, VEC(i,j,k), fluxes_lo, ef_lo, dx, dt, dtfact) ;
+    }) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_lo_y_flux"), flux_y_policy,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(q, VEC(i,j,k), fluxes_lo, ef_lo, dx, dt, dtfact) ;
+    }) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_lo_z_flux"), flux_z_policy,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(q, VEC(i,j,k), fluxes_lo, ef_lo, dx, dt, dtfact) ;
+    }) ;
+    #endif
+}
+
+// 2. Per-cell Zalesak/FCT ratios for the two control variables D, tau.
+//    ratios component layout: 0:R_D+ 1:R_D- 2:R_tau+ 3:R_tau-.
+void compute_limiter_ratios(
+    double const t, double const dt, double const dtfact
+    , var_array_t& new_state
+    , var_array_t& old_state
+    , staggered_variable_arrays_t & new_stag_state
+    , staggered_variable_arrays_t & old_stag_state )
+{
+    using namespace grace ; using namespace Kokkos ;
+    DECLARE_GRID_EXTENTS ;
+    auto& idx       = grace::variable_list::get().getinvspacings() ;
+    auto& fluxes    = grace::variable_list::get().getfluxesarray() ;
+    auto& fluxes_lo = grace::variable_list::get().getlofluxesarray() ;
+    auto& ratios    = grace::variable_list::get().getlimiterratios() ;
+#ifdef GRACE_OUTPUT_CFB_THETA
+    auto& aux       = grace::variable_list::get().getaux() ;   // cfb_theta accumulator
+#endif
+    double const rho_fl = get_atmo_params().rho_fl ;
+    double const M      = get_fofc_params().dmp_M ;     // reuse the DMP slack
+    double const dtf    = dt * dtfact ;
+
+    // Cross-rank theta consistency: theta_f at a shared face is symmetric in
+    // its two cells, so it matches across ranks iff their R+/- match.  R+/- is
+    // bit-identical across ranks only if the HO reconstruction stencil for a
+    // ghost-cell face stays inside valid ghost data — the same ngz>=4 basis
+    // FOFC relies on (WENO5/PPM half-width reaches ngz-1-3).
+    ASSERT(ngz >= 4,
+        "Convex flux limiter requires ngz >= 4 so ghost-cell limiter ratios are "
+        "bit-consistent across ranks (shared-face theta). Current ngz = " << ngz) ;
+    // One ghost layer beyond the interior: a blended interior face needs the
+    // ratios of both its cells, one of which can be a ghost.
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> policy(
+          {VEC(ngz-1,ngz-1,ngz-1),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq} ) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_limiter_ratios"), policy,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        metric_array_t metric ;
+        FILL_METRIC_ARRAY(metric, old_state, q, VEC(i,j,k)) ;
+        double const sg = metric.sqrtg() ;
+        double const l0 = dtf*idx(0,q), l1 = dtf*idx(1,q), l2 = dtf*idx(2,q) ;
+#ifdef GRACE_OUTPUT_CFB_THETA
+        aux(VEC(i,j,k), CFB_THETA_, q) = 0. ;   // zero the face-theta accumulator
+#endif
+        for (int vv=0; vv<2; ++vv) {
+            int const u = (vv==0) ? DENS_ : TAU_ ;
+            double const un = old_state(VEC(i,j,k),u,q) ;
+            // low-order update (same divergence convention as add_fluxes)
+            double const uLO = un + dtf*(
+                  (fluxes_lo(VEC(i,j,k),u,0,q) - fluxes_lo(VEC(i+1,j,k),u,0,q))*idx(0,q)
+                + (fluxes_lo(VEC(i,j,k),u,1,q) - fluxes_lo(VEC(i,j+1,k),u,1,q))*idx(1,q)
+                + (fluxes_lo(VEC(i,j,k),u,2,q) - fluxes_lo(VEC(i,j,k+1),u,2,q))*idx(2,q) ) ;
+            // signed antidiffusive contributions at the 6 faces (low +, high -)
+            double const axm = +l0*(fluxes(VEC(i,j,k),u,0,q)   - fluxes_lo(VEC(i,j,k),u,0,q)) ;
+            double const axp = -l0*(fluxes(VEC(i+1,j,k),u,0,q) - fluxes_lo(VEC(i+1,j,k),u,0,q)) ;
+            double const aym = +l1*(fluxes(VEC(i,j,k),u,1,q)   - fluxes_lo(VEC(i,j,k),u,1,q)) ;
+            double const ayp = -l1*(fluxes(VEC(i,j+1,k),u,1,q) - fluxes_lo(VEC(i,j+1,k),u,1,q)) ;
+            double const azm = +l2*(fluxes(VEC(i,j,k),u,2,q)   - fluxes_lo(VEC(i,j,k),u,2,q)) ;
+            double const azp = -l2*(fluxes(VEC(i,j,k+1),u,2,q) - fluxes_lo(VEC(i,j,k+1),u,2,q)) ;
+            double const Pp = fmax(0.,axm)+fmax(0.,axp)+fmax(0.,aym)+fmax(0.,ayp)+fmax(0.,azm)+fmax(0.,azp) ;
+            double const Pm = fmin(0.,axm)+fmin(0.,axp)+fmin(0.,aym)+fmin(0.,ayp)+fmin(0.,azm)+fmin(0.,azp) ;
+            // 7-pt neighborhood extrema of u^n
+            double umx = un, umn = un, vv_ ;
+            vv_=old_state(VEC(i-1,j,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            vv_=old_state(VEC(i+1,j,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            vv_=old_state(VEC(i,j-1,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            vv_=old_state(VEC(i,j+1,k),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            vv_=old_state(VEC(i,j,k-1),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            vv_=old_state(VEC(i,j,k+1),u,q); umx=fmax(umx,vv_); umn=fmin(umn,vv_);
+            // sign-safe magnitude relaxation
+            double umax = umx + (M-1.)*fabs(umx) ;
+            double umin = umn - (M-1.)*fabs(umn) ;
+            if (u==DENS_) umin = fmax(sg*rho_fl, umin) ;   // density floor
+            double const Qp = umax - uLO ;
+            double const Qm = uLO  - umin ;
+            double const Rp = fmax(0., (Pp>0.) ? fmin(1., Qp/Pp)     : 1.) ;
+            double const Rm = fmax(0., (Pm<0.) ? fmin(1., Qm/(-Pm))  : 1.) ;
+            int const cbase = (vv==0) ? 0 : 2 ;
+            ratios(VEC(i,j,k), cbase+0, q) = Rp ;
+            ratios(VEC(i,j,k), cbase+1, q) = Rm ;
+        }
+    }) ;
+}
+
+// 3. Per-face theta = min over {D,tau}; blend HO/LO fluxes in place.
+void blend_fluxes(
+    double const t, double const dt, double const dtfact
+    , var_array_t& new_state
+    , var_array_t& old_state
+    , staggered_variable_arrays_t & new_stag_state
+    , staggered_variable_arrays_t & old_stag_state )
+{
+    using namespace grace ; using namespace Kokkos ;
+    DECLARE_GRID_EXTENTS ;
+    auto& fluxes    = grace::variable_list::get().getfluxesarray() ;
+    auto& fluxes_lo = grace::variable_list::get().getlofluxesarray() ;
+    auto& ratios    = grace::variable_list::get().getlimiterratios() ;
+    #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+    auto& ef        = grace::variable_list::get().getefarray() ;     // Eface(VEC,c{0,1},idir,q)
+    auto& ef_lo     = grace::variable_list::get().getloefarray() ;
+    #else 
+    static_assert(0, "flux blend and UCT are incompatible");
+    #endif
+#ifdef GRACE_OUTPUT_CFB_THETA
+    auto& aux       = grace::variable_list::get().getaux() ;   // cfb_theta accumulator
+#endif
+    #ifndef GRACE_FREEZE_HYDRO
+    // x faces: face index i separates L=(i-1,j,k) and R=(i,j,k), direction 0.
+    // Cross-directions (j,k) extend one ghost cell each side so the blended
+    // face-E/flux feed the interior edge EMFs, whose GS stencil reaches one
+    // cell back in the cross-directions (gs_edge_emf_*).
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> xpol(
+          {VEC(ngz,ngz-1,ngz-1),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq} ) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_blend_x"), xpol,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        double const AD = fluxes(VEC(i,j,k),DENS_,0,q) - fluxes_lo(VEC(i,j,k),DENS_,0,q) ;
+        double const AT = fluxes(VEC(i,j,k),TAU_ ,0,q) - fluxes_lo(VEC(i,j,k),TAU_ ,0,q) ;
+        double thD = (AD>0.) ? fmin(ratios(VEC(i,j,k),0,q),   ratios(VEC(i-1,j,k),1,q))
+                   : (AD<0.) ? fmin(ratios(VEC(i-1,j,k),0,q), ratios(VEC(i,j,k),1,q)) : 1. ;
+        double thT = (AT>0.) ? fmin(ratios(VEC(i,j,k),2,q),   ratios(VEC(i-1,j,k),3,q))
+                   : (AT<0.) ? fmin(ratios(VEC(i-1,j,k),2,q), ratios(VEC(i,j,k),3,q)) : 1. ;
+        double const th = fmax(0., fmin(1., fmin(thD,thT))) ;
+        #ifdef GRACE_OUTPUT_CFB_THETA
+        Kokkos::atomic_add(&aux(VEC(i-1,j,k),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        Kokkos::atomic_add(&aux(VEC(i  ,j,k),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        #endif
+        for (int v=0; v<=ENTROPYSTAR_; ++v)
+            fluxes(VEC(i,j,k),v,0,q) = th*fluxes(VEC(i,j,k),v,0,q) + (1.-th)*fluxes_lo(VEC(i,j,k),v,0,q) ;
+        #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+        for (int c=0; c<2; ++c)
+            ef(VEC(i,j,k),c,0,q) = th*ef(VEC(i,j,k),c,0,q) + (1.-th)*ef_lo(VEC(i,j,k),c,0,q) ;
+        #endif
+    }) ;
+    // y faces: L=(i,j-1,k), R=(i,j,k), direction 1.  Cross-directions (i,k)
+    // extend one ghost cell each side (see x-sweep note).
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> ypol(
+          {VEC(ngz-1,ngz,ngz-1),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq} ) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_blend_y"), ypol,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        double const AD = fluxes(VEC(i,j,k),DENS_,1,q) - fluxes_lo(VEC(i,j,k),DENS_,1,q) ;
+        double const AT = fluxes(VEC(i,j,k),TAU_ ,1,q) - fluxes_lo(VEC(i,j,k),TAU_ ,1,q) ;
+        double thD = (AD>0.) ? fmin(ratios(VEC(i,j,k),0,q),   ratios(VEC(i,j-1,k),1,q))
+                   : (AD<0.) ? fmin(ratios(VEC(i,j-1,k),0,q), ratios(VEC(i,j,k),1,q)) : 1. ;
+        double thT = (AT>0.) ? fmin(ratios(VEC(i,j,k),2,q),   ratios(VEC(i,j-1,k),3,q))
+                   : (AT<0.) ? fmin(ratios(VEC(i,j-1,k),2,q), ratios(VEC(i,j,k),3,q)) : 1. ;
+        double const th = fmax(0., fmin(1., fmin(thD,thT))) ;
+        #ifdef GRACE_OUTPUT_CFB_THETA
+        Kokkos::atomic_add(&aux(VEC(i,j-1,k),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        Kokkos::atomic_add(&aux(VEC(i,j  ,k),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        #endif
+        for (int v=0; v<=ENTROPYSTAR_; ++v)
+            fluxes(VEC(i,j,k),v,1,q) = th*fluxes(VEC(i,j,k),v,1,q) + (1.-th)*fluxes_lo(VEC(i,j,k),v,1,q) ;
+        #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+        for (int c=0; c<2; ++c)
+            ef(VEC(i,j,k),c,1,q) = th*ef(VEC(i,j,k),c,1,q) + (1.-th)*ef_lo(VEC(i,j,k),c,1,q) ;
+        #endif
+    }) ;
+    // z faces: L=(i,j,k-1), R=(i,j,k), direction 2.  Cross-directions (i,j)
+    // extend one ghost cell each side (see x-sweep note).
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> zpol(
+          {VEC(ngz-1,ngz-1,ngz),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq} ) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_blend_z"), zpol,
+        KOKKOS_LAMBDA (VEC(int const& i,int const& j,int const& k), int const& q) {
+        double const AD = fluxes(VEC(i,j,k),DENS_,2,q) - fluxes_lo(VEC(i,j,k),DENS_,2,q) ;
+        double const AT = fluxes(VEC(i,j,k),TAU_ ,2,q) - fluxes_lo(VEC(i,j,k),TAU_ ,2,q) ;
+        double thD = (AD>0.) ? fmin(ratios(VEC(i,j,k),0,q),   ratios(VEC(i,j,k-1),1,q))
+                   : (AD<0.) ? fmin(ratios(VEC(i,j,k-1),0,q), ratios(VEC(i,j,k),1,q)) : 1. ;
+        double thT = (AT>0.) ? fmin(ratios(VEC(i,j,k),2,q),   ratios(VEC(i,j,k-1),3,q))
+                   : (AT<0.) ? fmin(ratios(VEC(i,j,k-1),2,q), ratios(VEC(i,j,k),3,q)) : 1. ;
+        double const th = fmax(0., fmin(1., fmin(thD,thT))) ;
+        #ifdef GRACE_OUTPUT_CFB_THETA
+        Kokkos::atomic_add(&aux(VEC(i,j,k-1),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        Kokkos::atomic_add(&aux(VEC(i,j,k  ),CFB_THETA_,q), th/(2.*GRACE_NSPACEDIM)) ;
+        #endif
+        for (int v=0; v<=ENTROPYSTAR_; ++v)
+            fluxes(VEC(i,j,k),v,2,q) = th*fluxes(VEC(i,j,k),v,2,q) + (1.-th)*fluxes_lo(VEC(i,j,k),v,2,q) ;
+        #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+        for (int c=0; c<2; ++c)
+            ef(VEC(i,j,k),c,2,q) = th*ef(VEC(i,j,k),c,2,q) + (1.-th)*ef_lo(VEC(i,j,k),c,2,q) ;
+        #endif
+    }) ;
+    #endif
+}
+#endif // GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+
+template< typename eos_t >
+void advance_substep( double const t, double const dt, double const dtfact
+                    , var_array_t& new_state
                     , var_array_t& old_state 
                     , staggered_variable_arrays_t & new_stag_state 
                     , staggered_variable_arrays_t & old_stag_state )
@@ -1709,12 +2045,24 @@ void advance_substep( double const t, double const dt, double const dtfact
     //**************************************************************************************************/
     compute_fluxes<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+    // Convex limiter: LO fluxes -> per-cell ratios -> per-face blend, THEN build
+    // the EMF from the (now blended) flux so CT stays consistent (div.B preserved).
+    compute_low_order_fluxes<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    compute_limiter_ratios(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    blend_fluxes(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    //**************************************************************************************************/
     compute_emfs(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
-#ifdef GRACE_ENABLE_FOFC
+#elif GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+    compute_emfs(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    //**************************************************************************************************/
     flag_fofc_cells<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
     apply_fofc_correction<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    //**************************************************************************************************/
+#else
+    compute_emfs(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
 #endif
     auto flux_context = reflux_fill_flux_buffers() ;
@@ -1859,20 +2207,6 @@ void compute_fluxes<EOS>( double const , double const , double const \
                         , grace::staggered_variable_arrays_t &       \
                         ) ;                                          \
 template                                                             \
-void flag_fofc_cells<EOS>( double const , double const , double const \
-                         , grace::var_array_t&                        \
-                         , grace::var_array_t&                        \
-                         , grace::staggered_variable_arrays_t &       \
-                         , grace::staggered_variable_arrays_t &       \
-                         ) ;                                          \
-template                                                             \
-void apply_fofc_correction<EOS>( double const , double const , double const \
-                         , grace::var_array_t&                        \
-                         , grace::var_array_t&                        \
-                         , grace::staggered_variable_arrays_t &       \
-                         , grace::staggered_variable_arrays_t &       \
-                         ) ;                                          \
-template                                                             \
 void add_fluxes_and_source_terms<EOS>( double const , double const , double const \
                         , grace::var_array_t&                        \
                         , grace::var_array_t&                        \
@@ -1887,4 +2221,47 @@ INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
+
+// compute_low_order_fluxes only exists under the convex-flux-blend gate, so its
+// explicit instantiation must be gated too (cannot #if inside a macro body).
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
+#define INSTANTIATE_CL_TEMPLATE(EOS)                                          \
+template                                                                     \
+void compute_low_order_fluxes<EOS>( double const , double const , double const \
+                        , grace::var_array_t&                                \
+                        , grace::var_array_t&                                \
+                        , grace::staggered_variable_arrays_t &               \
+                        , grace::staggered_variable_arrays_t &               \
+                        )
+INSTANTIATE_CL_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
+INSTANTIATE_CL_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
+INSTANTIATE_CL_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_CL_TEMPLATE(grace::ideal_gas_eos_t) ;
+#undef INSTANTIATE_CL_TEMPLATE
+#endif
+
+// flag_fofc_cells / apply_fofc_correction exist only under the FOFC gate, so
+// their explicit instantiations are gated too (moved out of INSTANTIATE_TEMPLATE).
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+#define INSTANTIATE_FOFC_TEMPLATE(EOS)                                       \
+template                                                                     \
+void flag_fofc_cells<EOS>( double const , double const , double const        \
+                         , grace::var_array_t&                               \
+                         , grace::var_array_t&                               \
+                         , grace::staggered_variable_arrays_t &              \
+                         , grace::staggered_variable_arrays_t &              \
+                         ) ;                                                  \
+template                                                                     \
+void apply_fofc_correction<EOS>( double const , double const , double const  \
+                         , grace::var_array_t&                               \
+                         , grace::var_array_t&                               \
+                         , grace::staggered_variable_arrays_t &              \
+                         , grace::staggered_variable_arrays_t &              \
+                         )
+INSTANTIATE_FOFC_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::ideal_gas_eos_t) ;
+#undef INSTANTIATE_FOFC_TEMPLATE
+#endif
 }

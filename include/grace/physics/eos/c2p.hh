@@ -131,11 +131,13 @@ enum c2p_err_enum_t : uint8_t {
     C2P_ENT_BACKUP_USED,
     C2P_ATMO_RESET,
     C2P_T_FLOORED,
+#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
     // FOFC diagnostic bits — NOT set by conservs_to_prims; written directly
     // into aux(C2P_ERR_) by flag_fofc_cells so the FOFC trigger (and which
     // path: c2p-floor vs DMP) is visible in the c2p_err output field.
     C2P_FOFC_FLOORED,
     C2P_FOFC_DMP,
+#endif
     C2P_N_ERR
 } ;
 
