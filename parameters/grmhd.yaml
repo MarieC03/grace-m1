@@ -125,6 +125,11 @@ grmhd:
       default: 0.2
       description: >
         If alp <= thresh we are inside a BH and c2p errors become lenient
+    always_enforce_floors:
+      type: bool 
+      default: true
+      description: >
+        If false, allow rho, T to fall below the atmo (always checks EOS absolute bounds) in intermediate substeps.
 
   riemann:
     type: schema

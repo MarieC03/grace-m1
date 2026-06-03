@@ -78,10 +78,6 @@ variable_list_impl_t::variable_list_impl_t()
     , _staggered_vars()
     , _staggered_vars_p()
     , _fluxes()
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    , _lo_fluxes()
-    , _limiter_ratios("limiter_ratios", VEC(0,0,0),0,0)
-    #endif
     , _emf()
     , _fofc_face_tags("fofc_face_tags", 0,0,0,0,0)
     , _fofc_edge_tags("fofc_edge_tags", 0,0,0,0,0)
@@ -142,19 +138,6 @@ variable_list_impl_t::variable_list_impl_t()
                    , GRACE_NSPACEDIM
                    , nq 
                    ) ;
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB 
-    Kokkos::realloc( _lo_fluxes
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , nvars_hrsc
-                   , GRACE_NSPACEDIM
-                   , nq
-                ) ;
-    Kokkos::realloc( _limiter_ratios
-                   , VEC( nx + 2*ngz,ny + 2*ngz,nz + 2*ngz)
-                   , 4
-                   , nq
-                   ) ;
-    #endif
     #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
     Kokkos::realloc( _Ecenter
                    , VEC( nx + 2*ngz,ny + 2*ngz,nz + 2*ngz)
@@ -167,14 +150,6 @@ variable_list_impl_t::variable_list_impl_t()
                    , GRACE_NSPACEDIM
                    , nq 
                    ) ;
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB 
-    Kokkos::realloc( _lo_Eface
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , 2 // E^i E^j
-                   , GRACE_NSPACEDIM
-                   , nq 
-                   ) ;
-    #endif  
     #else 
     Kokkos::realloc( _vbar
                    , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
@@ -182,20 +157,12 @@ variable_list_impl_t::variable_list_impl_t()
                    , GRACE_NSPACEDIM
                    , nq 
                    ) ; 
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB 
-    Kokkos::realloc( _lo_vbar
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , 4 // v^i v^j c_p c_m
-                   , GRACE_NSPACEDIM
-                   , nq 
-                   ) ; 
-    #endif  
     #endif 
     Kokkos::realloc( _emf
                    , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                    , GRACE_NSPACEDIM
                    , nq ) ;
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+    #ifdef GRACE_ENABLE_FOFC
     /* FOFC compacted index lists: worst case is every interior cell in every
      * quadrant flagged.  Per-substep population is atomic in flag_fofc_cells,
      * so order is non-deterministic; that's fine because the apply step just
@@ -272,19 +239,6 @@ void variable_list_impl_t::resize_aux_staging_and_flux_buffers(int nq_new)
                    , GRACE_NSPACEDIM
                    , nq_new 
                    ) ;
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    Kokkos::realloc( _lo_fluxes
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , nvars_hrsc
-                   , GRACE_NSPACEDIM
-                   , nq_new
-        ) ;
-    Kokkos::realloc( _limiter_ratios
-                   , VEC( nx + 2*ngz,ny + 2*ngz,nz + 2*ngz)
-                   , 4
-                   , nq_new
-                   ) ;
-    #endif
     #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
     Kokkos::realloc( _Ecenter
                    , VEC( nx + 2*ngz,ny + 2*ngz,nz + 2*ngz)
@@ -297,14 +251,6 @@ void variable_list_impl_t::resize_aux_staging_and_flux_buffers(int nq_new)
                    , GRACE_NSPACEDIM
                    , nq_new 
                    ) ; 
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    Kokkos::realloc( _lo_Eface
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , 2 // E^i E^j
-                   , GRACE_NSPACEDIM
-                   , nq_new 
-                   ) ;
-    #endif 
     #else 
     Kokkos::realloc( _vbar
                    , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
@@ -312,20 +258,12 @@ void variable_list_impl_t::resize_aux_staging_and_flux_buffers(int nq_new)
                    , GRACE_NSPACEDIM
                    , nq_new 
                    ) ; 
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    Kokkos::realloc( _lo_vbar
-                   , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
-                   , 4 // v^i v^j c_p c_m
-                   , GRACE_NSPACEDIM
-                   , nq_new 
-                   ) ; 
-    #endif 
     #endif 
     Kokkos::realloc( _emf
                    , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                    , GRACE_NSPACEDIM
                    , nq_new ) ;
-    #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+    #ifdef GRACE_ENABLE_FOFC
     /* FOFC compacted index lists: worst case is every interior cell in every
      * quadrant flagged.  Per-substep population is atomic in flag_fofc_cells,
      * so order is non-deterministic; that's fine because the apply step just

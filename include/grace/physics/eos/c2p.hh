@@ -131,7 +131,7 @@ enum c2p_err_enum_t : uint8_t {
     C2P_ENT_BACKUP_USED,
     C2P_ATMO_RESET,
     C2P_T_FLOORED,
-#if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
+#ifdef GRACE_ENABLE_FOFC
     // FOFC diagnostic bits — NOT set by conservs_to_prims; written directly
     // into aux(C2P_ERR_) by flag_fofc_cells so the FOFC trigger (and which
     // path: c2p-floor vs DMP) is visible in the c2p_err output field.
@@ -362,12 +362,13 @@ conservs_to_prims( grace::grmhd_cons_array_t&
                       , grace::grmhd_prims_array_t&
                       , grace::metric_array_t const&
                       , eos_t const& eos
-                      , atmo_params_t const& atmo
+                      , atmo_params_t atmo
                       , excision_params_t const& excision
                       , c2p_params_t const& c2p_pars
                       , double * rtp
-                      , c2p_err_t& c2p_err 
-                      , bool dry_run = false ) ;
+                      , c2p_err_t& c2p_err
+                      , bool dry_run = false
+                      , bool clamp_to_atmo = true ) ;
 
 void GRACE_HOST_DEVICE GRACE_DEVICE_EXTERNAL_LINKAGE
 prims_to_conservs( grace::grmhd_prims_array_t& prims
@@ -381,12 +382,13 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
                       , grace::grmhd_prims_array_t&  \
                       , grace::metric_array_t const&  \
                       , EOS const& eos \
-                      , atmo_params_t const& atmo \
+                      , atmo_params_t atmo \
                       , excision_params_t const& excision \
                       , c2p_params_t const& c2p_pars \
                       , double * rtp \
                       , c2p_err_t& c2p_err \
-                      , bool dry_run )
+                      , bool dry_run \
+                      , bool clamp_to_atmo )
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;

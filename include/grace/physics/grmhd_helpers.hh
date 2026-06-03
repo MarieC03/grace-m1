@@ -56,7 +56,8 @@ struct c2p_params_t {
   double beta_fallback ; //!< beta < fallback we use ent
   bool use_ent_backup  ; //!< Use backup c2p?
   double alp_bh_thresh ; //!< alp theshold for BH horizon
-} ; 
+  bool   always_enforce_floors ; //!< false: intermediate RK substeps clamp only to EOS absolute bounds
+} ;
 /**
  * @brief FOFC parameters
  *
@@ -217,7 +218,8 @@ c2p_params_t get_c2p_params()
   c2p_params.beta_fallback = grace::get_param<double>("grmhd","c2p","beta_fallback") ; 
   c2p_params.use_ent_backup = grace::get_param<bool>("grmhd","c2p","use_c2p_entropy_backup") ;
   c2p_params.alp_bh_thresh = grace::get_param<double>("grmhd","c2p","bh_alp_thresh") ;
-  return c2p_params ; 
+  c2p_params.always_enforce_floors = grace::get_param<bool>("grmhd","c2p","always_enforce_floors") ;
+  return c2p_params ;
 }
 
 /** @brief Get FOFC DMP parameters from the parameter store.

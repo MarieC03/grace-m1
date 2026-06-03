@@ -327,9 +327,6 @@ enum aux_var_idx : int {
     DBG_RICCI_ZZ_,
     #endif
     #endif
-#if defined(GRACE_OUTPUT_CFB_THETA) && GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    CFB_THETA_,   //!< CFB limiter diagnostic: per-cell average of the 6 face theta
-#endif
     N_AUX_VARS
 } ;
 

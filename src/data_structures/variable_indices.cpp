@@ -404,9 +404,6 @@ void register_variables() {
     register_aux_scalar(BDIV_, "Bdiv") ; 
     register_aux_scalar(C2P_DENS_ERR_,"c2p_dens_corr") ; 
     register_aux_scalar(C2P_ERR_,"c2p_err") ;
-#if defined(GRACE_OUTPUT_CFB_THETA) && GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_CFB
-    register_aux_scalar(CFB_THETA_, "cfb_theta") ;
-#endif
 
     #ifdef GRACE_ENABLE_M1
     // m1 

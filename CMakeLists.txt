@@ -406,6 +406,7 @@ endmacro()
 
 _grace_bool_label(GRACE_ENABLE_PARTICLES    _grace_particles)
 _grace_bool_label(GRACE_ENABLE_M1           _grace_m1)
+_grace_bool_label(GRACE_ENABLE_FOFC         _grace_fofc)
 _grace_bool_label(GRACE_ENABLE_LORENE       _grace_lorene)
 _grace_bool_label(GRACE_ENABLE_FUKA         _grace_fuka)
 _grace_bool_label(GRACE_ENABLE_TWO_PUNCTURES _grace_twopuncture)

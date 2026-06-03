@@ -82,7 +82,8 @@ template< typename eos_t >
 void compute_auxiliary_quantities(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
-    , grace::var_array_t& aux  ) 
+    , grace::var_array_t& aux
+    , bool clamp_to_atmo )
 {
     Kokkos::Profiling::pushRegion("Compute auxiliaries") ;
     GRACE_VERBOSE("Computing auxiliary quantities at iteration {}", grace::get_iteration()) ; 
@@ -100,6 +101,11 @@ void compute_auxiliary_quantities(
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t>
         grmhd_eq_system(eos,state,sstate,aux) ;
+    // Per-stage c2p flooring policy. The `always_enforce_floors` knob forces the
+    // full atmosphere reset on every stage (safe default); otherwise intermediate
+    // RK substeps (clamp_to_atmo=false) clamp only to the EOS absolute bounds.
+    grmhd_eq_system.clamp_to_atmo =
+        clamp_to_atmo || grace::get_param<bool>("grmhd","c2p","always_enforce_floors") ;
     #ifdef GRACE_ENABLE_M1 
     m1_excision_params_t m1_excision_params = get_m1_excision_params() ; 
     m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ; 
@@ -184,7 +190,8 @@ template                                                                \
 void compute_auxiliary_quantities<EOS>(                                 \
                            grace::var_array_t&         \
                          , grace::staggered_variable_arrays_t& \
-                         , grace::var_array_t& aux )
+                         , grace::var_array_t& aux             \
+                         , bool clamp_to_atmo )
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;

@@ -239,8 +239,8 @@ class puncture_tracker_t : public co_tracker_t
         
         if (puncture_is_here) {
             l[0] -= dt * beta[0] ; 
-            l[0] -= dt * beta[1] ; 
-            l[0] -= dt * beta[2] ; 
+            l[1] -= dt * beta[1] ; 
+            l[2] -= dt * beta[2] ; 
         }
 
         // now we need to exchange via MPI 

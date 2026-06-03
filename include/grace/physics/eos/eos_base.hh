@@ -549,6 +549,12 @@ class eos_base_t {
      */
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     density_maximum() const { return eos_rhomax ; }
+    /**
+     * @brief Minimum temperature
+     * 
+     */
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
+    temperature_minimum() const { return eos_tempmin ; }
  protected:
     //! Maximum and minimum rest-mass densities.
     double eos_rhomax, eos_rhomin ;

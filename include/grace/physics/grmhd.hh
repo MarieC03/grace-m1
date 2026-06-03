@@ -93,6 +93,11 @@ struct grmhd_equations_system_t
         dcoords = grace::coordinate_system::get().get_device_coord_system();
     } ;
 
+    //! Per-RK-stage c2p flooring policy, set by compute_auxiliary_quantities.
+    //! true  -> full atmosphere reset (final stage / default).
+    //! false -> intermediate substep: clamp only to EOS absolute bounds.
+    bool clamp_to_atmo = true ;
+
     /**
      * @brief Compute GRMHD fluxes in direction \f$x^1\f$
      * 
@@ -378,7 +383,7 @@ struct grmhd_equations_system_t
         conservs_to_prims<eos_t>(
             cons, prims, metric, this->_eos,
             this->atmo_params, this->excision_params, this->c2p_params, rtp,
-            c2p_errors ) ;
+            c2p_errors, /*dry_run=*/false, this->clamp_to_atmo ) ;
 
 
         /* Write new prims */

@@ -111,6 +111,11 @@ namespace grace {
 // 6. Physics-scheme selectors
 //=====================================================================
 
+// 6.1 First-Order Flux Correction.  When defined, advance_substep calls
+//     flag_fofc_cells + apply_fofc_correction after the high-order flux
+//     sweep.  When undefined, both calls are compiled out and the FOFC
+//     symbols are dead-stripped by the linker.
+#cmakedefine GRACE_ENABLE_FOFC
 
 // 6.2 Metric evolution (GRACE_METRIC_EVOL = COWLING|Z4).
 //   COWLING — frozen background metric (no spacetime evolution).
@@ -149,23 +154,10 @@ namespace grace {
 #cmakedefine GRACE_RECON_THERMO_TEMP
 #cmakedefine GRACE_RECON_THERMO_PRESS
 
-// 6.7 Flux limiter 
-// FOFC - FOFC a la AthenaK, run mock c2p and correct fluxes 
-// FB  - Convex flux blend, only checks positivity of D and a relaxed DMP 
-#define GRACE_FLUX_LIMITER_FOFC 0
-#define GRACE_FLUX_LIMITER_CFB 1
-#define GRACE_FLUX_LIMITER GRACE_FLUX_LIMITER_@GRACE_FLUX_LIMITER@
-
-// 6.7b CFB limiter theta output (TEMPORARY, hardcoded). When defined and the
-// flux limiter is CFB, an aux scalar "cfb_theta" carries the per-cell average
-// of the face blend coefficients (1 = unlimited, ->0 = fully donor+LLF). To
-// remove the diagnostic later: delete this #define and grep GRACE_OUTPUT_CFB_THETA.
-#define GRACE_OUTPUT_CFB_THETA
-
-// 6.8 Hydrodynamics evolution freeze (debug / metric-only runs).
+// 6.7 Hydrodynamics evolution freeze (debug / metric-only runs).
 #cmakedefine GRACE_FREEZE_HYDRO
 
-// 6.9 Hot-cell flux dump (diagnostic). When defined, after each full step
+// 6.8 Hot-cell flux dump (diagnostic). When defined, after each full step
 // dump_hot_cells() writes conserved + face fluxes + fofc flags for any cell
 // with tau/D > 1 or eps > 0.5 to hot_flux_dump.<rank>.dat. Off by default;
 // adds a full-grid scan + per-step host copy when on.
