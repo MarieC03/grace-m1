@@ -116,23 +116,50 @@ void evolve() {
 }
 
 #ifdef GRACE_DUMP_HOT_CELLS
-// Diagnostic (opt-in: -DGRACE_DUMP_HOT_CELLS). After a full timestep, scan all
-// interior cells and dump, for any cell with tau/D > THR_TAUD OR eps > THR_EPS
-// (eps is the aux value, one c2p behind the conserved -- kept as a backstop so
-// we never miss a hot cell), one row to hot_flux_dump.<rank>.dat:
-//   q i j k iter t | D Sx Sy Sz tau Yes Ents | eps tau/D |
+// Diagnostic (opt-in: -DGRACE_DUMP_HOT_CELLS). Called once PER RK SUBSTAGE from
+// advance_substep, right after add_fluxes_and_source_terms, so the captured
+// fluxes AND geom source are this substage's. Scans all interior cells and
+// dumps, for any cell with tau/D > THR_TAUD OR eps > THR_EPS (eps is the aux
+// value, one c2p behind the conserved -- a backstop so we never miss a hot
+// cell), one row to hot_flux_dump.<rank>.dat:
+//   q i j k iter t | D Sx Sy Sz tau Yes Ents | eps tau/D |          [cols 0..14]
 //   F_{D,Sx,Sy,Sz,tau} on faces (-x,+x,-y,+y,-z,+z)  [5 vars x 6 faces = 30] |
-//   fofc face flags (-x,+x,-y,+y,-z,+z)  [6]
+//   fofc face flags (-x,+x,-y,+y,-z,+z)  [6]                        [cols 15..50]
+//   dt dtfact |                                                     [cols 51,52]
+//   geom-source RATE sqrt(g)*{tau,Sx,Sy,Sz}_src                     [cols 53..56]
+//   prims: rho T P eps zx zy zz Bx By Bz W                          [cols 57..67]
+//   idx_x idx_y idx_z  r theta phi                                  [cols 68..73]
+//   alp sqrtg | betau[3] | gdd[6] | guu[6] | Kdd[6] |               [cols 74..96]
+//   dalpha_dx[3] | dbetau_dx[9] | dgdd_dx[18]                       [cols 97..126]
 // Fluxes are the actual post-FOFC values used in the update. Reconstructed face
-// states are not stored anywhere, so they are NOT dumped here (would require
-// re-running the recon+Riemann inline); the realized fluxes answer "does the
-// cell drain?" directly.
-void dump_hot_cells() {
+// states are not stored (would require re-running recon+Riemann inline).
+//
+// Cols 57..121 are EVERY input to grmhd_get_geom_sources plus the cell size
+// (idx) and location (r,theta,phi): the geom source (cols 53..56) is therefore
+// fully reproducible AND decomposable offline (curvature K_ij vs lapse-gradient
+// vs shift-gradient channels) from this single row. gdd/guu/Kdd/dgdd are the
+// post-unconforming PHYSICAL-metric quantities actually fed to the source (Z4c:
+// gtdd/W^2 etc.), matching production exactly. W is the Lorentz factor.
+//
+// Per-substage exact accounting: production updates a conserved var v as
+//   v += dt*dtfact*( sum_d (F_d(i)-F_d(i+1))*idx_d  +  sqrt(g)*src_v )
+// The flux columns give the divergence term and cols 53..56 give sqrt(g)*src
+// (same per-unit-time units), with dt,dtfact in cols 51,52 -- so the realized
+// per-substage increment of each var can be reconstructed exactly. There are
+// now multiple rows per iteration (one per substage the cell is hot); the iter
+// column repeats and dtfact distinguishes the substages.
+//
+// The source RATE mirrors grmhd::compute_source_terms: metric / derivatives /
+// curvature are read from OLD_STATE and prims from aux -- exactly the inputs the
+// production source kernel (built on old_state) uses this substage. The trigger
+// and conserved/flux columns are read from NEW_STATE (the post-update values).
+void dump_hot_cells(var_array_t& state, var_array_t& old_state,
+                    double const dt, double const dtfact) {
     using namespace grace ; using namespace Kokkos ;
     DECLARE_GRID_EXTENTS ;
-    auto& state  = variable_list::get().getstate() ;
     auto& aux    = variable_list::get().getaux() ;
     auto& fluxes = variable_list::get().getfluxesarray() ;
+    auto& idx    = variable_list::get().getinvspacings() ;
 #if GRACE_FLUX_LIMITER == GRACE_FLUX_LIMITER_FOFC
     auto& fofc   = variable_list::get().getfofcfacetags() ;
 #endif
@@ -140,9 +167,11 @@ void dump_hot_cells() {
     double const tnow = get_simulation_time() ;
 
     constexpr double THR_TAUD = 1.0 ;   // tau/D trigger
-    constexpr double THR_EPS  = 0.5 ;   // eps trigger (lags conserved by one c2p)
+    constexpr double THR_EPS  = 1.0 ;   // eps trigger (lags conserved by one c2p)
     constexpr int    MAXHITS  = 50000 ; // generously sized; bad-cell count is << this
-    constexpr int    NCOL     = 51 ;
+    constexpr int    NCOL     = 127 ;
+
+    auto dcoords = grace::coordinate_system::get().get_device_coord_system() ;
 
     View<double**> rec("hot_dump", MAXHITS, NCOL) ;
     View<int[1]>   cnt("hot_dump_cnt") ; // Kokkos zero-initializes
@@ -181,6 +210,83 @@ void dump_hot_cells() {
 #else
                 for (int c2=45; c2<=50; ++c2) rec(s,c2) = -1.0 ;
 #endif
+                rec(s,51) = dt ; rec(s,52) = dtfact ;
+
+                // Geometric source RATE -- mirror of grmhd::compute_source_terms.
+                // Metric/derivs/curvature from OLD_STATE, prims from aux, exactly
+                // as the production kernel (built on old_state) sees this substage.
+                metric_array_t metric ;
+                FILL_METRIC_ARRAY(metric, old_state, q, VEC(i,j,k)) ;
+                grmhd_prims_array_t prims ;
+                FILL_PRIMS_ARRAY_ZVEC(prims, aux, q, VEC(i,j,k)) ;
+                double const rho_ = prims[RHOL] ;
+                double const p_   = prims[PRESSL] ;
+                double const eps_ = prims[EPSL] ;
+                double const * const z_     = &prims[ZXL] ;
+                double const * const B_     = &prims[BXL] ;
+                double const * const betau_ = metric._beta.data() ;
+                double const * const gdd_   = metric._g.data() ;
+                double const * const guu_   = metric._ginv.data() ;
+                double const sqrtg_ = metric.sqrtg() ;
+                double const alp_   = metric.alp() ;
+                double W_ ; grmhd_get_W(gdd_, z_, &W_) ;
+
+                double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9] ;
+                fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(old_state, i,j,k, ALP_,   q, dalpha_dx, idx(0,q)) ;
+                fill_deriv_vector<MATTER_METRIC_DER_ORDER>(old_state, i,j,k, BETAX_, q, dbetau_dx, idx(0,q)) ;
+                double Kdd_[6] ;
+#if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+                fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(old_state, i,j,k, GXX_, q, dgdd_dx, idx(0,q)) ;
+                Kdd_[0]=old_state(VEC(i,j,k),KXX_,q); Kdd_[1]=old_state(VEC(i,j,k),KXY_,q); Kdd_[2]=old_state(VEC(i,j,k),KXZ_,q);
+                Kdd_[3]=old_state(VEC(i,j,k),KYY_,q); Kdd_[4]=old_state(VEC(i,j,k),KYZ_,q); Kdd_[5]=old_state(VEC(i,j,k),KZZ_,q);
+#else
+                double const Wt_     = old_state(VEC(i,j,k),CHI_,q) ;
+                double const ooW_    = 1./Wt_ ;
+                double const ooWsqr_ = SQR(ooW_) ;
+                double dchi_dx[3] ;
+                fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(old_state, i,j,k, CHI_,  q, dchi_dx, idx(0,q)) ;
+                fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(old_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
+                for (int idir=0; idir<3; ++idir)
+                    for (int a=0; a<6; ++a)
+                        dgdd_dx[a+6*idir] = ooWsqr_*dgdd_dx[a+6*idir] - 2.*ooW_*dchi_dx[idir]*gdd_[a] ;
+                double const Atdd_[6] = {
+                      old_state(VEC(i,j,k),ATXX_,q), old_state(VEC(i,j,k),ATXY_,q), old_state(VEC(i,j,k),ATXZ_,q),
+                      old_state(VEC(i,j,k),ATYY_,q), old_state(VEC(i,j,k),ATYZ_,q), old_state(VEC(i,j,k),ATZZ_,q) } ;
+                double const Ktr_ = old_state(VEC(i,j,k),KHAT_,q) + 2.*old_state(VEC(i,j,k),THETA_,q) ;
+                for (int a=0; a<6; ++a) Kdd_[a] = ooWsqr_*Atdd_[a] + Ktr_*gdd_[a]/3. ;
+#endif
+                double tau_src, stilde_src[3] ;
+                grmhd_get_geom_sources(alp_, betau_, gdd_, guu_, Kdd_,
+                    dalpha_dx, dgdd_dx, dbetau_dx, rho_, p_, eps_, B_, z_, W_,
+                    &tau_src, &stilde_src) ;
+                rec(s,53) = sqrtg_ * tau_src ;
+                rec(s,54) = sqrtg_ * stilde_src[0] ;
+                rec(s,55) = sqrtg_ * stilde_src[1] ;
+                rec(s,56) = sqrtg_ * stilde_src[2] ;
+
+                // Primitives (cols 57..67): rho T P eps zx zy zz Bx By Bz W
+                rec(s,57)=rho_; rec(s,58)=prims[TEMPL]; rec(s,59)=p_; rec(s,60)=eps_ ;
+                rec(s,61)=z_[0]; rec(s,62)=z_[1]; rec(s,63)=z_[2] ;
+                rec(s,64)=B_[0]; rec(s,65)=B_[1]; rec(s,66)=B_[2]; rec(s,67)=W_ ;
+
+                // Cell size + location (cols 68..73): idx_{x,y,z}, r, theta, phi.
+                // idx turns the flux columns into a divergence and encodes the
+                // block's refinement level; (r,theta,phi) places the cell vs BH.
+                double rtp_[3] ;
+                dcoords.get_physical_coordinates_sph(i,j,k,q,rtp_) ;
+                rec(s,68)=idx(0,q); rec(s,69)=idx(1,q); rec(s,70)=idx(2,q) ;
+                rec(s,71)=rtp_[0];  rec(s,72)=rtp_[1];  rec(s,73)=rtp_[2] ;
+
+                // All remaining grmhd_get_geom_sources inputs (cols 74..126), so
+                // the source is fully reproducible / decomposable offline.
+                rec(s,74)=alp_; rec(s,75)=sqrtg_ ;
+                for (int a=0;a<3;++a) rec(s,76+a)=betau_[a] ;
+                for (int a=0;a<6;++a) rec(s,79+a)=gdd_[a] ;
+                for (int a=0;a<6;++a) rec(s,85+a)=guu_[a] ;
+                for (int a=0;a<6;++a) rec(s,91+a)=Kdd_[a] ;
+                for (int a=0;a<3;++a) rec(s,97+a)=dalpha_dx[a] ;
+                for (int a=0;a<9;++a) rec(s,100+a)=dbetau_dx[a] ;
+                for (int a=0;a<18;++a) rec(s,109+a)=dgdd_dx[a] ;
             }
         }
     }) ;
@@ -510,11 +616,6 @@ void evolve_impl() {
     } else {
         ERROR("Unrecognised time-stepper.") ;
     }
-#ifdef GRACE_DUMP_HOT_CELLS
-    // After the full step: state/aux/fluxes/fofc tags all hold the final-substage
-    // values. Dump conserved + face fluxes + fofc flags for any hot cell.
-    dump_hot_cells() ;
-#endif
     Kokkos::deep_copy(state_p,state) ;
     grace::deep_copy(sstate_p,sstate) ;
 
@@ -1823,13 +1924,17 @@ void compute_low_order_fluxes(
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t> grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
 
-    // Same widened (MHD) face ranges as compute_fluxes so the LO flux exists
-    // wherever the HO flux does.
-    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_x_policy(
+    // Same widened (MHD) face ranges AND launch config as compute_fluxes. The
+    // {16,4,4}=256 tile needs LaunchBounds<256,2> (GRACE_FLUX_LB) or the GPU
+    // backend rejects the launch for the register-heavy donor+LLF MHD kernel —
+    // a plain MDRangePolicy with this tile crashes immediately on magnetized /
+    // tabulated-EOS runs (see the note in compute_fluxes).
+    using cl_flux_policy_t = MDRangePolicy< Rank<GRACE_NSPACEDIM+1> GRACE_LB_ARG(GRACE_FLUX_LB) > ;
+    cl_flux_policy_t flux_x_policy(
           {VEC(ngz-1,0,0),0}, {VEC(nx+ngz+2,ny+2*ngz,nz+2*ngz),nq}, {VEC(16,4,4),1}) ;
-    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_y_policy(
+    cl_flux_policy_t flux_y_policy(
           {VEC(0,ngz-1,0),0}, {VEC(nx+2*ngz,ny+ngz+2,nz+2*ngz),nq}, {VEC(16,4,4),1}) ;
-    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> flux_z_policy(
+    cl_flux_policy_t flux_z_policy(
           {VEC(0,0,ngz-1),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+ngz+2),nq}, {VEC(16,4,4),1}) ;
     #ifndef GRACE_FREEZE_HYDRO
     parallel_for( GRACE_EXECUTION_TAG("EVOL","cl_lo_x_flux"), flux_x_policy,
@@ -2085,6 +2190,13 @@ void advance_substep( double const t, double const dt, double const dtfact
     //**************************************************************************************************/
     add_fluxes_and_source_terms<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
+#ifdef GRACE_DUMP_HOT_CELLS
+    // Per-substage hot-cell diagnostic: fluxes (in the singleton) and the geom
+    // source are this substage's, and new_state now holds the post-flux+source
+    // conserved values. Must run here (not after the full step) so flux and
+    // source are mutually consistent for exact per-substage accounting.
+    dump_hot_cells(new_state, old_state, dt, dtfact) ;
+#endif
     reflux_correct_emfs(emf_context) ;
     //**************************************************************************************************/
     update_CT(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
