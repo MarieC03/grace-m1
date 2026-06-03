@@ -173,7 +173,10 @@ eos_storage_t::eos_storage_t() {
             double temp_floor = get_param<double>("grmhd", "atmosphere", "temp_fl") ;
             double rho_floor = get_param<double>("grmhd", "atmosphere", "rho_fl") ;
 
-            double const h_min = 1. + 1e-10 ;
+            // Piecewise polytrope: eps_cold and P_cold/rho -> 0 as rho -> 0, so the
+            // minimum specific enthalpy is exactly 1 (used as the Kastaun c2p lower
+            // bracket and as h_infinity in the Bernoulli ejecta criterion).
+            double const h_min = 1.0 ;
 
             _hybrid_pwpoly = hybrid_eos_t<piecewise_polytropic_eos_t>{
                   _pwpoly

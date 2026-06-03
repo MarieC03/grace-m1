@@ -131,6 +131,31 @@ class eos_storage_t {
         }
     }
     //**************************************************************************************************
+    /**
+     * @brief Minimum specific enthalpy h_min of the *active* EOS.
+     *
+     * Dispatches on the configured eos_type so non-templated callers (e.g. the
+     * outflow diagnostic) can query it. Used as h_infinity in the Bernoulli
+     * unbound criterion -h u_t > h_min: for a finite-temperature / tabulated
+     * EOS h asymptotes to this floor, not to 1.
+     */
+    double GRACE_ALWAYS_INLINE
+    enthalpy_minimum() {
+        auto const eos_type = grace::get_param<std::string>("eos","eos_type") ;
+        if ( eos_type == "hybrid" ) {
+            auto const cold = grace::get_param<std::string>("eos","hybrid_eos","cold_eos_type") ;
+            if ( cold == "piecewise_polytrope" ) return _hybrid_pwpoly.enthalpy_minimum() ;
+            if ( cold == "tabulated" )           return _hybrid_tabulated.enthalpy_minimum() ;
+            ERROR("Unsupported cold_eos_type in enthalpy_minimum().") ;
+        } else if ( eos_type == "tabulated" ) {
+            return _tabulated.enthalpy_minimum() ;
+        } else if ( eos_type == "ideal_gas" ) {
+            return _gammalaw.enthalpy_minimum() ;
+        }
+        ERROR("Unknown eos_type in enthalpy_minimum().") ;
+        return 1.0 ;
+    }
+    //**************************************************************************************************
  private:
     //**************************************************************************************************
     //! Longevity of EOS utils.

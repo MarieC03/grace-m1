@@ -64,7 +64,7 @@ class ideal_gas_eos_t
         /*mass*/    1.0,
         /*eps_min*/ 0.0,
         /*eps_max*/ c2p_epsmax, 
-        /*h_min*/   1.+1e-15,
+        /*h_min*/   1.0,
         /*s_max*/   1e100,
         /*t_atm*/   temp_atm,
         /*ye_atm*/  0,
