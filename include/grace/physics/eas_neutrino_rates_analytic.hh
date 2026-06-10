@@ -3,26 +3,26 @@
  * @author Marie Cassing (mcassing@itp.uni-frankfurt.de)
  * @brief Analytic neutrino emissivities/opacities
  * @date 2026-02-02
- * 
+ *
  * @copyright This file is part of of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023 Carlo Musolino
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #ifndef GRACE_PHYSICS_NEUTRINO_RATES_ANALYTIC_HH
@@ -51,7 +51,7 @@
 namespace grace {
 
 // -----------------------------------------------------------------------------
-// Species indexing 
+// Species indexing
 // -----------------------------------------------------------------------------
 enum nu_species : int {
   NUE    = 0,
@@ -110,7 +110,7 @@ constexpr double avogadro = 6.02214076e23; // 1/mol
 // Neutron-proton mass difference (MeV)
 constexpr double Qnp = 1.29333236;
 
-// Weak couplings in Ruffert+ 
+// Weak couplings in Ruffert+
 // Cv = 1/2 + 2 sin^2(theta_W) ~ 0.96 ; Ca = 1/2.
 constexpr double Cv  = 0.96;
 constexpr double Ca  = 0.50;
@@ -130,7 +130,7 @@ constexpr double beta =
 } // namespace nu_constants
 
 // -----------------------------------------------------------------------------
-// Small math helpers 
+// Small math helpers
 // -----------------------------------------------------------------------------
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double safe_pos(double x, double tiny = 1e-80) {
     return (x > tiny ? x : tiny);
@@ -211,7 +211,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double kappa_to_code(double kappa_cgs, dou
 }
 
 // -----------------------------------------------------------------------------
-// Fermi-Dirac integrals: Takahashi+ (1978) fits 
+// Fermi-Dirac integrals: Takahashi+ (1978) fits
 // FD2...FD5 and the ratios.
 // -----------------------------------------------------------------------------
 namespace fermi {
@@ -326,7 +326,7 @@ GRACE_HOST_DEVICE static GRACE_ALWAYS_INLINE double get(double eta) {
 } // namespace fermi
 
 // -----------------------------------------------------------------------------
-// Fugacity/composition state 
+// Fugacity/composition state
 // Similar to FIL's Fugacities<T>
 // -----------------------------------------------------------------------------
 struct fugacity_state {
@@ -393,7 +393,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double black_body_energy(double g_nu, doub
 
 
 // -----------------------------------------------------------------------------
-// Optical depth (tau) handling 
+// Optical depth (tau) handling
 //  - tau_init : an approximate tau used to suppress fugacities
 //  - tau_post : an optional post-rate estimate (e.g. kappa_tot * dr)
 // Policy interface:
@@ -629,7 +629,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE void add_scattering_opacity(const fugacity
 }
 
 // -----------------------------------------------------------------------------
-// Charged-current emission 
+// Charged-current emission
 // -----------------------------------------------------------------------------
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE void add_charged_current_emission(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
@@ -845,12 +845,12 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species_weakh
         rates.Q[s] = rates.kappa_a[s] * Ber_eq;
         rates.R[s] = rates.kappa_n[s] * Bn_eq;
     }
-    
+
     rates_accum extra{};
     if (pair_annihilation) add_pair_process_emission(F, extra);
     if (plasmon_decay) add_plasmon_decay_emission(F, extra);
     if (bremsstrahlung) add_brems_emission(F, extra);
-    
+
     std::array<double, NUMSPECIES> kappa_a_add{{0,0,0,0,0}}, kappa_n_add{{0,0,0,0,0}};
     add_kirchhoff_absorption_opacity_from_QR(F, g_nu, extra.Q, extra.R, kappa_a_add, kappa_n_add);
     for (int s = NUE; s <= NUX; ++s) {
@@ -865,12 +865,12 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species_weakh
         rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
     }
     #endif
-    
+
     for (int s = NUE; s <= NUX; ++s) {
         const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
         (void)tau_policy.tau_post(kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
     }
-    
+
     if (apply_temp_correction) {
         for (int s = NUE; s <= NUX; ++s) {
         const double Rloc = rates.R[s], Qloc = rates.Q[s];
@@ -885,7 +885,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species_weakh
             }
             if (Kokkos::isfinite(fact) && fact > 0.0) {
             // TODO is it correct like that?
-            if(s == NUX){            
+            if(s == NUX){
                 rates.kappa_s[s] *= fact;
             }else{
                 rates.Q[s]       *= fact;
@@ -900,7 +900,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species_weakh
         }
         }
     }
-    
+
     nu_rates_all_out all{};
     for (int s = NUE; s <= NUX; ++s) {
         nu_rates_out out{};
@@ -963,7 +963,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
         (void)tau_policy.tau_post(kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
     }
 
-    // Neutrino-temperature correction 
+    // Neutrino-temperature correction
     if (apply_temp_correction) {
         for (int s = 0; s < NUMSPECIES; ++s) {
             const double Rloc = rates.R[s];
@@ -982,7 +982,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
                 }
                 if (::isfinite(fact) && fact > 0.0) {
                     // TODO is it correct like that?
-                    if(s == NUX){            
+                    if(s == NUX){
                         rates.kappa_s[s] *= fact;
                     }else{
                         rates.Q[s]       *= fact;
