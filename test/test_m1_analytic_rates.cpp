@@ -450,16 +450,18 @@ TEST_CASE("Pair process: species splits and mean energy", "[m1rates][kernels]") 
 #endif
 }
 
-TEST_CASE("Plasmon decay: electron channels equal, heavy-lepton split",
+TEST_CASE("Plasmon decay: no electron-flavour emission, heavy-lepton split",
           "[m1rates][kernels]") {
     fugacity_state F = make_hot_state();
     F.eta_nu = {{0, 0, 0, 0, 0}};
     rates_accum out{};
     add_plasmon_decay_emission(F, out);
 
-    REQUIRE(out.R[NUE] > 0.0);
-    REQUIRE_THAT(out.R[NUEBAR], WithinRel(out.R[NUE], kExactTol));
-    REQUIRE_THAT(out.Q[NUEBAR], WithinRel(out.Q[NUE], kExactTol));
+    // Electron flavours are deliberately excluded (reference behaviour:
+    // plasmon/pair additions overproduce nue/nuebar; their emission comes
+    // from Kirchhoff inversion of the beta opacity instead).
+    REQUIRE(out.R[NUE]    == 0.0);
+    REQUIRE(out.R[NUEBAR] == 0.0);
     REQUIRE(out.R[NUX] > 0.0);
 
 #ifdef M1_NU_FIVESPECIES
@@ -710,6 +712,45 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
     }
 }
 #endif
+
+TEST_CASE("compute_all_species: heavy-lepton emissivities equal the thermal "
+          "processes exactly once (no double counting)",
+          "[m1rates][integration]") {
+    using namespace nu_constants;
+    mock_eos_t eos;
+    tau_policy_analytic_density tau;
+    const double rho_code = 1.0e13 * RHOGF;
+    const double T_mev    = 10.0;
+
+    // Pipeline result with bremsstrahlung only (cleanest thermal process).
+    const nu_rates_all_out all = compute_all_species(
+        eos, rho_code, T_mev, 0.1, 0.05, 1.0,
+        /*beta=*/false, /*plasmon=*/false, /*brems=*/true, /*pair=*/false,
+        kXyzOrigin, tau, /*temp_corr=*/false);
+
+    // Direct kernel evaluation on the identical fugacity state.
+    fugacity_state F = make_fugacity_state(
+        eos, rho_code, T_mev, 0.1, 0.05, 1.0, kXyzOrigin, tau);
+    rates_accum thermal{};
+    add_brems_emission(F, thermal);
+
+    REQUIRE(thermal.Q[NUX] > 0.0);
+    REQUIRE_THAT(all.out[NUX].eta_E,
+                 WithinRel(Q_mev_to_code(thermal.Q[NUX], 1.0), 1e-12));
+    REQUIRE_THAT(all.out[NUX].eta_N,
+                 WithinRel(R_to_code(thermal.R[NUX], 1.0), 1e-12));
+#ifdef M1_NU_FIVESPECIES
+    // rho = 1e13 g/cc and T = 10 MeV are above the muon suppression
+    // thresholds, so the muon channels must carry exactly 1x brems too.
+    REQUIRE_THAT(all.out[NUMU].eta_E,
+                 WithinRel(Q_mev_to_code(thermal.Q[NUMU], 1.0), 1e-12));
+    REQUIRE_THAT(all.out[NUMUBAR].eta_N,
+                 WithinRel(R_to_code(thermal.R[NUMUBAR], 1.0), 1e-12));
+#endif
+    // Electron flavours get nothing: brems is heavy-only and beta is off.
+    REQUIRE(all.out[NUE].eta_E    == 0.0);
+    REQUIRE(all.out[NUEBAR].eta_E == 0.0);
+}
 
 TEST_CASE("compute_species wrapper agrees with compute_all_species",
           "[m1rates][integration]") {

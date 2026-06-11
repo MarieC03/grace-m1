@@ -789,15 +789,12 @@ void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out) {
         (ipow<2>(me_mev) * 3.0 * fsc * ipow<6>(hc_mevcm)) *
         ipow<6>(gamma) * Kokkos::exp(-gamma) * (1.0 + gamma) * ipow<8>(F.temp_mev);
 
-    const double R_gamma = ipow<2>(Cv) * gamma_const / (block[NUE] * block[NUEBAR]);
     const double Q_gamma = F.temp_mev * 0.5 * (2.0 + gamma * gamma / (1.0 + gamma));
-    // TODO check if plasmon adds to nue, nuebar
-    if (Kokkos::isfinite(R_gamma) && (R_gamma > 0.0)) {
-        out.R[NUE] += R_gamma;
-        out.R[NUEBAR] += R_gamma;
-        out.Q[NUE] += Q_gamma * R_gamma;
-        out.Q[NUEBAR] += Q_gamma * R_gamma;
-    }
+    // NB: no nue/nuebar plasmon contribution.  The reference implementation
+    // found that plasmon (and pair) additions to the electron flavours
+    // overproduce nue/nuebar even with blocking factors; electron-flavour
+    // emission comes solely from Kirchhoff inversion of the beta absorption
+    // opacity (see compute_all_species Step 4).
 
     #ifdef M1_NU_FIVESPECIES
     // In 5-species mode NUX is only tau + anti-tau, so use degeneracy 2.
@@ -1099,22 +1096,34 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     }
 
     // -------------------------------------------------------------------------
-    // Step 4: Kirchhoff emission for NUE/NUEBAR from beta absorption opacity.
-    //   Q = kappa_a * B_E,  R = kappa_n * B_N.
-    //   Called after Step 3 so kappa includes thermal contributions.
-    //   Only writes NUE/NUEBAR (need_nux_emission=false equivalent).
+    // Step 4: Kirchhoff emission for NUE/NUEBAR from the beta absorption
+    //   opacity: Q = kappa_a * B_E,  R = kappa_n * B_N.
+    //   The electron flavours have no thermal emission (pair/plasmon e-flavour
+    //   channels are disabled, mirroring the reference), so rates.kappa here
+    //   is beta-only for them.  Only NUE/NUEBAR are written — the heavy
+    //   flavours keep their thermal emissivities in Step 5; reconstructing
+    //   them from kappa*B (which Step 3 derived FROM those emissivities) and
+    //   then adding thermal on top would double count.
     // -------------------------------------------------------------------------
-    add_kirchhoff_emission_from_absorption_opacity(
-        F, g_nu, rates.kappa_a, rates.kappa_n, rates.Q, rates.R);
+    {
+        std::array<double, NUMSPECIES> Q_kir{{0,0,0,0,0}} ;
+        std::array<double, NUMSPECIES> R_kir{{0,0,0,0,0}} ;
+        add_kirchhoff_emission_from_absorption_opacity(
+            F, g_nu, rates.kappa_a, rates.kappa_n, Q_kir, R_kir);
+        rates.Q[NUE]    = Q_kir[NUE]    ;
+        rates.R[NUE]    = R_kir[NUE]    ;
+        rates.Q[NUEBAR] = Q_kir[NUEBAR] ;
+        rates.R[NUEBAR] = R_kir[NUEBAR] ;
+    }
 
     // -------------------------------------------------------------------------
-    // Step 5: Add thermal emissivities for NUX.
-    //   Added after Step 4 so NUX emissivity comes directly from thermal
-    //   processes, not from Kirchhoff inversion of kappa.
+    // Step 5: Thermal emissivities for the heavy flavours, counted exactly
+    //   once.  Their absorption opacity is the Kirchhoff inversion from
+    //   Step 3, so emission and absorption stay consistent.
     // -------------------------------------------------------------------------
-    for (int s = 0; s < NUMSPECIES; ++s) {
-        rates.Q[s] += thermal.Q[s];
-        rates.R[s] += thermal.R[s];
+    for (int s = NUMU; s < NUMSPECIES; ++s) {
+        rates.Q[s] = thermal.Q[s];
+        rates.R[s] = thermal.R[s];
     }
 
     // -------------------------------------------------------------------------
