@@ -199,12 +199,15 @@ solve_muon_beta_eq(
     // ---- Check muon onset ----
     // If mu_mu at the minimum Y_mu is below the rest mass, there are
     // no physical muons at this (rho, T): fall back to npe.
+    // NB: TABMUMU stores the FULL muon chemical potential (including
+    // m_mu), consistent with the equilibrium conditions below and the
+    // atmosphere fallbacks in leptonic_eos_4d.hh.
     double const mu_mu_at_min = eos.muon_table.interp(
         lrho, ltemp, lymu_lo, E::TABMUMU) ;
     GRACE_TRACE("Cold table solve: lrho={:.3f} (rho={:.3e})  "
-                "mu_mu_excess(Ymu_min)={:.3f} MeV  (onset at > 0)",
-                lrho, std::exp(lrho), mu_mu_at_min) ;
-    if (mu_mu_at_min < 0.0) {
+                "mu_mu(Ymu_min)={:.3f} MeV  (onset at > m_mu={:.3f})",
+                lrho, std::exp(lrho), mu_mu_at_min, MU_MASS_MEV) ;
+    if (mu_mu_at_min < MU_MASS_MEV) {
         double const ye = solve_npe_beta_eq(
             eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_guess, tol) ;
         return { ye, eos.get_c2p_ymu_min(), false } ;

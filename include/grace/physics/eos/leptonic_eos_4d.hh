@@ -462,7 +462,11 @@ class leptonic_eos_4d_t
            	mumu = 105.6583755; // mu_mu at atmosphere value is not 0 mev
             return baryon_table.interp(lrho,ltemp,yp,TABMUE)  ;
         }
-        mumu = muon_table.interp(lrho, ltemp, ymu, TABMUE) ;
+        // Muon table axis is log(Y_mu) and its chemical potential lives at
+        // MUON_VIDX::TABMUMU (the baryon-enum TABMUE would alias
+        // TABPRESS_MU_PLUS here).  Same call as mumu__temp_rho_ye_ymu below.
+        mumu = muon_table.interp(lrho, ltemp, Kokkos::log(ymu),
+                                 MUON_VIDX::TABMUMU) ;
         return ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABMUELE) ;
     }
 
