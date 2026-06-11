@@ -232,7 +232,6 @@ struct m1_equations_system_t
         /**************************************************************************************************/
         /* Metric derivatives                                                                             */
         /**************************************************************************************************/
-<<<<<<< HEAD
         double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9] ;
         fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, ALP_, q, dalpha_dx, idx(0,q)) ;
         fill_deriv_vector<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, BETAX_, q, dbetau_dx, idx(0,q)) ;
@@ -240,23 +239,10 @@ struct m1_equations_system_t
         fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, GXX_, q, dgdd_dx, idx(0,q)) ;
         #else
         double chi = s(CHI_) ;
-        double oochi = 1./fmax(1e-15,chi) ;
+        double oochi = 1./Kokkos::fmax(1e-15,chi) ;
         double dchi_dx[3] ;
         fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, CHI_, q, dchi_dx, idx(0,q)) ;
         fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
-=======
-        double dalpha_dx[3], dgdd_dx[18], dbetau_dx[9] ;
-        fill_deriv_scalar(this->_state, i,j,k, ALP_, q, dalpha_dx, idx(0,q)) ;
-        fill_deriv_vector(this->_state, i,j,k, BETAX_, q, dbetau_dx, idx(0,q)) ;
-        #ifdef GRACE_ENABLE_COWLING_METRIC
-        fill_deriv_tensor(this->_state, i,j,k, GXX_, q, dgdd_dx, idx(0,q)) ;
-        #else
-        double chi = s(CHI_) ;
-        double oochi = 1./Kokkos::fmax(1e-15,chi) ;
-        double dchi_dx[3] ;
-        fill_deriv_scalar(this->_state, i,j,k, CHI_, q, dchi_dx, idx(0,q)) ;
-        fill_deriv_tensor(this->_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
->>>>>>> 4771b16 (compiles now for mac)
         // gdd = gtdd/chi
         // dgdd/dx = dgtdd/dx / chi - gdd / chi dchi/dx
         for( int idir=0; idir<3; ++idir) {
@@ -574,6 +560,8 @@ struct m1_equations_system_t
         constexpr int n_species = 5;
         #elif defined(M1_NU_THREESPECIES)
         constexpr int n_species = 3;
+        #else
+        constexpr int n_species = 1;
         #endif
 
         #ifndef GRACE_FREEZE_HYDRO
@@ -794,12 +782,7 @@ struct m1_equations_system_t
         /* with pair-symmetric summation so the face values are bit-mirror     */
         /* under the discrete symmetries (see grmhd_helpers.hh).               */
         /***********************************************************************/
-<<<<<<< HEAD
         auto const metric_face = compute_face_metric(this->_state, VEC(i,j,k), q, idir);
-=======
-        metric_array_t metric_face ;
-        COMPUTE_FCVAL(metric_face,this->_state,i,j,k,q,idir) ;
->>>>>>> 4771b16 (compiles now for mac)
         /***********************************************************************/
         /*              Reconstruct primitive variables                        */
         /***********************************************************************/

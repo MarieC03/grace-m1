@@ -215,11 +215,8 @@ namespace grace {
     double  GRACE_HOST_DEVICE
     invert(grmhd_prims_array_t& prims, c2p_sig_t& err) {
 
-<<<<<<< HEAD
-=======
       static constexpr double tolerance = 1e-15 ;
 
->>>>>>> 224b3b4 (Added muons to base_eos++)
       // initial bracket
       double mu0 = 1/h0 ;
       if ( r2 >= h0*h0 ) {
@@ -233,14 +230,8 @@ namespace grace {
         }
       }
 
-<<<<<<< HEAD
-      ent_froot_t fmu(eos,D,r2,r_dot_Btilde2,Btilde2,s,ye,h0) ;
-
-      double mu = utils::brent(fmu, 0, mu0, 1e-15) ;
-=======
       ent_froot_t fmu(eos,D,r2,r_dot_Btilde2,Btilde2,s,ye,ymu,h0) ;
       double mu = utils::brent(fmu, 0, mu0, tolerance) ;
->>>>>>> 224b3b4 (Added muons to base_eos++)
 
       double x, w, eps, rho, press, temp, entropy ;
       double residual = fmu.compute_primitives(

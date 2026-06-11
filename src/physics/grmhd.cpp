@@ -208,8 +208,9 @@ static void set_grmhd_initial_data_current_sheet()
 
                     double cs2,h;
                     eos_err_t eoserr;
-                    aux(i,j,k,EPS_,q) =  _eos.eps_h_csnd2_temp_entropy__press_rho_ye(
-                        h,cs2,aux(i,j,k,TEMP_,q),aux(i,j,k,ENTROPY_,q),aux(i,j,k,PRESS_,q),aux(i,j,k,RHO_,q),aux(i,j,k,YE_,q),eoserr
+                    double ymu_id = 0.0 ;
+                    aux(i,j,k,EPS_,q) =  _eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu(
+                        h,cs2,aux(i,j,k,TEMP_,q),aux(i,j,k,ENTROPY_,q),aux(i,j,k,PRESS_,q),aux(i,j,k,RHO_,q),aux(i,j,k,YE_,q),ymu_id,eoserr
                     ) ;
 
                     // minkowski metric

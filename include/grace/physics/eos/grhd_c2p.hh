@@ -181,7 +181,8 @@ struct grhd_c2p_t {
     atilde(double& rho, double& eps) const {
         unsigned int err ;
         double yel{ye} ;
-        auto const press = eos.press__eps_rho_ye(eps,rho,yel,err) ;
+        double ymul{ymu} ;
+        auto const press = eos.press__eps_rho_ye_ymu(eps,rho,yel,ymul,err) ;
         return press / (rho * ( 1 + eps )) ;
     }
 

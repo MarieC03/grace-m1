@@ -136,24 +136,6 @@ void compute_auxiliary_quantities(
     parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_E_center"), policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-        grmhd_eq_system(auxiliaries_computation_kernel_t{}, VEC(i,j,k), q, dev_coords);
-        metric_array_t metric ;
-        FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
-        auto Bx = Kokkos::subview(sstate.face_staggered_fields_x,
-                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSX_), q) ;
-        auto By = Kokkos::subview(sstate.face_staggered_fields_y,
-                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSY_), q) ;
-        auto Bz = Kokkos::subview(sstate.face_staggered_fields_z,
-                                 VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSZ_), q) ;
-        aux(VEC(i,j,k),BDIV_,q) = ( (Bx(VEC(i+1,j,k)) - Bx(VEC(i,j,k))) * idx(0,q)
-                                  + (By(VEC(i,j+1,k)) - By(VEC(i,j,k))) * idx(1,q)
-                                  + (Bz(VEC(i,j,k+1)) - Bz(VEC(i,j,k))) * idx(2,q))/metric.sqrtg() ;
-    } ) ;
-    #ifdef GRACE_GRMHD_USE_GS
-    auto& Ec = grace::variable_list::get().getecarray() ;
-    parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_E_center"), policy
-                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
-    {
         metric_array_t metric ;
         FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
 

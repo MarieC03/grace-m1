@@ -35,7 +35,9 @@ namespace grace {
 void grace_finalize() {
 
 GRACE_INFO("Termination sequence initiated, total runtime: {:.3e} s.", grace::get_total_runtime() ) ;
+#ifdef GRACE_ENABLE_M1
 grace::weakhub::finalize_weakhub();
+#endif
 
 }
 

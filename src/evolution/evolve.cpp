@@ -8,11 +8,7 @@
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
-<<<<<<< HEAD
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
-=======
- * Copyright (C) 2023 Carlo Musolino
->>>>>>> c629710 (Added 4D leptonic table)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -52,16 +48,6 @@
 #include <grace/utils/weno_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/utils/tstep_utils.hh>
-<<<<<<< HEAD
-=======
-#ifdef GRACE_ENABLE_BURGERS
-#include <grace/physics/burgers.hh>
-#endif
-#ifdef GRACE_ENABLE_SCALAR_ADV
-#include <grace/physics/scalar_advection.hh>
-#endif
-#ifdef GRACE_ENABLE_GRMHD
->>>>>>> c629710 (Added 4D leptonic table)
 #include <grace/physics/grmhd.hh>
 #include <grace/physics/eos/eos_base.hh>
 #include <grace/physics/eos/eos_storage.hh>
@@ -69,13 +55,6 @@
 #include <grace/physics/z4c.hh>
 #include <grace/physics/z4c_helpers.hh>
 #endif
-<<<<<<< HEAD
-=======
-#ifdef GRACE_ENABLE_BSSN_METRIC
-#include <grace/physics/bssn.hh>
-#include <grace/physics/bssn_helpers.hh>
-#endif
->>>>>>> c629710 (Added 4D leptonic table)
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
@@ -84,13 +63,10 @@
 
 #include <grace/amr/grace_amr.hh>
 
-<<<<<<< HEAD
 #ifdef GRACE_ENABLE_PARTICLES
 #include <grace/particles/particles_module.hh>
 #endif
 
-=======
->>>>>>> c629710 (Added 4D leptonic table)
 #include <string>
 
 
@@ -172,7 +148,6 @@ void evolve_impl() {
     //amr::apply_boundary_conditions(state) ;
     Kokkos::deep_copy(state_p, state) ;
     grace::deep_copy(sstate_p, sstate) ;
-<<<<<<< HEAD
     // Reset per-step c2p diagnostics once per timestep. C2P_DENS_ERR_ is a
     // signed mass-error accumulator; C2P_ERR_ holds a packed bit-pattern of
     // c2p failure modes (sticky-OR'd over the RK substages in grmhd.hh's
@@ -197,45 +172,22 @@ void evolve_impl() {
     grace::particles::particles_module_t::get().advance_step(dt);
     #endif
 
-=======
-    // reset mass error once per timestep
-    #ifdef GRACE_ENABLE_GRMHD
-    #ifndef GRACE_FREEZE_HYDRO
-    Kokkos::MDRangePolicy<Kokkos::Rank<GRACE_NSPACEDIM+1>,default_execution_space>
-        policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
-    parallel_for(GRACE_EXECUTION_TAG("EVOL","reset_d_err"), policy
-                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
-    {
-        aux(i,j,k,C2P_DENS_ERR_,q) = 0.0 ;
-    });
-    #endif
-    #endif
->>>>>>> c629710 (Added 4D leptonic table)
     if ( tstepper == "euler" ) {
         //compute_auxiliary_quantities<eos_t>(state, aux) ;
         advance_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
         amr::apply_boundary_conditions(state, sstate,state_p,sstate_p,dt,1.0) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
     } else if (tstepper == "rk2" ) {
         /* Compute auxiliaries at current timelevel */
         //compute_auxiliary_quantities<eos_t>(state, aux) ;
         advance_substep<eos_t>(t,dt,0.5,state_p,state,sstate_p,sstate) ;
         amr::apply_boundary_conditions(state_p,sstate_p,state,sstate,dt,0.5) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state_p) ;
         compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
         advance_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
         amr::apply_boundary_conditions(state,sstate,state_p,sstate_p,dt,1.0) ;
         enforce_algebraic_constraints_after_bc(state) ;
-=======
-        compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
-        advance_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
-        amr::apply_boundary_conditions(state,sstate,state_p,sstate_p,dt,1.0) ;
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
     } else if (tstepper == "rk3" ) {
         // step 1: state_p -> u^1 = u^n + dt L( u^n )
@@ -244,10 +196,7 @@ void evolve_impl() {
             state_p,state,
             sstate_p,sstate) ;
         amr::apply_boundary_conditions(state_p,sstate_p,state,sstate,dt,1.0) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state_p) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
         // Allocate state_pp and sstate_pp
         auto state_pp  = grace::variable_list::get().getstagingbuffer()[0] ;
@@ -262,10 +211,7 @@ void evolve_impl() {
             state_pp/*new*/,state_p/*old*/,
             sstate_pp,sstate_p) ;
         amr::apply_boundary_conditions(state_pp,sstate_pp,state_p,sstate_p,dt,0.25) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state_pp) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state_pp, sstate_pp, aux) ;
         // step 4: state = 1/3 u^n + 2/3 u^2
         linop_apply(state,state,state_pp,
@@ -277,10 +223,7 @@ void evolve_impl() {
             state,state_pp,
             sstate,sstate_pp) ;
         amr::apply_boundary_conditions(state,sstate,state_pp,sstate_pp,dt,2./3.) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
     } else if ( tstepper == "rk4" ) {
         // get storage
@@ -313,10 +256,7 @@ void evolve_impl() {
         ) ;
         // apply bc
         amr::apply_boundary_conditions(s3,ss3,s1,ss1,dt,beta) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(s3) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(s3, ss3, aux) ;
         // stage 2
         delta  = 0.217683334308543;
@@ -342,10 +282,7 @@ void evolve_impl() {
         ) ;
         // apply bc
         amr::apply_boundary_conditions(s1,ss1,s3,ss3,dt,beta) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(s1) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(s1, ss1, aux) ;
         // stage 3
         delta  = 1.065841341361089;
@@ -371,10 +308,7 @@ void evolve_impl() {
         ) ;
         // apply bc
         amr::apply_boundary_conditions(s3,ss3,s1,ss1,dt,beta) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(s3) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(s3, ss3, aux) ;
         // stage 4
         delta  = 0.000000000000000;
@@ -396,18 +330,12 @@ void evolve_impl() {
         ) ;
         // apply bc
         amr::apply_boundary_conditions(s1,ss1,s3,ss3,dt,beta) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(s1) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(s1, ss1, aux) ;
     } else if (tstepper == "imex1") {
         advance_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
         amr::apply_boundary_conditions(state,sstate,state_p,sstate_p,dt,1.0) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         advance_implicit_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
     } else if (tstepper == "imex222" ) {
@@ -439,10 +367,7 @@ void evolve_impl() {
             /*new*/sstate_p,/*old*/sstate_pp
         ) ;
         amr::apply_boundary_conditions(state_p,sstate_p,state_pp,sstate_pp,dt,1.0) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state_p) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
         // set s2 = dt G(xi1)
         linop_apply(
@@ -466,10 +391,7 @@ void evolve_impl() {
         // For Sommerfeld: here we keep the BC frozen since
         //
         amr::apply_boundary_conditions(state_p,sstate_p,state_p,sstate_p,dt,0.0/*FIXME*/) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state_p) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         // reset s2 = xi1
         linop_apply(
             state_pp, state_pp, state_p,
@@ -496,10 +418,7 @@ void evolve_impl() {
             /*new*/ sstate, /*old*/ sstate_pp
         ) ;
         amr::apply_boundary_conditions(state,sstate,state_pp,sstate_pp,dt,0.5) ;
-<<<<<<< HEAD
         enforce_algebraic_constraints_after_bc(state) ;
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
         /* done */
     } else if (tstepper == "imex232" ) {
@@ -911,11 +830,7 @@ void compute_fluxes(
     auto& dx     = grace::variable_list::get().getspacings() ;
     auto& fluxes  = grace::variable_list::get().getfluxesarray() ;
     auto& aux     = grace::variable_list::get().getaux()     ;
-<<<<<<< HEAD
     #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
-=======
-    #ifdef GRACE_GRMHD_USE_GS
->>>>>>> c629710 (Added 4D leptonic table)
     auto& vbar  = grace::variable_list::get().getefarray() ;
     #else
     auto& vbar  = grace::variable_list::get().getvbararray() ;
@@ -928,24 +843,9 @@ void compute_fluxes(
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
     //**************************************************************************************************/
     #ifdef GRACE_ENABLE_M1
-<<<<<<< HEAD
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     // normalize
     auto m1_norm_policy =
-=======
-    //m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
-    // PPL needs atmo params
-    m1_excision_params_t m1_excision_params = get_m1_excision_params() ;
-    m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ;
-    m1_backreaction_params_t backreaction_params = get_m1_backreaction_params();
-    m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux,m1_atmo_params,m1_excision_params,backreaction_params) ;
-
-    // normalize
-    auto m1_norm_policy =
-<<<<<<< HEAD
->>>>>>> 1e86119 (Hot TOV works with analytic Rates now)
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(0,0,0),0}
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
@@ -1232,19 +1132,10 @@ void compute_emfs(
     DECLARE_GRID_EXTENTS ;
     //**************************************************************************************************/
     // fetch some stuff
-<<<<<<< HEAD
     auto& fluxes  = grace::variable_list::get().getfluxesarray() ;
     auto& Eface   = grace::variable_list::get().getefarray() ;
     auto& Ecenter = grace::variable_list::get().getecarray() ;
     auto& emf     = grace::variable_list::get().getemfarray() ;
-=======
-    using recon_t = GRACE_RECONSTRUCTION_T ;
-    auto& idx     = grace::variable_list::get().getinvspacings() ;
-    auto& fluxes = grace::variable_list::get().getfluxesarray() ;
-    auto& Eface  = grace::variable_list::get().getefarray() ;
-    auto& Ecenter  = grace::variable_list::get().getecarray() ;
-    auto& emf  = grace::variable_list::get().getemfarray() ;
->>>>>>> c629710 (Added 4D leptonic table)
     //**************************************************************************************************/
     // loop ranges
     auto emf_policy_x =
@@ -1271,169 +1162,20 @@ void compute_emfs(
                 , emf_policy_x
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-<<<<<<< HEAD
         emf(i,j,k,0,q) = gs_edge_emf_x(Eface, Ecenter, fluxes, VEC(i,j,k), q);
     });
-=======
-        // Here direction 0 is y and direction 1 is z
-        // meaning that South-North is -+ z and West-East is -+ y
-        double Exzf  = Eface(i,j,k,0,2,q)    ;
-        double Exzfm = Eface(i,j-1,k,0,2,q)  ;
-        double Exyf  = Eface(i,j,k,0,1,q)    ;
-        double Exyfm = Eface(i,j,k-1,0,1,q)  ;
-        // and centered
-        double ExNE = Ecenter(i,j,k,0,q)     ;
-        double ExNW = Ecenter(i,j-1,k,0,q)   ;
-        double ExSE = Ecenter(i,j,k-1,0,q)   ;
-        double ExSW = Ecenter(i,j-1,k-1,0,q) ;
-        // first compute arithmetic average
-        double Eavg = 0.25 * (
-            Exzf + Exzfm
-          + Exyf + Exyfm
-        ) ;
-        // first derivative piece:
-        // dE/dz (north south)
-        // get signs
-        double Sy  = Kokkos::copysign(1.,fluxes(i,j,k,DENS_,1,q))   ;
-        double Sym = Kokkos::copysign(1.,fluxes(i,j,k-1,DENS_,1,q)) ;
-        // Get "North"
-        double dEdzN = (1-Sy) * (ExNE-Exzf)
-                     + (1+Sy) * (ExNW-Exzfm) ;
-        // "South"
-        double dEdzS = (1-Sym) * (Exzf-ExSE)
-                     + (1+Sym) * (Exzfm-ExSW) ;
-        // Assemble
-        double dEdz = 1./8. * (dEdzS - dEdzN) ;
-        // second derivative piece
-        // Other signs
-        double Sz  = Kokkos::copysign(1.,fluxes(i,j,k,DENS_,2,q)) ;
-        double Szm = Kokkos::copysign(1.,fluxes(i,j-1,k,DENS_,2,q)) ;
-        // Get "East"
-        double dEdyE = (1-Sz) * (ExNE - Exyf)
-                     + (1+Sz) * (ExSE - Exyfm) ;
-        // "West"
-        double dEdyW = (1-Szm) * (Exyf  - ExNW)
-                     + (1+Szm) * (Exyfm - ExSW) ;
-        // Assemble
-        double dEdy = 1./8. * (dEdyW - dEdyE) ;
-        // finally
-        emf(i,j,k,0,q) = Eavg + dEdz + dEdy ;
-    } );
-    //**************************************************************************************************/
-    // compute EMF -- y (stag xz)
->>>>>>> c629710 (Added 4D leptonic table)
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "EMF_Y")
                 , emf_policy_y
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-<<<<<<< HEAD
         emf(i,j,k,1,q) = gs_edge_emf_y(Eface, Ecenter, fluxes, VEC(i,j,k), q);
     });
-=======
-        // Here direction 0 is x and direction 1 is z
-        // meaning that South-North is -+ z and West-East is -+ x
-        // copy locally
-        double Eyzf  = Eface(i,j,k,1,2,q)    ;
-        double Eyzfm = Eface(i-1,j,k,1,2,q)  ;
-        double Eyxf  = Eface(i,j,k,0,0,q)    ;
-        double Eyxfm = Eface(i,j,k-1,0,0,q)  ;
-        // and centered
-        double EyNE = Ecenter(i,j,k,1,q)     ;
-        double EyNW = Ecenter(i-1,j,k,1,q)   ;
-        double EySE = Ecenter(i,j,k-1,1,q)   ;
-        double EySW = Ecenter(i-1,j,k-1,1,q) ;
-        // first compute arithmetic average
-        double Eavg = 0.25 * (
-            Eyzf + Eyzfm
-          + Eyxf + Eyxfm
-        ) ;
-        // first derivative piece:
-        // dE/dz (north south)
-        // get signs
-        double Sx  = Kokkos::copysign(1.,fluxes(i,j,k,DENS_,0,q)) ;
-        double Sxm = Kokkos::copysign(1.,fluxes(i,j,k-1,DENS_,0,q)) ;
-        // Get "North"
-        double dEdzN = (1-Sx) * (EyNE-Eyzf)
-                     + (1+Sx) * (EyNW-Eyzfm) ;
-        // "South"
-        double dEdzS = (1-Sxm) * (Eyzf-EySE)
-                     + (1+Sxm) * (Eyzfm-EySW) ;
-        // Assemble (Avengers!)
-        double dEdz = 1./8. * (dEdzS - dEdzN) ;
-        // Other signs
-        double Sz  = Kokkos::copysign(1.,fluxes(i,j,k,DENS_,2,q)) ;
-        double Szm = Kokkos::copysign(1.,fluxes(i-1,j,k,DENS_,2,q)) ;
-        // "East"
-        double dEdxE = (1-Sz) * (EyNE - Eyxf)
-                     + (1+Sz) * (EySE - Eyxfm) ;
-        // "West"
-        double dEdxW = (1-Szm) * (Eyxf  - EyNW)
-                     + (1+Szm) * (Eyxfm - EySW) ;
-        // Assemble
-        double dEdx = 1./8. * (dEdxW - dEdxE) ;
-        // finally
-        emf(i,j,k,1,q) = Eavg + dEdz + dEdx ;
-
-    } ) ;
-    //**************************************************************************************************/
-    // compute EMF -- z (stag xy)
->>>>>>> c629710 (Added 4D leptonic table)
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "EMF_Z")
                 , emf_policy_z
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-<<<<<<< HEAD
         emf(i,j,k,2,q) = gs_edge_emf_z(Eface, Ecenter, fluxes, VEC(i,j,k), q);
     });
-=======
-        // E^z_{i-1/2, j-1/2, k} = 1/4 ( avg E from faces )
-        //                       + (1+Sxf)/2 (Fx_{yf} - F_x)
-        // copy locally
-        double Ezyf  = Eface(i,j,k,1,1,q)    ;
-        double Ezyfm = Eface(i-1,j,k,1,1,q)  ;
-        double Ezxf  = Eface(i,j,k,1,0,q)    ;
-        double Ezxfm = Eface(i,j-1,k,1,0,q)  ;
-        // and centered
-        double EzNE = Ecenter(i,j,k,2,q)     ;
-        double EzNW = Ecenter(i-1,j,k,2,q)   ;
-        double EzSE = Ecenter(i,j-1,k,2,q)   ;
-        double EzSW = Ecenter(i-1,j-1,k,2,q) ;
-        // first compute arithmetic average
-        double Eavg = 0.25 * (
-            Ezyf + Ezyfm   // E_z(i,j-1/2,k) + E_z(i-1,j-1/2,k)
-          + Ezxf + Ezxfm   // E_z(i-1/2,j,k) + E_z(i-1/2,j-1,k)
-        ) ;
-
-        // then we need the derivatives
-        // get the sign of vbar at x face
-        auto Sx  = Kokkos::copysign(1.0, fluxes(i,j,k,DENS_,0,q))   ;
-        auto Sxm = Kokkos::copysign(1.0, fluxes(i,j-1,k,DENS_,0,q)) ;
-        // first derivative term
-        // "north"
-        double dEdyN =  (1.-Sx) * ( EzNE - Ezyf  )    // select if v < 0
-                     +  (1.+Sx) * ( EzNW - Ezyfm ) ;  // select if v > 0
-        // "south"
-        double dEdyS =  (1.-Sxm) * ( Ezyf  - EzSE )
-                     +  (1.+Sxm) * ( Ezyfm - EzSW ) ;
-        double dEdy  = 1./ 8. * ( dEdyS - dEdyN ) ;
-        // Get the sign of vbar at y face
-        auto Sy  = Kokkos::copysign(1.0, fluxes(i,j,k,DENS_,1,q))   ;
-        auto Sym = Kokkos::copysign(1.0, fluxes(i-1,j,k,DENS_,1,q))   ;
-        // second derivative term
-        // "east"
-        double dEdxE = (1-Sy) * ( EzNE - Ezxf  )
-                     + (1+Sy) * ( EzSE - Ezxfm ) ;
-        // "west"
-        double dEdxW = (1-Sym) * ( Ezxf  - EzNW  )
-                     + (1+Sym) * ( Ezxfm - EzSW ) ;
-        // combine
-        double dEdx = 1./8. * ( dEdxW - dEdxE ) ;
-
-        // finally
-        emf(i,j,k,2,q) = Eavg + dEdy + dEdx ;
-
-    } ) ;
->>>>>>> c629710 (Added 4D leptonic table)
     //**************************************************************************************************/
     // all done!
 }
@@ -1707,7 +1449,6 @@ void add_fluxes_and_source_terms(
         grmhd_eq_system(sources_computation_kernel_t{}, q, VEC(i,j,k), idx, new_state, dt, dtfact );
         #endif
         for( int ivar=0; ivar<nvars_hrsc; ++ivar) {
-<<<<<<< HEAD
             // this way of writing is explicitly bit-wise equivariant
             double dFx = ( fluxes(VEC(i,j,k)  ,ivar,0,q) - fluxes(VEC(i+1,j,k),ivar,0,q) ) * idx(0,q);
             double dFy = ( fluxes(VEC(i,j,k)  ,ivar,1,q) - fluxes(VEC(i,j+1,k),ivar,1,q) ) * idx(1,q);
@@ -1716,18 +1457,6 @@ void add_fluxes_and_source_terms(
         }
 
     }) ;
-=======
-            new_state(VEC(i,j,k),ivar,q) +=
-                dt * dtfact * (
-                EXPR(   ( fluxes(VEC(i,j,k)  ,ivar,0,q) - fluxes(VEC(i+1,j,k),ivar,0,q) ) * idx(0,q)
-                    , + ( fluxes(VEC(i,j,k)  ,ivar,1,q) - fluxes(VEC(i,j+1,k),ivar,1,q) ) * idx(1,q)
-                    , + ( fluxes(VEC(i,j,k)  ,ivar,2,q) - fluxes(VEC(i,j,k+1),ivar,2,q) ) * idx(2,q))
-            ) ;
-        }
-
-    }) ;
-    // fixme better to have two kernels? --> I don't think so nvars_hrsc is small.
->>>>>>> c629710 (Added 4D leptonic table)
 }
 
 void update_CT(
@@ -1943,30 +1672,6 @@ void update_fd(
     }
     #endif
     //**************************************************************************************************/
-<<<<<<< HEAD
-=======
-    #elif defined(GRACE_ENABLE_BSSN_METRIC)
-    //**************************************************************************************************/
-    // fetch some stuff
-    auto& idx     = grace::variable_list::get().getinvspacings() ;
-    auto& aux     = grace::variable_list::get().getaux()     ;
-    //**************************************************************************************************/
-    bssn_system_t bssn_eq_system(old_state,aux,old_stag_state) ;
-    //**************************************************************************************************/
-    auto advance_policy =
-    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
-              {VEC(ngz,ngz,ngz),0}
-            , {VEC(nx+ngz,ny+ngz,nz+ngz),nq}
-        ) ;
-    //**************************************************************************************************/
-    parallel_for( GRACE_EXECUTION_TAG("EVOL","bssn_update")
-                , advance_policy
-                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
-                {
-                    bssn_eq_system.compute_update(q,VEC(i,j,k),idx,new_state,new_stag_state,dt,dtfact);
-                }) ;
-    //**************************************************************************************************/
->>>>>>> c629710 (Added 4D leptonic table)
     #endif
 }
 
@@ -1991,13 +1696,6 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     auto& _idx = variable_list::get().getinvspacings() ;
     auto& aux  = variable_list::get().getaux() ;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-    #ifdef GRACE_ENABLE_M1
-    auto policy =
-=======
-=======
->>>>>>> c629710 (Added 4D leptonic table)
     #ifdef GRACE_ENABLE_M1
 
     auto backreaction_params = get_m1_backreaction_params() ;
@@ -2005,10 +1703,6 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                               && (t >= backreaction_params.t_backreact) ;
 
     auto policy =
-<<<<<<< HEAD
->>>>>>> 1e86119 (Hot TOV works with analytic Rates now)
-=======
->>>>>>> c629710 (Added 4D leptonic table)
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(0,0,0),0}
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
@@ -2065,7 +1759,6 @@ void advance_substep( double const t, double const dt, double const dtfact
     //**************************************************************************************************/
     compute_fluxes<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
-<<<<<<< HEAD
     compute_emfs(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
 #ifdef GRACE_ENABLE_FOFC
@@ -2086,13 +1779,6 @@ void advance_substep( double const t, double const dt, double const dtfact
     // substage contributes correctly; sticky across substages within an
     // output interval, MPI-reduced and flushed by the diagnostic.
     boundary_outflow_t::get().accumulate(dt, dtfact) ;
-=======
-    auto flux_context = reflux_fill_flux_buffers() ;
-    //**************************************************************************************************/
-    compute_emfs(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
-    //**************************************************************************************************/
-    auto emf_context = reflux_fill_emf_buffers() ;
->>>>>>> c629710 (Added 4D leptonic table)
     //**************************************************************************************************/
     add_fluxes_and_source_terms<eos_t>(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
@@ -2102,11 +1788,6 @@ void advance_substep( double const t, double const dt, double const dtfact
     //**************************************************************************************************/
     update_fd(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
-<<<<<<< HEAD
-=======
-    reflux_correct_fluxes(flux_context,t,dt,dtfact,new_state) ;
-    //**************************************************************************************************/
->>>>>>> c629710 (Added 4D leptonic table)
     parallel::mpi_barrier() ;
     Kokkos::fence() ;
     GRACE_PROFILING_POP_REGION ;

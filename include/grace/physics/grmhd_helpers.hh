@@ -432,7 +432,6 @@ face_interp_4(View const& view,
     int const di = utils::delta(0, idir);
     int const dj = utils::delta(1, idir);
 #ifdef GRACE_3D
-<<<<<<< HEAD
     int const dk = utils::delta(2, idir);
 #endif
     double const s_inner =
@@ -442,31 +441,6 @@ face_interp_4(View const& view,
           view(VEC(i - 2*di, j - 2*dj, k - 2*dk), ivar, q)
         + view(VEC(i +   di, j +   dj, k +   dk), ivar, q);
     return c_inner * s_inner + c_outer * s_outer;
-=======
-#define COMPUTE_FCVAL_HELPER(mview,i,j,k,ivar,q,idir)                                          \
-  AM2*mview(i-2*utils::delta(0,idir),j-2*utils::delta(1,idir),k-2*utils::delta(2,idir),ivar,q) \
-+ AM1*mview(i-utils::delta(0,idir),j-utils::delta(1,idir),k-utils::delta(2,idir),ivar,q)       \
-+ A0*mview(i,j,k,ivar,q)                                                                       \
-+ A1*mview(i+utils::delta(0,idir),j+utils::delta(1,idir),k+utils::delta(2,idir),ivar,q)
-#ifndef GRACE_ENABLE_COWLING_METRIC
-#define COMPUTE_FCVAL(g,mview,i,j,k,q,idir)                     \
-g = grace::metric_array_t{                                      \
-      {                                                         \
-          COMPUTE_FCVAL_HELPER(mview,i,j,k,GTXX_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,GTXY_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,GTXZ_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,GTYY_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,GTYZ_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,GTZZ_,q,idir)         \
-      }                                                           \
-    , COMPUTE_FCVAL_HELPER(mview,i,j,k,CHI_,q,idir)             \
-    , {                                                         \
-          COMPUTE_FCVAL_HELPER(mview,i,j,k,BETAX_,q,idir)       \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,BETAY_,q,idir)       \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,k,BETAZ_,q,idir)       \
-      }                                                         \
-    , COMPUTE_FCVAL_HELPER(mview,i,j,k,ALP_,q,idir)             \
->>>>>>> 224b3b4 (Added muons to base_eos++)
 }
 
 // Build the face-centered metric by face_interp_4'ing each component of
@@ -507,7 +481,6 @@ compute_face_metric(View const& state,
     };
 #endif
 }
-<<<<<<< HEAD
 
 } // namespace grace
 
@@ -719,33 +692,6 @@ gs_edge_emf_z(EfaceView const& Eface, EcenterView const& Ecenter,
 #endif // GS
 
 } // namespace grace
-=======
-#endif
-#else
-#define COMPUTE_FCVAL_HELPER(mview,i,j,ivar,q,idir)                   \
-  AM2*mview(i-2*utils::delta(0,idir),j-2*utils::delta(1,idir),ivar,q) \
-+ AM1*mview(i-utils::delta(0,idir),j-utils::delta(1,idir),ivar,q)     \
-+ A0*mview(i,j,ivar,q)                                                \
-+ A1*mview(i+utils::delta(0,idir),j+utils::delta(1,idir),ivar,q)
-#define COMPUTE_FCVAL(g,mview,i,j,q,idir)                     \
-g = grace::metric_array_t{                                    \
-      {                                                       \
-          COMPUTE_FCVAL_HELPER(mview,i,j,GXX_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,GXY_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,GXZ_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,GYY_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,GYZ_,q,idir)         \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,GZZ_,q,idir)         \
-      }                                                       \
-    , {                                                       \
-          COMPUTE_FCVAL_HELPER(mview,i,j,BETAX_,q,idir)       \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,BETAY_,q,idir)       \
-        , COMPUTE_FCVAL_HELPER(mview,i,j,BETAZ_,q,idir)       \
-      }                                                       \
-    , COMPUTE_FCVAL_HELPER(mview,i,j,ALP_,q,idir)             \
-}
-#endif
->>>>>>> 224b3b4 (Added muons to base_eos++)
 
 struct grmhd_id_t {
   double rho;

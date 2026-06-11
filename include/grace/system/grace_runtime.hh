@@ -514,7 +514,6 @@ class grace_runtime_impl_t
          */
         constexpr double plane_face_bias_eps = 1e-12 ;
         _output_planes_origins.resize(3) ;
-<<<<<<< HEAD
         _output_planes_origins[0] = grace::get_param<double>("IO","xy_plane_offset")
                                   + plane_face_bias_eps ;
         _output_planes_origins[1] = grace::get_param<double>("IO","xz_plane_offset")
@@ -522,14 +521,6 @@ class grace_runtime_impl_t
         _output_planes_origins[2] = grace::get_param<double>("IO","yz_plane_offset")
                                   + plane_face_bias_eps ;
 
-=======
-        _output_planes_origins[0] = grace::get_param<double>("IO","xy_plane_offset") ;
-
-        _output_planes_origins[1] = grace::get_param<double>("IO","xz_plane_offset") ;
-
-        _output_planes_origins[2] = grace::get_param<double>("IO","yz_plane_offset") ;
-
->>>>>>> b054c33 (Added muons into grace_runtime)
         _n_output_spheres = grace::get_param<int>("IO", "n_output_spheres") ;
         _output_spheres_names = grace::get_param<std::vector<std::string>>("IO", "output_sphere_names") ;
         /* Volume and surface output variables */
@@ -545,13 +536,8 @@ class grace_runtime_impl_t
             "alp"
         } ;
         const std::vector<std::string> metric_aux = {};
-<<<<<<< HEAD
         #endif
         #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
-=======
-        #endif
-        #ifdef GRACE_ENABLE_Z4C_METRIC
->>>>>>> b054c33 (Added muons into grace_runtime)
         const std::vector<std::string> metric_vars = {
             "gamma_tilde[0,0]", "gamma_tilde[0,1]",
             "gamma_tilde[0,2]", "gamma_tilde[1,1]",

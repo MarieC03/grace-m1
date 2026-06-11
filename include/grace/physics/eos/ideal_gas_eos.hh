@@ -387,16 +387,17 @@ class ideal_gas_eos_t
     }
 
     void KOKKOS_INLINE_FUNCTION
-    limit_temp(double& temp, error_type& err) const
+    limit_entropy(double& s, double rho, error_type& err) const
     {
-        double tempmax = temp__eps(this->c2p_eps_max) ;
-        if ( temp < 0 ) {
-            temp = 0.0 ;
-            err.set(EOS_ERROR_T::EOS_TEMPERATURE_TOO_LOW) ;
+        double smin = entropy__eps_rho(ent_min, rho) ;
+        double smax = entropy__eps_rho(this->c2p_eps_max, rho) ;
+        if ( s < smin ) {
+            s = smin ;
+            err.set(EOS_ERROR_T::EOS_ENTROPY_TOO_LOW) ;
         }
-        if ( temp > tempmax ) {
-            err.set(EOS_ERROR_T::EOS_TEMPERATURE_TOO_HIGH) ;
-            temp = tempmax ;
+        if ( s > smax ) {
+            s = smax ;
+            err.set(EOS_ERROR_T::EOS_ENTROPY_TOO_HIGH) ;
         }
     }
 

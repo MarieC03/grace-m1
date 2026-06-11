@@ -107,6 +107,17 @@ add_grace_test(particle_aux_fetch_test    test_particle_aux_fetch.cpp)
 add_grace_test(particle_advance_test      test_particle_advance.cpp)
 endif()
 
+if( GRACE_ENABLE_M1 )
+add_kokkos_test(m1_analytic_rates_test test_m1_analytic_rates.cpp)
+add_test(NAME m1_analytic_rates_test COMMAND mpirun -n 1 ./m1_analytic_rates_test)
+# Pure serial unit checks — pin OpenMP to one thread so the test is immune
+# to the macOS duplicate-libomp teardown crash that affects multi-threaded
+# Kokkos test binaries.
+set_tests_properties(m1_analytic_rates_test PROPERTIES
+    LABELS "fast;physics;m1"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # All four kokkos_tests_main-using binaries link MPI (via grace_parallel /
 # grace_singleton transitive deps) and call `parallel::mpi_init` at
 # startup; launch via `mpirun -n 1` so the OpenMPI runtime is set up

@@ -120,7 +120,7 @@ limit_primitives(
 }
 
 template< typename eos_t >
-static void KOKKOS_INLINE_FUNCTION
+static bool KOKKOS_INLINE_FUNCTION
 limit_conservatives(
     grace::grmhd_cons_array_t&  cons,
     metric_array_t const& metric,
@@ -128,6 +128,7 @@ limit_conservatives(
     c2p_err_t& err
 )
 {
+    bool any_applied{false} ;
 
     double rhoL = cons[DENSL] ;
     double yeL  = cons[YESL]  / (cons[DENSL]) ;
@@ -197,7 +198,8 @@ reset_to_atmosphere(
     );
     // all conserved need to be reset
     prims_to_conservs(prims,cons,metric) ;
-    err.set_all() ;
+    c2p_set_all_resets(err) ;
+    err.set(c2p_err_enum_t::C2P_ATMO_RESET) ;
 }
 
 template< typename eos_t >
@@ -405,7 +407,7 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
             prims[EPSL], csnd2, prims[ENTL], prims[TEMPL], prims[RHOL], prims[YEL], ymu, eos_err
         );
         // check if the EOS had any sort of problem
-        c2p_handle_eos_signals(
+        c2p_handle_eos_signals<eos_t>(
             eos_err,
             c2p_is_lenient,
             c2p_err

@@ -372,7 +372,7 @@ namespace grace {
         }
       }
 
-      froot_t fmu(eos,D,q,r2,r_dot_Btilde2,Btilde2,ye,h0) ;
+      froot_t fmu(eos,D,q,r2,r_dot_Btilde2,Btilde2,ye,ymu,h0) ;
 
       double mu = utils::brent(fmu, 0, mu0, 1e-15) ;
 

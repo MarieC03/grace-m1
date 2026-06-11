@@ -1,24 +1,15 @@
 /**
  * @file eos_types.hh
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
-<<<<<<< HEAD
  * @brief Compile-time EOS type traits (has_ye, etc.) used to specialise GRMHD kernels for the active equation-of-state.
-=======
- * @brief
->>>>>>> c629710 (Added 4D leptonic table)
  * @date 2024-06-17
  *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
-<<<<<<< HEAD
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
  *
-=======
- * Copyright (C) 2023 Carlo Musolino
- *
->>>>>>> c629710 (Added 4D leptonic table)
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or

@@ -704,11 +704,11 @@ struct grmhd_equations_system_t
         }
         /***********************************************************************/
         /* EOS: derive remaining thermo state from the reconstructed thermo   */
-        /* primitive.  T-recon path uses press_eps_csnd2__temp_rho_ye (forward */
-        /* hook, returns P from T).  P-recon path uses                         */
-        /* eps_h_csnd2_temp_entropy__press_rho_ye (inverse hook, returns eps   */
-        /* from P and fills T).  Tabulated EOS currently aborts in the inverse */
-        /* hook — switch to TEMP recon if you need tabulated EOS.              */
+        /* primitive.  T-recon path uses press_eps_csnd2__temp_rho_ye_ymu       */
+        /* (forward hook, returns P from T).  P-recon path uses                */
+        /* eps_h_csnd2_temp_entropy__press_rho_ye_ymu (inverse hook, returns   */
+        /* eps from P and fills T).  Tabulated EOS currently aborts in the     */
+        /* inverse hook — switch to TEMP recon if you need tabulated EOS.      */
         /***********************************************************************/
         eos_err_t eos_err;
         #if defined(GRACE_RECON_THERMO_PRESS)
@@ -719,22 +719,36 @@ struct grmhd_equations_system_t
             /* grmhd_get_fluxes consumes the reconstructed entropy for the    */
             /* ENTSL flux (same as the T-recon path).                         */
             double h_dummy_L, h_dummy_R, ent_dummy_L, ent_dummy_R ;
-            primL[EPSL] = _eos.eps_h_csnd2_temp_entropy__press_rho_ye(
+            #ifndef M1_NU_FIVESPECIES
+            double ymuL = 0.0 ;
+            double ymuR = 0.0 ;
+            #else
+            double ymuL = primL[YMUL] ;
+            double ymuR = primR[YMUL] ;
+            #endif
+            primL[EPSL] = _eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu(
                 h_dummy_L, primL[CS2L], primL[TEMPL], ent_dummy_L,
-                primL[PRESSL], primL[RHOL], primL[YEL], eos_err
+                primL[PRESSL], primL[RHOL], primL[YEL], ymuL, eos_err
             );
-            primR[EPSL] = _eos.eps_h_csnd2_temp_entropy__press_rho_ye(
+            primR[EPSL] = _eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu(
                 h_dummy_R, primR[CS2L], primR[TEMPL], ent_dummy_R,
-                primR[PRESSL], primR[RHOL], primR[YEL], eos_err
+                primR[PRESSL], primR[RHOL], primR[YEL], ymuR, eos_err
             );
         }
         #else
         {
-            primL[PRESSL] = _eos.press_eps_csnd2__temp_rho_ye(
-                primL[EPSL], primL[CS2L], primL[TEMPL], primL[RHOL], primL[YEL], eos_err
+            #ifndef M1_NU_FIVESPECIES
+            double ymuL = 0.0 ;
+            double ymuR = 0.0 ;
+            #else
+            double ymuL = primL[YMUL] ;
+            double ymuR = primR[YMUL] ;
+            #endif
+            primL[PRESSL] = _eos.press_eps_csnd2__temp_rho_ye_ymu(
+                primL[EPSL], primL[CS2L], primL[TEMPL], primL[RHOL], primL[YEL], ymuL, eos_err
             );
-            primR[PRESSL] = _eos.press_eps_csnd2__temp_rho_ye(
-                primR[EPSL], primR[CS2L], primR[TEMPL], primR[RHOL], primR[YEL], eos_err
+            primR[PRESSL] = _eos.press_eps_csnd2__temp_rho_ye_ymu(
+                primR[EPSL], primR[CS2L], primR[TEMPL], primR[RHOL], primR[YEL], ymuR, eos_err
             );
         }
         #endif
@@ -837,6 +851,10 @@ struct grmhd_equations_system_t
         double& tr            = primR[TEMPL]  ;
         double& yel           = primL[YEL]    ;
         double& yer           = primR[YEL]    ;
+    #ifdef M1_NU_FIVESPECIES
+        double& ymul          = primL[YMUL]   ;
+        double& ymur          = primR[YMUL]   ;
+    #endif
         double const epsl = primL[EPSL], epsr = primR[EPSL];
         double const pl   = primL[PRESSL], pr = primR[PRESSL] ;
         double const cs2l = primL[CS2L], cs2r = primR[CS2L] ;

@@ -161,6 +161,8 @@ namespace grace {
 // 7. Optional physics modules
 //=====================================================================
 #cmakedefine GRACE_ENABLE_M1
+#cmakedefine M1_NU_THREESPECIES
+#cmakedefine M1_NU_FIVESPECIES
 #cmakedefine GRACE_ENABLE_PARTICLES
 
 #ifdef GRACE_ENABLE_M1
@@ -259,75 +261,6 @@ namespace grace {
 // the source-level `#ifndef` defaults apply.  Must appear after the
 // closing `}` of `namespace grace` so macro definitions are in the
 // global scope.
-#ifdef GRACE_3D
-#define GRACE_FACE_CHILDREN 4
-#else
-#define GRACE_FACE_CHILDREN 2
-#endif
-
-#ifdef GRACE_ENABLE_CUDA
-#define GRACE_BACKEND "CUDA"
-#elif defined(GRACE_ENABLE_HIP)
-#define GRACE_BACKEND "HIP"
-#elif defined(GRACE_ENABLE_SYCL)
-#define GRACE_BACKEND "SYCL"
-#else
-#define GRACE_BACKEND "HOST"
-#endif
-
-/**
- * @brief Macros designed to help with writing dimension independent code.
- * \ingroup utils
- *
- */
-#ifdef GRACE_3D
-#define VEC(X,Y,Z) X,Y,Z
-#define EXPR(X,Y,Z) X Y Z
-#define PICK_D(X,Y) Y
-#define VECD(X,Y) X,Y
-#define EXPRD(X,Y) X Y
-#else
-#define VEC(X,Y,Z) X,Y
-#define EXPR(X,Y,Z) X Y
-#define PICK_D(X,Y) X
-#define VECD(X,Y) X
-#define EXPRD(X,Y) X
-#endif
-
-#cmakedefine GRACE_ENABLE_COWLING_METRIC
-#cmakedefine GRACE_ENABLE_Z4C_METRIC
-
-#cmakedefine GRACE_ENABLE_M1
-#cmakedefine M1_NU_THREESPECIES
-#cmakedefine M1_NU_FIVESPECIES
-
-
-#cmakedefine GRACE_ENABLE_CABANA
-
-#cmakedefine GRACE_GRMHD_USE_GS
-
-#define Z4C_DER_ORDER 4
-
-// for spheres
-#define LAGRANGE_INTERP_ORDER 4
-
-#define SQR(a) ((a)*(a))
-
-#ifdef GRACE_ENABLE_M1
-#define GRACE_N_M1_VARS 5
-#define GRACE_N_M1_AUX 5
-#endif
-
-
-#define GRACE_RECONSTRUCTION_T weno_reconstructor_t<5>
-
-}
-
-// Per-architecture performance-tuning macros.  Selected by CMake via
-// `Kokkos_ARCH_*` detection; see top-level CMakeLists.txt.  Header may be
-// empty (generic / CPU) — in that case the source-level `#ifndef` defaults
-// apply.  Must appear after the closing `}` of `namespace grace` so macro
-// definitions are in the global scope.
 #include "@GRACE_PERF_TUNING_HEADER@"
 
 #endif /* FB650CE9_1908_47F9_98EB_3C4E4087C9CC */

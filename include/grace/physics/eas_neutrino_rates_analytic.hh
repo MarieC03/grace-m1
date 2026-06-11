@@ -328,7 +328,8 @@ GRACE_HOST_DEVICE static GRACE_ALWAYS_INLINE double get(double eta) {
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double FD5_get(double eta) {
     const double e = Kokkos::exp(eta);
     if (eta > eta_min()) {
-        const double num = (1.0/6.0) * ipow<5>(eta) + 8.2247 * ipow<3>(eta) + 113.6439 * eta + 236.5323;
+        // Sommerfeld: eta^6/6 + (5 pi^2/6) eta^4 + (7 pi^4/6) eta^2 + 31 pi^6/126
+        const double num = (1.0/6.0) * ipow<6>(eta) + 8.2247 * ipow<4>(eta) + 113.6439 * ipow<2>(eta) + 236.5323;
         const double den = 1.0 + Kokkos::exp(-1.9727 * eta);
         return num / den;
     }
