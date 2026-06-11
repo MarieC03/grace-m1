@@ -103,13 +103,19 @@ inline void h5_read(hid_t file, const char* name, T* out, hid_t type)
 namespace {
     // Muon rest mass [MeV] — same value used in leptonic_eos_4d.hh
     constexpr double MU_MASS_MEV = 105.6583755 ;
+    // Neutron-proton mass difference [MeV].  The scollapse-format baryon
+    // table stores mu_n and mu_p relative to their own rest masses, so the
+    // beta-equilibrium conditions need the explicit +Qnp shift (same
+    // convention as the reference EOS_Leptonic implementation and the
+    // analytic rates in eas_neutrino_rates_analytic.hh).
+    constexpr double QNP_MEV = 1.29333236 ;
 } // anonymous namespace
 
 
 // ============================================================
 //  npe beta equilibrium (Y_mu fixed)
 //
-//  Solves  mu_e(Y_e) + mu_p(Y_e + Y_mu) - mu_n(Y_e + Y_mu) = 0
+//  Solves  mu_e(Y_e) + mu_p(Y_e + Y_mu) - mu_n(Y_e + Y_mu) - Qnp = 0
 //  for Y_e, with Y_mu held constant.  Used both as the pure-npe
 //  fallback and as the inner solve inside solve_muon_beta_eq.
 // ============================================================
@@ -132,7 +138,7 @@ solve_npe_beta_eq(
         double const mue = eos.ele_table   .interp(lrho, ltemp, ye, E::TABMUELE) ;
         double const mup = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUP)   ;
         double const mun = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUN)   ;
-        return mue + mup - mun ;
+        return mue + mup - mun - QNP_MEV ;
     } ;
 
     // Try a narrow bracket around the guess first; widen to full range
@@ -153,18 +159,19 @@ solve_npe_beta_eq(
 //  Full npe-mu beta equilibrium
 //
 //  Two coupled conditions:
-//      (1)  mu_e(Y_e) = mu_mu(Y_mu)        => Y_e = f(Y_mu)
-//      (2)  mu_n - mu_p - mu_mu = 0        => outer Brent on log(Y_mu)
+//      (1)  mu_e(Y_e) = mu_mu(Y_mu)              => Y_e = f(Y_mu)
+//      (2)  mu_n - mu_p + Qnp - mu_mu = 0        => outer Brent on log(Y_mu)
 //
 //  Algorithm (mirrors Margherita / leptonic_eos_impl.hh):
 //    Outer Brent over log(Y_mu) in [log(ymu_min), log(ymu_max)]:
 //      a. Evaluate mu_mu from the muon table at the trial log(Y_mu).
 //      b. Find Y_e such that mu_e(Y_e) = mu_mu  [inner Brent on Y_e].
 //      c. yp = clamp(Y_e + Y_mu, yemin, yemax)  (charge neutrality).
-//      d. Residual = mu_n(yp) - mu_p(yp) - mu_mu.
+//      d. Residual = mu_n(yp) - mu_p(yp) + Qnp - mu_mu.
 //
-//  If mu_mu < m_mu even at ymu_min (muons energetically forbidden),
-//  fall back to a pure npe solve with Y_mu = ymu_min.
+//  If the residual has no sign change over the Y_mu range, muons are
+//  absent at this (rho, T): fall back to a pure npe solve with
+//  Y_mu = ymu_min.
 //
 //  Returns {Y_e, Y_mu, muons_present}.
 // ============================================================
@@ -196,22 +203,18 @@ solve_muon_beta_eq(
         return utils::brent(f_inner, ye_lo, ye_hi, tol) ;
     } ;
 
-    // ---- Check muon onset ----
-    // If mu_mu at the minimum Y_mu is below the rest mass, there are
-    // no physical muons at this (rho, T): fall back to npe.
-    // NB: TABMUMU stores the FULL muon chemical potential (including
-    // m_mu), consistent with the equilibrium conditions below and the
-    // atmosphere fallbacks in leptonic_eos_4d.hh.
+    // ---- Diagnostic only: mu_mu at the bottom of the Y_mu range ----
+    // NB: do NOT gate the solve on mu_mu(Ymu_min) vs m_mu.  At Ymu_min the
+    // muon gas is dilute at EVERY density, so its full chemical potential
+    // sits below the rest mass everywhere and such a check would switch
+    // muons off globally.  Muon presence is decided by the sign-change
+    // check on the outer residual below (the reference EOS_Leptonic
+    // implementation likewise detects the no-muon case after the solve).
     double const mu_mu_at_min = eos.muon_table.interp(
         lrho, ltemp, lymu_lo, E::TABMUMU) ;
     GRACE_TRACE("Cold table solve: lrho={:.3f} (rho={:.3e})  "
-                "mu_mu(Ymu_min)={:.3f} MeV  (onset at > m_mu={:.3f})",
+                "mu_mu(Ymu_min)={:.3f} MeV  (m_mu={:.3f})",
                 lrho, std::exp(lrho), mu_mu_at_min, MU_MASS_MEV) ;
-    if (mu_mu_at_min < MU_MASS_MEV) {
-        double const ye = solve_npe_beta_eq(
-            eos, lrho, ltemp, eos.get_c2p_ymu_min(), ye_guess, tol) ;
-        return { ye, eos.get_c2p_ymu_min(), false } ;
-    }
 
     // ---- Outer Brent over log(Y_mu) ----
     // ye_running is updated as a side-effect so the converged Y_e is
@@ -228,7 +231,9 @@ solve_muon_beta_eq(
                                         ye_running + ymu_loc)) ;
         double const mu_p    = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUP) ;
         double const mu_n    = eos.baryon_table.interp(lrho, ltemp, yp, E::TABMUN) ;
-        return mu_n - mu_p - mu_mu ;   // = 0 at equilibrium
+        // = 0 at equilibrium: mu_mu = mu_n - mu_p + Qnp
+        // (matches the reference: mu_mu + mu_p - mu_n - Qnp = 0)
+        return mu_n - mu_p + QNP_MEV - mu_mu ;
     } ;
 
     // If no sign change across the full Y_mu range, muons are
