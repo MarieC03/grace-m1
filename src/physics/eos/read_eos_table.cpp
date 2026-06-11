@@ -561,7 +561,10 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
                         double mup = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUP) ; 
                         double mue = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUE) ; 
                         double mun = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUN) ; 
-                        return mue + mup - mun ; 
+                        // mu_n/mu_p are relative to their own rest masses,
+                        // so neutrinoless beta equilibrium carries the
+                        // explicit n-p mass difference (Qnp).
+                        return mue + mup - mun - (mn_MeV - mp_MeV) ; 
                     } ; 
                     return utils::brent(dmu, yemin, yemax, 1e-14) ; 
                 } ; 
@@ -876,10 +879,23 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
         }
 
         {  // chemical potentials
-            auto const mu_q = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUP);
-            auto const mu_b = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUN);
-            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUP) = mu_q + mu_b ; 
-            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUE) -= mu_q  ; 
+            // CompOSE stores q3 = mu_b/m_n - 1, q4 = mu_q/m_n, q5 = mu_l/m_n
+            // (dimensionless, normalised by the NEUTRON mass regardless of
+            // the rho-axis baryon-mass choice).  Particle potentials:
+            //   mu_n = mu_b ;  mu_p = mu_b + mu_q ;  mu_e = mu_l - mu_q.
+            // Convert to the scollapse-like convention assumed by the
+            // beta-equilibrium solvers and the M1 rates (MeV, nucleons
+            // relative to their own rest masses, mu_e incl. m_e):
+            //   TABMUN = mu_n - m_n ;  TABMUP = mu_p - m_p ;  TABMUE = mu_e.
+            auto const q4_mu_q = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUP);
+            auto const q3_mu_b = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUN);
+            auto const q5_mu_l = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUE);
+            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUN) =
+                q3_mu_b * mn_MeV ;                                    // mu_n - m_n
+            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUP) =
+                (q3_mu_b + q4_mu_q) * mn_MeV + (mn_MeV - mp_MeV) ;    // mu_p - m_p
+            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABMUE) =
+                (q5_mu_l - q4_mu_q) * mn_MeV ;                        // mu_e
         }
         
         const double hL = 1. + epsL + pressL / rhoL;
@@ -928,7 +944,10 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
                         double mup = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUP) ; 
                         double mue = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUE) ; 
                         double mun = interpolator.interp(logrhoL,logtempL,ye,tabulated_eos_t::TEOS_VIDX::TABMUN) ; 
-                        return mue + mup - mun ; 
+                        // mu_n/mu_p are relative to their own rest masses,
+                        // so neutrinoless beta equilibrium carries the
+                        // explicit n-p mass difference (Qnp).
+                        return mue + mup - mun - (mn_MeV - mp_MeV) ; 
                     } ; 
                     return utils::brent(dmu, yemin, yemax, 1e-14) ; 
                 } ; 
