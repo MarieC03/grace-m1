@@ -432,6 +432,24 @@ void register_variables() {
     register_evolved_scalar(YMUSTAR_,"ymu_star",hydro_bc,"second_order") ;
 
     #endif
+    #ifdef GRACE_M1_PHOTONS
+    register_evolved_scalar(ERADPH_,"Erad_ph",m1_bc,"second_order") ;
+    register_evolved_scalar(NRADPH_,"Nrad_ph",m1_bc,"second_order") ;
+    register_evolved_vector({FRADXPH_,FRADYPH_,FRADZPH_},"Frad_ph",m1_bc,"second_order") ;
+    #endif
+    #ifdef GRACE_M1_OPTICAL_DEPTH
+    // Inert (zero-flux) evolved scalars: registered for ghost exchange,
+    // AMR prolongation and BCs; updated by the eikonal relaxation sweep.
+    register_evolved_scalar(OPTD1_,"optd1",m1_bc,"second_order") ;
+    #ifdef M1_NU_THREESPECIES
+    register_evolved_scalar(OPTD2_,"optd2",m1_bc,"second_order") ;
+    register_evolved_scalar(OPTD3_,"optd3",m1_bc,"second_order") ;
+    #endif
+    #ifdef M1_NU_FIVESPECIES
+    register_evolved_scalar(OPTD4_,"optd4",m1_bc,"second_order") ;
+    register_evolved_scalar(OPTD5_,"optd5",m1_bc,"second_order") ;
+    #endif
+    #endif
     // aux
     register_aux_scalar(KAPPAA1_,"kappa_a1") ;
     register_aux_scalar(KAPPAS1_,"kappa_s1") ;
@@ -462,6 +480,28 @@ void register_variables() {
     register_aux_scalar(KAPPAAN5_,"kappa_n5") ;
     register_aux_scalar(ETAN5_,"eta_n5") ;
     register_aux_scalar(YMU_, "ymu") ;
+    #endif
+    #ifdef GRACE_M1_PHOTONS
+    register_aux_scalar(KAPPAAPH_,"kappa_a_ph") ;
+    register_aux_scalar(KAPPASPH_,"kappa_s_ph") ;
+    register_aux_scalar(ETAPH_,"eta_ph") ;
+    register_aux_scalar(KAPPAANPH_,"kappa_n_ph") ;
+    register_aux_scalar(ETANPH_,"eta_n_ph") ;
+    #endif
+    #ifdef GRACE_M1_DEBUG_EAS
+    register_aux_scalar(ETANU1_,"eta_nu1") ;
+    #ifdef M1_NU_THREESPECIES
+    register_aux_scalar(ETANU2_,"eta_nu2") ;
+    register_aux_scalar(ETANU3_,"eta_nu3") ;
+    #endif
+    #ifdef M1_NU_FIVESPECIES
+    register_aux_scalar(ETANU4_,"eta_nu4") ;
+    register_aux_scalar(ETANU5_,"eta_nu5") ;
+    #endif
+    register_aux_scalar(MUE_, "mu_e") ;
+    register_aux_scalar(MUMU_,"mu_mu") ;
+    register_aux_scalar(MUP_, "mu_p") ;
+    register_aux_scalar(MUN_, "mu_n") ;
     #endif
     #endif
 

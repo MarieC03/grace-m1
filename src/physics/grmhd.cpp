@@ -52,6 +52,8 @@
 #include <grace/physics/id/kelvin_helmholtz.hh>
 #include <grace/physics/id/cloud.hh>
 #include <grace/physics/id/tov.hh>
+#include <grace/physics/id/hot_tov.hh>
+#include <type_traits>
 #include <grace/physics/id/magnetic_rotor.hh>
 #include <grace/physics/id/cylindrical_blast.hh>
 #include <grace/physics/id/orszag_tang_vortex.hh>
@@ -578,6 +580,21 @@ void set_grmhd_initial_data() {
         atmo_params_t atmo_params = get_atmo_params() ;
 
         set_grmhd_initial_data_impl<eos_t,tov_id_t<eos_t>>(atmo_params,rho_c,p_floor,dr,pert_amp) ;
+    } else if ( id_type == "hot_tov") {
+        // FIL-style hot TOV: cold-slice structure + hot beta-eq thermal state.
+        // Needs the leptonic EOS (the hot beta-eq solve is leptonic-only).
+        if constexpr (std::is_same_v<eos_t, grace::leptonic_eos_4d_t>) {
+            auto const rho_c    = get_param<double>("grmhd", "tov", "rho_c") ;
+            auto const p_floor  = get_param<double>("grmhd", "tov", "press_floor") ;
+            auto const dr       = get_param<double>("grmhd", "tov", "dr") ;
+            auto const pert_amp = get_param<double>("grmhd", "tov", "pert_amp") ;
+            auto const T_id     = get_param<double>("grmhd", "tov", "hot_temperature") ;
+            atmo_params_t atmo_params = get_atmo_params() ;
+            set_grmhd_initial_data_impl<eos_t,hot_tov_id_t<eos_t>>(
+                atmo_params, rho_c, p_floor, dr, pert_amp, T_id) ;
+        } else {
+            ERROR("hot_tov initial data requires eos_type = leptonic") ;
+        }
     } else if( id_type == "magnetic_rotor" ) {
         auto pars = get_param<YAML::Node>("grmhd","magnetic_rotor") ;
         auto const rho_in  = pars["rho_in"].as<double>() ;

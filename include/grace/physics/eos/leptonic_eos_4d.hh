@@ -524,6 +524,65 @@ class leptonic_eos_4d_t
         limit_rho(rho, err) ;
         return cold_table.interp(Kokkos::log(rho), CTABENTROPY) ;
     }
+
+    // -----------------------------------------------------------------------
+    //  Hot beta-equilibrium: solve for (ye, ymu) at a given (rho, T).
+    //  npe-mu beta equilibrium in FIL/Margherita parity (Qnp subtracted),
+    //  identical conditions to the cold-table generator solve_muon_beta_eq:
+    //     (1)  mu_e(ye) = mu_mu(ymu)                 [inner, Qnp cancels]
+    //     (2)  mu_n - mu_p - mu_mu + Qnp = 0          [outer, FIL parity]
+    //  Device-callable.  Used by hot_tov initial data to set the THERMAL state
+    //  (Ye/Ymu at T) independently of the cold (structure) slice, mirroring
+    //  FIL's cold .rns structure + hot Margherita slice.
+    // -----------------------------------------------------------------------
+    void GRACE_HOST_DEVICE
+    betaeq_ye_ymu__rho_temp(double rho, double temp, double& ye, double& ymu) const
+    {
+        constexpr double Qnp = 1.29333236 ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = Kokkos::log(temp) ;
+        double const ye_lo = this->eos_yemin ;
+        double const ye_hi = this->eos_yemax ;
+
+        auto mue = [&](double y){ return ele_table.interp(lrho, ltemp, y, ELE_VIDX::TABMUELE) ; } ;
+        auto dnp = [&](double yp){   // mu_n - mu_p at clamped charge fraction
+            double const yc = Kokkos::fmin(ye_hi, Kokkos::fmax(ye_lo, yp)) ;
+            return baryon_table.interp(lrho, ltemp, yc, TABMUN)
+                 - baryon_table.interp(lrho, ltemp, yc, TABMUP) ;
+        } ;
+        // inner solve: ye such that mu_e(ye) = mm_target
+        double mm_target = 0.0 ;
+        auto inner = [&](double y){ return mue(y) - mm_target ; } ;
+        auto find_ye = [&](double mm) -> double {
+            mm_target = mm ;
+            double const lo = mue(ye_lo), hi = mue(ye_hi) ;
+            if ( mm <= Kokkos::fmin(lo,hi) ) return ye_lo ;
+            if ( mm >= Kokkos::fmax(lo,hi) ) return ye_hi ;
+            return utils::brent(inner, ye_lo, ye_hi, 1e-12) ;
+        } ;
+
+        double const lym_lo = Kokkos::log(this->eos_ymumin) ;
+        double const lym_hi = Kokkos::log(this->eos_ymumax) ;
+        auto outer = [&](double lym){
+            double const mm  = muon_table.interp(lrho, ltemp, lym, MUON_VIDX::TABMUMU) ;
+            double const yel = find_ye(mm) ;
+            double const yp  = yel + Kokkos::exp(lym) ;
+            return dnp(yp) - mm + Qnp ;          // mu_n - mu_p - mu_mu + Qnp
+        } ;
+
+        if ( outer(lym_lo) * outer(lym_hi) > 0.0 ) {
+            // No muons at this point -> pure npe: mu_e + mu_p - mu_n - Qnp = 0
+            ymu = this->eos_ymumin ;
+            auto npe = [&](double y){ return mue(y) - dnp(y) - Qnp ; } ;
+            double const a = npe(ye_lo), b = npe(ye_hi) ;
+            ye = ( a*b < 0.0 ) ? utils::brent(npe, ye_lo, ye_hi, 1e-12)
+                               : ( Kokkos::fabs(a) < Kokkos::fabs(b) ? ye_lo : ye_hi ) ;
+            return ;
+        }
+        double const lym = utils::brent(outer, lym_lo, lym_hi, 1e-12) ;
+        ymu = Kokkos::exp(lym) ;
+        ye  = find_ye( muon_table.interp(lrho, ltemp, lym, MUON_VIDX::TABMUMU) ) ;
+    }
     double GRACE_HOST_DEVICE
     rho__press_cold_impl(double& press_cold, err_t& err) const
     {

@@ -280,10 +280,10 @@ struct m1_equations_system_t
             &dE, &dF
         ) ;
         /**************************************************************************************************/
-        state_new(VEC(i,j,k),ERAD1_ + ispec * GRACE_N_M1_VARS,q)  += sqrtg * dt * dtfact * dE    ;
-        state_new(VEC(i,j,k),FRADX1_+ ispec * GRACE_N_M1_VARS,q) += sqrtg * dt * dtfact * dF[0] ;
-        state_new(VEC(i,j,k),FRADY1_+ ispec * GRACE_N_M1_VARS,q) += sqrtg * dt * dtfact * dF[1] ;
-        state_new(VEC(i,j,k),FRADZ1_+ ispec * GRACE_N_M1_VARS,q) += sqrtg * dt * dtfact * dF[2] ;
+        state_new(VEC(i,j,k),m1_erad_idx<ispec>(),q)  += sqrtg * dt * dtfact * dE    ;
+        state_new(VEC(i,j,k),m1_fradx_idx<ispec>(),q) += sqrtg * dt * dtfact * dF[0] ;
+        state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q) += sqrtg * dt * dtfact * dF[1] ;
+        state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q) += sqrtg * dt * dtfact * dF[2] ;
         /**************************************************************************************************/
     }
 
@@ -329,9 +329,9 @@ struct m1_equations_system_t
         // rescale if superluminal
         if ( cl.F >= cl.E ) {
             double fact = 0.9999 * cl.E / cl.F ;
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
-            this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) *= fact ;
+            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) *= fact ;
+            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) *= fact ;
+            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) *= fact ;
         }
         // compute radiation avg energy
         double epsilon = cl.J / prims[NRADL] * cl.Gamma ;
@@ -345,32 +345,32 @@ struct m1_equations_system_t
         if ( cl.E < E_atmo * (1. + 1.e-3 ) || prims[NRADL] < E_atmo * (1. + 1.e-3 ))
         {
             double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ;
-            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * atmo_state[0];
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[1] ;
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[2] ;
-            this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = atmo_state[3] ;
+            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * atmo_state[0];
+            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = atmo_state[1] ;
+            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = atmo_state[2] ;
+            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = atmo_state[3] ;
             // We set N in order to ensure a sensible average energy
             cl.update_closure(atmo_state,0,true) ;
-            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / eps_atmo ;
+            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * cl.J / eps_atmo ;
             epsilon = eps_atmo ;
         } else if ( excise ) {
-            this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * excision_params.E_ex ;
-            this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
-            this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
-            this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex ;
+            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
             // here since we are in excision it's safe to assume v^i == 0 :
             // Gamma == 1 and N = sqrtg E / eps_target
-            this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
+            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
             epsilon = excision_params.eps_ex;
         }
         // Finally check epsilon, if out of range
         // we adjust **only** Nrad
         //if ( epsilon < atmo_params.eps_min ) {
-        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ;
+        //    this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ;
         //} else if ( epsilon > atmo_params.eps_max ) {
         //    // avoid subnormal
         //    double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ;
-        //    this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * cl.Gamma * n ;
+        //    this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * n ;
         //}
 
     }
@@ -403,11 +403,11 @@ struct m1_equations_system_t
         /**************************************************************************************************/
         // read in eas
         m1_eas_array_t eas ;
-        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KAL]   = this->_aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q) ;
+        eas[KSL]   = this->_aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q) ;
+        eas[ETAL]  = this->_aux(VEC(i,j,k),m1_eta_idx<ispec>(),q) ;
+        eas[ETANL] = this->_aux(VEC(i,j,k),m1_etan_idx<ispec>(),q) ;
+        eas[KANL]  = this->_aux(VEC(i,j,k),m1_kappaan_idx<ispec>(),q) ;
         /**************************************************************************************************/
         // construct closure and update
         m1_prims_array_t prims ;
@@ -489,19 +489,19 @@ struct m1_equations_system_t
         //VOLATILE_WRITE(FRADX_, metric.sqrtg() * U1) ;
         //VOLATILE_WRITE(FRADY_, metric.sqrtg() * U2) ;
         //VOLATILE_WRITE(FRADZ_, metric.sqrtg() * U3) ;
-        state_new(i,j,k,ERAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * U[0] ;
-        state_new(i,j,k,FRADX1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[1] ;
-        state_new(i,j,k,FRADY1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[2] ;
-        state_new(i,j,k,FRADZ1_+ispec*GRACE_N_M1_VARS,q) = metric.sqrtg() * U[3] ;
+        state_new(i,j,k,m1_erad_idx<ispec>(),q)  = metric.sqrtg() * U[0] ;
+        state_new(i,j,k,m1_fradx_idx<ispec>(),q) = metric.sqrtg() * U[1] ;
+        state_new(i,j,k,m1_frady_idx<ispec>(),q) = metric.sqrtg() * U[2] ;
+        state_new(i,j,k,m1_fradz_idx<ispec>(),q) = metric.sqrtg() * U[3] ;
         /**************************************************************************************************/
         //#ifndef GRACE_FREEZE_HYDRO
-        //double const dE = this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //double const dE = this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_erad_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),TAU_,q) += dE ;
-        //double const dSx = this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) ;
+        //double const dSx = this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradx_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),SX_,q) += dSx ;
-        //double const dSy = this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
+        //double const dSy = this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),SY_,q) += dSy ;
-        //double const dSz = this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
+        //double const dSz = this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),SZ_,q) += dSz ;
         //#endif
         /**************************************************************************************************/
@@ -515,19 +515,19 @@ struct m1_equations_system_t
             prims, eas, dt, dtfact, &N, &dN
         ) ;
         //VOLATILE_WRITE(NRAD_,metric.sqrtg()*N) ;
-        state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q)  = metric.sqrtg() * N ;
+        state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
         /**************************************************************************************************/
         // if needed add dN to ye here!
         //#ifdef M1_NU_THREESPECIES
         //if constexpr ( ispec == 0 || ispec == 1) {
-        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),YESTAR_,q) += ye_coupling_sign[ispec] * dN ;
         //}
         //#endif
         ////KEN may have done a mistake, or at least not nice code
         //#ifdef M1_NU_FIVESPECIES
         //if constexpr ( ispec == 2 || ispec == 3) {
-        //dN = this->_state(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,q) ;
+        //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),YMUSTAR_,q) += ye_coupling_sign[ispec] * dN ;
         //}
         //#endif
@@ -569,7 +569,7 @@ struct m1_equations_system_t
             double dE = 0., dSx = 0., dSy = 0., dSz = 0. ;
             #pragma unroll
             for( int ispec = 0; ispec < n_species; ++ispec ) {
-                dE  += this->_state(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,q) ;
+                dE  += this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ;
                 dSx += this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) ;
                 dSy += this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
                 dSz += this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) - state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
@@ -594,7 +594,7 @@ struct m1_equations_system_t
                 // revert all radiation species to old state
                 #pragma unroll
                 for( int ispec = 0; ispec < n_species; ++ispec ) {
-                    state_new(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,q) ;
+                    state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ;
                     state_new(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) ;
                     state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
                     state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
@@ -673,6 +673,58 @@ struct m1_equations_system_t
         #endif
     }
 
+    #ifdef GRACE_M1_PHOTONS
+    /**
+     * @brief Photon backreaction onto the hydro state.
+     *
+     * Photons exchange energy and momentum with the fluid but carry no
+     * lepton number: there is deliberately no analogue of the dN -> Ye/Ymu
+     * coupling of the neutrino add_backreaction.  The energy-positivity
+     * limiter mirrors the neutrino one; on failure the photon block is
+     * reverted to its pre-collision state.
+     */
+    void KOKKOS_INLINE_FUNCTION
+    add_backreaction_photons( const int q
+                         , VEC( const int i
+                         ,      const int j
+                         ,      const int k)
+                         , grace::scalar_array_t<GRACE_NSPACEDIM> const /*idx*/
+                         , grace::var_array_t const state_new ) const
+    {
+        using namespace grace  ;
+
+        #ifndef GRACE_FREEZE_HYDRO
+        double const dE  = this->_state(VEC(i,j,k),ERADPH_,q)  - state_new(VEC(i,j,k),ERADPH_,q)  ;
+        double const dSx = this->_state(VEC(i,j,k),FRADXPH_,q) - state_new(VEC(i,j,k),FRADXPH_,q) ;
+        double const dSy = this->_state(VEC(i,j,k),FRADYPH_,q) - state_new(VEC(i,j,k),FRADYPH_,q) ;
+        double const dSz = this->_state(VEC(i,j,k),FRADZPH_,q) - state_new(VEC(i,j,k),FRADZPH_,q) ;
+
+        // Energy positivity check (same limiter as the neutrino version).
+        double const tau_old = state_new(VEC(i,j,k),TAU_,q) ;
+        bool const energy_good = ( tau_old + dE > 0. ) ;
+
+        double const factor_tau = ( dE < 0.0 ) ? ( -tau_old / dE ) : 1.0 ;
+        double const limiting_factor_E = energy_good ? 1.0 :
+                                         ( factor_tau >= 0.0 && factor_tau <= 1.0 ) ? factor_tau * (1.0 - 1e-10) :
+                                         1.0 ;
+
+        state_new(VEC(i,j,k),TAU_,q) += limiting_factor_E * dE  ;
+        state_new(VEC(i,j,k),SX_,q)  += limiting_factor_E * dSx ;
+        state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
+        state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
+
+        if ( !energy_good ) {
+            // revert the photon block to the pre-collision state
+            state_new(VEC(i,j,k),ERADPH_,q)  = this->_state(VEC(i,j,k),ERADPH_,q)  ;
+            state_new(VEC(i,j,k),NRADPH_,q)  = this->_state(VEC(i,j,k),NRADPH_,q)  ;
+            state_new(VEC(i,j,k),FRADXPH_,q) = this->_state(VEC(i,j,k),FRADXPH_,q) ;
+            state_new(VEC(i,j,k),FRADYPH_,q) = this->_state(VEC(i,j,k),FRADYPH_,q) ;
+            state_new(VEC(i,j,k),FRADZPH_,q) = this->_state(VEC(i,j,k),FRADZPH_,q) ;
+        }
+        #endif
+    }
+    #endif /* GRACE_M1_PHOTONS */
+
     /**
      * @brief Compute maximum absolute value eigenspeed.
      *
@@ -698,11 +750,11 @@ struct m1_equations_system_t
         /**************************************************************************************************/
         // read in eas
         m1_eas_array_t eas ;
-        eas[KAL]   = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[KSL]   = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[ETAL]  = this->_aux(VEC(i,j,k),ETA1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[ETANL] = this->_aux(VEC(i,j,k),ETAN1_+ispec*GRACE_N_M1_AUX,q) ;
-        eas[KANL]  = this->_aux(VEC(i,j,k),KAPPAAN1_+ispec*GRACE_N_M1_AUX,q) ;
+        eas[KAL]   = this->_aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q) ;
+        eas[KSL]   = this->_aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q) ;
+        eas[ETAL]  = this->_aux(VEC(i,j,k),m1_eta_idx<ispec>(),q) ;
+        eas[ETANL] = this->_aux(VEC(i,j,k),m1_etan_idx<ispec>(),q) ;
+        eas[KANL]  = this->_aux(VEC(i,j,k),m1_kappaan_idx<ispec>(),q) ;
         /**************************************************************************************************/
         // construct closure and update
         m1_prims_array_t prims ;
@@ -788,11 +840,11 @@ struct m1_equations_system_t
         /***********************************************************************/
         std::array<int, 5>
             recon_indices{
-                  ERAD1_ +ispec*GRACE_N_M1_VARS
-                , NRAD1_ +ispec*GRACE_N_M1_VARS
-                , FRADX1_ +ispec*GRACE_N_M1_VARS
-                , FRADY1_ +ispec*GRACE_N_M1_VARS
-                , FRADZ1_ +ispec*GRACE_N_M1_VARS
+                  m1_erad_idx<ispec>()
+                , m1_nrad_idx<ispec>()
+                , m1_fradx_idx<ispec>()
+                , m1_frady_idx<ispec>()
+                , m1_fradz_idx<ispec>()
             } ;
         /* Local indices in prims array (note z^k -> v^k) */
         std::array<int, 5>
@@ -878,8 +930,8 @@ struct m1_equations_system_t
         ) ;
         // compute the A factor for asymptotic flux correction
         // These are only the aux of e-neutrino
-        double const kappa_a = this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q);
-        double const kappa_s = this->_aux(VEC(i,j,k),KAPPAS1_+ispec*GRACE_N_M1_AUX,q);
+        double const kappa_a = this->_aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q);
+        double const kappa_s = this->_aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q);
         double const _dx = dx(idir,q);
         // this prevents division by zero while also clamping it
         // in [0,1]... I think!
@@ -909,14 +961,14 @@ struct m1_equations_system_t
         double E_r = primR[ERADL] * metric_face.sqrtg() ;
         double f_E_l = metric_face.sqrtg() * (metric_face.alp() * FUd_l - metric_face.beta(idir) * primL[ERADL]) ;
         double f_E_r = metric_face.sqrtg() * (metric_face.alp() * FUd_r - metric_face.beta(idir) * primR[ERADL]) ;
-        //fluxes(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ;
+        //fluxes(VEC(i,j,k),m1_erad_idx<ispec>(),idir,q) = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ;
         double f_E_HLLE = (cmax*f_E_l + cmin*f_E_r - A * cmax * cmin * (E_r-E_l))/(cmax+cmin) ;
         // Fx
         double Fx_l = primL[FXL] * metric_face.sqrtg() ;
         double Fx_r = primR[FXL] * metric_face.sqrtg() ;
         double f_Fx_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[0] - metric_face.beta(idir) * primL[FXL]) ;
         double f_Fx_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[0] - metric_face.beta(idir) * primR[FXL]) ;
-        //fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin)
+        //fluxes(VEC(i,j,k),m1_fradx_idx<ispec>(),idir,q) = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin)
         //                            + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r);
         double f_Fx_HLLE = (SQR(A)*(cmax*f_Fx_l + cmin*f_Fx_r) - A * cmax * cmin * (Fx_r-Fx_l))/(cmax+cmin)
                                     + (1-SQR(A)) * 0.5 * (f_Fx_l+f_Fx_r);
@@ -925,7 +977,7 @@ struct m1_equations_system_t
         double Fy_r = primR[FYL] * metric_face.sqrtg() ;
         double f_Fy_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[1] - metric_face.beta(idir) * primL[FYL]) ;
         double f_Fy_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[1] - metric_face.beta(idir) * primR[FYL]) ;
-        //fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin)
+        //fluxes(VEC(i,j,k),m1_frady_idx<ispec>(),idir,q) = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin)
         //                            + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r);
         double f_Fy_HLLE = (SQR(A)*(cmax*f_Fy_l + cmin*f_Fy_r) - A * cmax * cmin * (Fy_r-Fy_l))/(cmax+cmin)
                                     + (1-SQR(A)) * 0.5 * (f_Fy_l+f_Fy_r);
@@ -934,7 +986,7 @@ struct m1_equations_system_t
         double Fz_r = primR[FZL] * metric_face.sqrtg() ;
         double f_Fz_l = metric_face.sqrtg() * (metric_face.alp() * PUD_l[2] - metric_face.beta(idir) * primL[FZL]) ;
         double f_Fz_r = metric_face.sqrtg() * (metric_face.alp() * PUD_r[2] - metric_face.beta(idir) * primR[FZL]) ;
-        //fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin)
+        //fluxes(VEC(i,j,k),m1_fradz_idx<ispec>(),idir,q) = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin)
         //                            + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r);
         double f_Fz_HLLE = (SQR(A)*(cmax*f_Fz_l + cmin*f_Fz_r) - A * cmax * cmin * (Fz_r-Fz_l))/(cmax+cmin)
                                     + (1-SQR(A)) * 0.5 * (f_Fz_l+f_Fz_r);
@@ -943,7 +995,7 @@ struct m1_equations_system_t
         double N_r = primR[NRADL] *  metric_face.sqrtg() ;
         double f_N_l = metric_face.sqrtg() * metric_face.alp() * N_l/cl.Gamma * ( cl.W * (cl.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cl.HU[idir]/cl.J ) ;
         double f_N_r = metric_face.sqrtg() * metric_face.alp() * N_r/cr.Gamma * ( cr.W * (cr.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cr.HU[idir]/cr.J ) ;
-        //fluxes(VEC(i,j,k),NRAD1_+ispec*GRACE_N_M1_VARS,idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
+        //fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
         double f_N_HLLE = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
 
         //#define M1_USE_PPLIM
@@ -1062,25 +1114,25 @@ struct m1_equations_system_t
                 double theta = Kokkos::min(theta_m, theta_p) ;
                 if ( std::isnan(theta) ) theta = 0. ;
                 double const phi = (1. - theta) * A ;
-                    fluxes(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = (1.-phi)*f_E_HLLE  + phi*f_E_LF  ;
-                    fluxes(VEC(i,j,k),NRAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = (1.-phi)*f_N_HLLE  + phi*f_N_LF  ;
-                    fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = (1.-phi)*f_Fx_HLLE + phi*f_Fx_LF ;
-                    fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = (1.-phi)*f_Fy_HLLE + phi*f_Fy_LF ;
-                    fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = (1.-phi)*f_Fz_HLLE + phi*f_Fz_LF ;
+                    fluxes(VEC(i,j,k),m1_erad_idx<ispec>(),idir,q) = (1.-phi)*f_E_HLLE  + phi*f_E_LF  ;
+                    fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = (1.-phi)*f_N_HLLE  + phi*f_N_LF  ;
+                    fluxes(VEC(i,j,k),m1_fradx_idx<ispec>(),idir,q) = (1.-phi)*f_Fx_HLLE + phi*f_Fx_LF ;
+                    fluxes(VEC(i,j,k),m1_frady_idx<ispec>(),idir,q) = (1.-phi)*f_Fy_HLLE + phi*f_Fy_LF ;
+                    fluxes(VEC(i,j,k),m1_fradz_idx<ispec>(),idir,q) = (1.-phi)*f_Fz_HLLE + phi*f_Fz_LF ;
                 } else {
-                    fluxes(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_E_HLLE  ;
-                    fluxes(VEC(i,j,k),NRAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_N_HLLE  ;
-                    fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fx_HLLE ;
-                    fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fy_HLLE ;
-                    fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fz_HLLE ;
+                    fluxes(VEC(i,j,k),m1_erad_idx<ispec>(),idir,q) = f_E_HLLE  ;
+                    fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = f_N_HLLE  ;
+                    fluxes(VEC(i,j,k),m1_fradx_idx<ispec>(),idir,q) = f_Fx_HLLE ;
+                    fluxes(VEC(i,j,k),m1_frady_idx<ispec>(),idir,q) = f_Fy_HLLE ;
+                    fluxes(VEC(i,j,k),m1_fradz_idx<ispec>(),idir,q) = f_Fz_HLLE ;
                 }
             }
         #else
-                fluxes(VEC(i,j,k),ERAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_E_HLLE  ;
-                fluxes(VEC(i,j,k),NRAD1_ +ispec*GRACE_N_M1_VARS,idir,q) = f_N_HLLE  ;
-                fluxes(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fx_HLLE ;
-                fluxes(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fy_HLLE ;
-                fluxes(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,idir,q) = f_Fz_HLLE ;
+                fluxes(VEC(i,j,k),m1_erad_idx<ispec>(),idir,q) = f_E_HLLE  ;
+                fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = f_N_HLLE  ;
+                fluxes(VEC(i,j,k),m1_fradx_idx<ispec>(),idir,q) = f_Fx_HLLE ;
+                fluxes(VEC(i,j,k),m1_frady_idx<ispec>(),idir,q) = f_Fy_HLLE ;
+                fluxes(VEC(i,j,k),m1_fradz_idx<ispec>(),idir,q) = f_Fz_HLLE ;
         #endif
     }
 

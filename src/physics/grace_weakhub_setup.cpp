@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 #include <grace/config/config_parser.hh>
+#include <grace/physics/eas_kinds.hh>
 
 
 // h5 api?
@@ -53,11 +54,10 @@ namespace {
 }
 
 bool weakhub_enabled_from_params() {
-    bool use_weakhub = false;
-    const auto kind = get_param<std::string>("m1","eas","kind");
-    if (kind == "neutrino_weakhub") use_weakhub = true;
-    if (kind == "neutrino_analytic") use_weakhub = false;
-    return use_weakhub;
+    // Single validated parse shared with the set_m1_eas dispatch: a typo in
+    // the parfile errors out instead of silently disabling weakhub (the old
+    // string comparison defaulted to false for any unrecognised value).
+    return get_eas_selection().contains(eas_kind_t::neutrino_weakhub);
 }
 
 void initialize_weakhub_from_params() {

@@ -570,6 +570,17 @@ class grace_runtime_impl_t
             #ifdef M1_NU_FIVESPECIES
             ,"ymu_star"
             #endif
+            #ifdef GRACE_M1_OPTICAL_DEPTH
+            , "optd1"
+            #ifdef M1_NU_THREESPECIES
+            , "optd2"
+            , "optd3"
+            #endif
+            #ifdef M1_NU_FIVESPECIES
+            , "optd4"
+            , "optd5",
+            #endif // M1_NU_FIVESPECIES
+            #endif // GRACE_M1_OPTICAL_DEPTH
         };
 
 
@@ -583,22 +594,34 @@ class grace_runtime_impl_t
             #ifdef M1_NU_FIVESPECIES
             , "Erad4", "Nrad4", "Frad4[0]"
             , "Erad5", "Nrad5", "Frad5[0]"
-            #endif
-            #endif
+            #endif // M1_NU_FIVESPECIES
+            #endif // GRACE_ENABLE_M1
         };
 
         const std::vector<std::string> rates_aux  = {
             #ifdef GRACE_ENABLE_M1
             "kappa_a1", "kappa_s1", "eta1", "kappa_n1", "eta_n1"
             #ifdef M1_NU_THREESPECIES
-            ,  "kappa_a2", "kappa_s2", "eta2", "kappa_n2", "eta_n2"
-            ,  "kappa_a3", "kappa_s3", "eta3", "kappa_n3", "eta_n3"
+            , "kappa_a2", "kappa_s2", "eta2", "kappa_n2", "eta_n2"
+            , "kappa_a3", "kappa_s3", "eta3", "kappa_n3", "eta_n3"
             #endif
             #ifdef M1_NU_FIVESPECIES
-            ,  "kappa_a4", "kappa_s4", "eta4", "kappa_n4", "eta_n4"
-            ,  "kappa_a5", "kappa_s5", "eta5", "kappa_n5", "eta_n5"
+            , "kappa_a4", "kappa_s4", "eta4", "kappa_n4", "eta_n4"
+            , "kappa_a5", "kappa_s5", "eta5", "kappa_n5", "eta_n5"
             #endif
+            #ifdef GRACE_M1_DEBUG_EAS
+            // Debug: per-species fugacity eta_nu and the matter chemical
+            // potentials [MeV] that build it.
+            , "eta_nu1"
+            #ifdef M1_NU_THREESPECIES
+            , "eta_nu2", "eta_nu3"
             #endif
+            #ifdef M1_NU_FIVESPECIES
+            , "eta_nu4", "eta_nu5"
+            #endif
+            , "mu_e", "mu_mu", "mu_p", "mu_n"
+            #endif
+            #endif // GRACE_ENABLE_M1
         };
         auto out_cell_vars_volume = get_param<std::vector<std::string>>("IO","volume_output_cell_variables") ;
         auto out_cell_vars_plane_surface = get_param<std::vector<std::string>>("IO","plane_surface_output_cell_variables") ;

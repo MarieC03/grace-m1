@@ -17,6 +17,55 @@ if(M1_NU_THREESPECIES)
     set(GRACE_ENABLE_M1 ON)
     message(STATUS "M1 with 3-Species enabled.")
 endif()
+
+# Photon M1 transport: a single, explicitly-addressed radiation block with
+# its own variables and rates, decoupled from the neutrino species (no
+# lepton-number coupling).  Implies the M1 infrastructure.
+option(GRACE_M1_PHOTONS "Enable photon M1 transport block" OFF)
+if(GRACE_M1_PHOTONS)
+    set(GRACE_ENABLE_M1 ON)
+    message(STATUS "M1 photon transport enabled.")
+endif()
+
+# Eikonal optical-depth solver (Neilsen+ 2014): per-species neutrino optical
+# depths stored as inert (zero-flux) evolved variables so they inherit ghost
+# exchange + AMR prolongation + BCs, updated by a once-per-step min-path
+# relaxation sweep.  Implies the M1 infrastructure.  Off by default — the
+# tau fields cost flux-buffer memory, only paid when the eikonal tau policy
+# is used.
+option(GRACE_M1_OPTICAL_DEPTH "Enable the eikonal neutrino optical-depth solver" OFF)
+if(GRACE_M1_OPTICAL_DEPTH)
+    set(GRACE_ENABLE_M1 ON)
+    message(STATUS "M1 eikonal optical-depth solver enabled.")
+endif()
+
+# Debug: write EAS-rate diagnostic fields into dedicated aux slots so they can
+# be dumped via the "rates" output group and compared cell-by-cell against the
+# reference (FIL).  Covers the per-species equilibrium fugacity eta_nu = mu_nu/T
+# (eta_nu1..5) and the matter chemical potentials feeding it (mu_e, mu_mu, mu_p,
+# mu_n) -- the latter localise where mu_n-mu_p collapses so eta_nu is nonzero at
+# beta equilibrium.  Off by default; costs a handful of extra aux scalars when
+# enabled.  Implies the M1 infrastructure.
+option(GRACE_M1_DEBUG_EAS "Output EAS-rate diagnostics (eta_nu, mu_e/mu_mu/mu_p/mu_n) to aux" OFF)
+if(GRACE_M1_DEBUG_EAS)
+    set(GRACE_ENABLE_M1 ON)
+    message(STATUS "M1 EAS-rate diagnostics enabled.")
+endif()
+
+# bns_nurates is an optional header-only submodule providing one of the M1
+# EAS providers.  Build fine without it: the provider is compiled out and
+# selecting m1.eas kind "bns_nurates" in a parfile errors at startup.
+set(GRACE_HAVE_BNS_NURATES OFF)
+if(GRACE_ENABLE_M1)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/extern/bns_nurates/include/bns_nurates.hpp")
+        set(GRACE_HAVE_BNS_NURATES ON)
+        message(STATUS "bns_nurates submodule found: EAS provider enabled.")
+    else()
+        message(STATUS "bns_nurates submodule NOT found — building M1 without "
+                       "the bns_nurates EAS provider.  To enable it: "
+                       "git submodule update --init extern/bns_nurates")
+    endif()
+endif()
 option(GRACE_FREEZE_HYDRO "Freeze hydrodynamics evolution" OFF)
 
 # First-Order Flux Correction.  Stage-3 flagger + stage-4 donor-cell/LLF

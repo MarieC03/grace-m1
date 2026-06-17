@@ -48,10 +48,14 @@
 // m1 includes
 #include <grace/physics/m1.hh>
 #include <grace/physics/m1_helpers.hh>
+#include <grace/physics/eas_kinds.hh>
 #include <grace/physics/eas_policies.hh>
+#include <grace/physics/eas_optical_depth.hh>
 #include <grace/physics/id/m1_initial_data.hh>
 #include <grace/physics/grace_weakhub_table.hh>
+#ifdef GRACE_HAVE_BNS_NURATES
 #include <grace/physics/bns_nurates_grace.hh>
+#endif
 
 // grmhd + eos includes
 #include <grace/physics/grmhd_helpers.hh>
@@ -89,12 +93,17 @@ void set_m1_eas(
 
     auto eos = eos::get().get_eos<eos_t>() ;
 
-    auto eas_kind = get_param<std::string>("m1","eas","kind") ;
+    auto const eas = get_eas_selection() ;
 
     MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
         policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
 
-    if ( eas_kind == "test" ) {
+    // Run every selected provider, in parfile order.  Which providers may
+    // coexist is validated centrally in get_eas_selection().
+    for ( auto const eas_kind : eas.kinds )
+    switch ( eas_kind ) {
+
+    case eas_kind_t::test : {
         coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
         grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
         test_eas_op op(aux) ;
@@ -109,7 +118,10 @@ void set_m1_eas(
                 op(VEC(i,j,k),q,xyz) ;
             }
         );
-    } else if ( eas_kind == "photon_rates" ) {
+        break ;
+    }
+
+    case eas_kind_t::photon_rates : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
         photon_eas_op op(aux) ;
         parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"), policy
@@ -120,14 +132,17 @@ void set_m1_eas(
                 op(VEC(i,j,k),q,xyz) ;
             }
         );
-    } else if ( eas_kind == "neutrino_analytic" || eas_kind == "neutrino_weakhub" ) {
-        static bool weakhub_initialized = false;
-        if (!weakhub_initialized && eas_kind == "neutrino_weakhub") {
-            weakhub::initialize_weakhub_from_params();
-            weakhub_initialized = true;
-        }
+        break ;
+    }
+
+    case eas_kind_t::neutrino_weakhub :
+        // Weakhub = the analytic neutrino flow with table-backed opacities;
+        // the loader is internally guarded, so repeated calls are no-ops.
+        weakhub::initialize_weakhub_from_params() ;
+        [[fallthrough]] ;
+    case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
-        neutrinos_eas_op<eos_t> op(aux) ;
+        neutrinos_eas_op<eos_t> op(state, aux) ;
         parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"), policy,
             KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
@@ -136,12 +151,23 @@ void set_m1_eas(
                 op(VEC(i,j,k),q,xyz) ;
             }
         );
-    } else if ( eas_kind == "bns_nurates" ) {
+        break ;
+    }
+
+    case eas_kind_t::bns_nurates :
+        #ifdef GRACE_HAVE_BNS_NURATES
         // Currently being done in auxiliaries.cpp and bns_nurates.hpp
         set_m1_eas_bns_nurates<eos_t>(state, aux);
-    } else {
-        ERROR("EAS computation method not supported.") ;
+        #else
+        // Unreachable: get_eas_selection() rejects this kind when the
+        // submodule is absent.  Kept as a defensive backstop.
+        ERROR("m1.eas kind 'bns_nurates' selected but GRACE was built "
+              "without the bns_nurates submodule.") ;
+        #endif
+        break ;
     }
+    // No default: get_eas_kind() validates the string, and -Wswitch flags
+    // any enumerator added without a case here.
 }
 
 
@@ -198,6 +224,16 @@ static void set_m1_initial_data_impl(
             state(VEC(i,j,k),FRADX5_,q) = metric.sqrtg() * id.fradx5 ;
             state(VEC(i,j,k),FRADY5_,q) = metric.sqrtg() * id.frady5 ;
             state(VEC(i,j,k),FRADZ5_,q) = metric.sqrtg() * id.fradz5 ;
+            #endif
+            #ifdef GRACE_M1_PHOTONS
+            // Photon block: seeded from the species-1 ID profile so the
+            // existing radiation test setups (beam, scattering, vacuum)
+            // drive the photon fields identically.
+            state(VEC(i,j,k),ERADPH_,q)  = metric.sqrtg() * id.erad1 ;
+            state(VEC(i,j,k),NRADPH_,q)  = metric.sqrtg() * id.nrad1 ;
+            state(VEC(i,j,k),FRADXPH_,q) = metric.sqrtg() * id.fradx1 ;
+            state(VEC(i,j,k),FRADYPH_,q) = metric.sqrtg() * id.frady1 ;
+            state(VEC(i,j,k),FRADZPH_,q) = metric.sqrtg() * id.fradz1 ;
             #endif
         }
     ) ;
@@ -293,6 +329,16 @@ void set_m1_initial_data() {
         ) ;
         set_m1_initial_data_impl(id) ;
     }
+
+    #ifdef GRACE_M1_OPTICAL_DEPTH
+    // Seed the eikonal optical depth from the cold-NS fit before the first
+    // EAS evaluation (aux RHO_ is filled by the GRMHD ID that ran first).
+    {
+        auto& state = grace::variable_list::get().getstate() ;
+        auto& aux   = grace::variable_list::get().getaux()   ;
+        init_m1_optical_depth(state, aux) ;
+    }
+    #endif
 
     // now set eas
     set_m1_eas<eos_t>() ;

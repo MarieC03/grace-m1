@@ -197,10 +197,37 @@ enum evol_hrsc_var_cc_idx : int {
     FRADY5_,
     FRADZ5_,
     YMUSTAR_,
-    #endif 
-    #endif 
+    #endif
+    #ifdef GRACE_M1_PHOTONS
+    // Photon radiation block: a single species, addressed explicitly
+    // (never through the neutrino ispec*GRACE_N_M1_VARS arithmetic).
+    ERADPH_,
+    NRADPH_,
+    FRADXPH_,
+    FRADYPH_,
+    FRADZPH_,
+    #endif
+    #ifdef GRACE_M1_OPTICAL_DEPTH
+    // Per-block neutrino optical depths (eikonal solver).  Scalar, stride 1,
+    // one per radiation block in the same block->flavour mapping as ERAD*:
+    //   3sp: OPTD1_=nue, OPTD2_=nuebar, OPTD3_=nux
+    //   5sp: + OPTD4_=numubar (block 3), OPTD5_=nux (block 4) [OPTD3_=numu]
+    // Inert evolved variables: zero flux/source, carried unchanged by the RK
+    // and overwritten by the relaxation sweep; registered only so they get
+    // ghost exchange + AMR prolongation + BCs.
+    OPTD1_,
+    #ifdef M1_NU_THREESPECIES
+    OPTD2_,
+    OPTD3_,
+    #endif
+    #ifdef M1_NU_FIVESPECIES
+    OPTD4_,
+    OPTD5_,
+    #endif
+    #endif
+    #endif
     N_HRSC_CC
-} ; 
+} ;
 
 enum evol_var_fc_x_idx : int {
     BSX_=0,
@@ -333,6 +360,36 @@ enum aux_var_idx : int {
     KAPPAAN5_,
     //M1_IMPL_ERR5_,
     YMU_,
+    #endif
+    #ifdef GRACE_M1_PHOTONS
+    // Photon rates (same per-block layout as the neutrino species).
+    KAPPAAPH_,
+    KAPPASPH_,
+    ETAPH_,
+    ETANPH_,
+    KAPPAANPH_,
+    #endif
+    #ifdef GRACE_M1_DEBUG_EAS
+    // Debug: EAS-rate diagnostics written by neutrinos_eas_op from the
+    // fugacity_state F and dumped via the "rates" output group.  Gate with the
+    // GRACE_M1_DEBUG_EAS CMake option.
+    //   eta_nu = mu_nu / T  (per species)  -- the equilibrium fugacity.
+    ETANU1_,
+    #ifdef M1_NU_THREESPECIES
+    ETANU2_,
+    ETANU3_,
+    #endif
+    #ifdef M1_NU_FIVESPECIES
+    ETANU4_,
+    ETANU5_,
+    #endif
+    //   Matter chemical potentials [MeV] feeding eta_nu (mu_nue = mu_e+mu_p-mu_n
+    //   -Qnp).  mu_n-mu_p collapsing toward 0 leaves eta_nu ~ mu_e/T even at
+    //   beta equilibrium -- these localise that.
+    MUE_,
+    MUMU_,
+    MUP_,
+    MUN_,
     #endif
     #endif
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4

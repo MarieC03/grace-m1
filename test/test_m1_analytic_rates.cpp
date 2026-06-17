@@ -24,6 +24,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <grace/physics/eas_optical_depth.hh>
 
 #include <array>
 #include <cmath>
@@ -455,7 +456,14 @@ TEST_CASE("Plasmon decay: no electron-flavour emission, heavy-lepton split",
     fugacity_state F = make_hot_state();
     F.eta_nu = {{0, 0, 0, 0, 0}};
     rates_accum out{};
-    add_plasmon_decay_emission(F, out);
+    add_plasmon_decay_emission(F, out, /*include_electron_flavour=*/false);
+
+    // Weakhub variant: electron-flavour channel restored (legacy behaviour).
+    rates_accum out_wh{};
+    add_plasmon_decay_emission(F, out_wh, /*include_electron_flavour=*/true);
+    REQUIRE(out_wh.R[NUE] > 0.0);
+    REQUIRE_THAT(out_wh.R[NUEBAR], WithinRel(out_wh.R[NUE], kExactTol));
+    REQUIRE_THAT(out_wh.R[NUX],    WithinRel(out.R[NUX],    kExactTol));
 
     // Electron flavours are deliberately excluded (reference behaviour:
     // plasmon/pair additions overproduce nue/nuebar; their emission comes
@@ -590,6 +598,7 @@ TEST_CASE("make_fugacity_state: degeneracies, nucleon availability, "
         fugacity_state F = make_fugacity_state(
             eos, rho_code, T_mev, 0.1, 0.0, 1.0, kXyzOrigin, thick);
 
+        // FIL/Margherita parity: the neutrino chemical potential subtracts Qnp.
         const double mu_nue = eos.mu_e + eos.mu_p - eos.mu_n - Qnp;
         REQUIRE_THAT(F.eta_nu[NUE], WithinRel(mu_nue / T_mev, 1e-6));
         REQUIRE_THAT(F.eta_nu[NUEBAR], WithinRel(-mu_nue / T_mev, 1e-6));
@@ -617,7 +626,7 @@ TEST_CASE("compute_all_species: outputs finite and non-negative over a state gri
     for (double rho_cgs : {1.0e9, 1.0e11, 1.0e13, 1.0e14}) {
         for (double T_mev : {0.5, 2.0, 10.0, 30.0}) {
             const nu_rates_all_out all = compute_all_species(
-                eos, rho_cgs * RHOGF, T_mev, 0.1, 0.0, 1.0,
+                make_fugacity_state(eos, rho_cgs * RHOGF, T_mev, 0.1, 0.0, 1.0, kXyzOrigin, tau),
                 /*beta=*/true, /*plasmon=*/true, /*brems=*/true, /*pair=*/true,
                 kXyzOrigin, tau, /*temp_corr=*/true);
 
@@ -653,9 +662,9 @@ TEST_CASE("compute_all_species: process flags gate the rates",
 
     SECTION("all processes off leaves only scattering") {
         const nu_rates_all_out all = compute_all_species(
-            eos, rho_code, T_mev, 0.1, 0.0, 1.0,
-            false, false, false, false,
-            kXyzOrigin, tau, false);
+                make_fugacity_state(eos, rho_code, T_mev, 0.1, 0.0, 1.0, kXyzOrigin, tau),
+                false, false, false, false,
+                kXyzOrigin, tau, false);
         for (int s = 0; s < NUMSPECIES; ++s) {
             REQUIRE(all.out[s].eta_E   == 0.0);
             REQUIRE(all.out[s].eta_N   == 0.0);
@@ -669,9 +678,9 @@ TEST_CASE("compute_all_species: process flags gate the rates",
 
     SECTION("beta-only: electron flavors emit, NUX does not") {
         const nu_rates_all_out all = compute_all_species(
-            eos, rho_code, T_mev, 0.1, 0.0, 1.0,
-            true, false, false, false,
-            kXyzOrigin, tau, false);
+                make_fugacity_state(eos, rho_code, T_mev, 0.1, 0.0, 1.0, kXyzOrigin, tau),
+                true, false, false, false,
+                kXyzOrigin, tau, false);
         REQUIRE(all.out[NUE].eta_E      > 0.0);
         REQUIRE(all.out[NUEBAR].eta_E   > 0.0);
         REQUIRE(all.out[NUE].kappa_a    > 0.0);
@@ -691,9 +700,9 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
     // channels are zeroed; kappa_s intentionally survives.
     SECTION("cold matter suppresses muon emission") {
         const nu_rates_all_out all = compute_all_species(
-            eos, 1.0e13 * RHOGF, /*T=*/1.0, 0.1, 0.05, 1.0,
-            true, true, true, true,
-            kXyzOrigin, tau, false);
+                make_fugacity_state(eos, 1.0e13 * RHOGF, /*T=*/1.0, 0.1, 0.05, 1.0, kXyzOrigin, tau),
+                true, true, true, true,
+                kXyzOrigin, tau, false);
         for (int s : {static_cast<int>(NUMU), static_cast<int>(NUMUBAR)}) {
             REQUIRE(all.out[s].eta_E   == 0.0);
             REQUIRE(all.out[s].eta_N   == 0.0);
@@ -704,9 +713,9 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
 
     SECTION("hot dense matter keeps muon channels alive") {
         const nu_rates_all_out all = compute_all_species(
-            eos, 1.0e13 * RHOGF, /*T=*/10.0, 0.1, 0.05, 1.0,
-            true, true, true, true,
-            kXyzOrigin, tau, false);
+                make_fugacity_state(eos, 1.0e13 * RHOGF, /*T=*/10.0, 0.1, 0.05, 1.0, kXyzOrigin, tau),
+                true, true, true, true,
+                kXyzOrigin, tau, false);
         REQUIRE(all.out[NUMU].eta_E    > 0.0);
         REQUIRE(all.out[NUMUBAR].eta_E > 0.0);
     }
@@ -724,9 +733,9 @@ TEST_CASE("compute_all_species: heavy-lepton emissivities equal the thermal "
 
     // Pipeline result with bremsstrahlung only (cleanest thermal process).
     const nu_rates_all_out all = compute_all_species(
-        eos, rho_code, T_mev, 0.1, 0.05, 1.0,
-        /*beta=*/false, /*plasmon=*/false, /*brems=*/true, /*pair=*/false,
-        kXyzOrigin, tau, /*temp_corr=*/false);
+                make_fugacity_state(eos, rho_code, T_mev, 0.1, 0.05, 1.0, kXyzOrigin, tau),
+                /*beta=*/false, /*plasmon=*/false, /*brems=*/true, /*pair=*/false,
+                kXyzOrigin, tau, /*temp_corr=*/false);
 
     // Direct kernel evaluation on the identical fugacity state.
     fugacity_state F = make_fugacity_state(
@@ -760,8 +769,9 @@ TEST_CASE("compute_species wrapper agrees with compute_all_species",
     const double rho_code = 1.0e13 * RHOGF;
 
     const nu_rates_all_out all = compute_all_species(
-        eos, rho_code, 10.0, 0.1, 0.0, 1.0,
-        true, true, true, true, kXyzOrigin, tau, true);
+                make_fugacity_state(eos, rho_code, 10.0, 0.1, 0.0, 1.0, kXyzOrigin, tau),
+                true, true, true, true,
+                kXyzOrigin, tau, true);
 
     for (int s = 0; s < NUMSPECIES; ++s) {
         const nu_rates_out one = compute_species(

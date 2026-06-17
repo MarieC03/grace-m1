@@ -90,10 +90,20 @@ m1:
 
     kind: 
       type: keyword 
-      allowed: ["test", "basic_photon_rates", "neutrino_analytic", "neutrino_weakhub", "bns_nurates"]
+      allowed: ["test", "photon_rates", "neutrino_analytic", "neutrino_weakhub", "bns_nurates"]
       default: "test" 
       description: > 
-        What prescription to use to set eas 
+        EAS provider (single).  Ignored when 'kinds' is non-empty. 
+
+    kinds:
+      type: list
+      item_type: string
+      default: []
+      description: >
+        EAS providers to run, in order (composable form).  Same values as
+        'kind'.  Combining photon_rates with a neutrino provider requires
+        a build with -DGRACE_M1_PHOTONS=ON.  Empty list falls back to the
+        scalar 'kind'.
 
     use_analytic:
       type: bool
@@ -126,10 +136,11 @@ m1:
         Including pair_annihilation in the rates calculation
 
     betaeq_policy:
-      type: bool
-      default: false
+      type: keyword
+      allowed: ["off", "chemical", "timescale"]
+      default: "off"
       description: >
-        Do we calculate the beta-equilibrium
+        Per-cell beta-equilibrium reset of Ye before evaluating the rates.
         
     temperature_correction: 
       type: bool
@@ -142,14 +153,23 @@ m1:
       range: "[0,*)"
       default: 0
       description: >
-        "Not yet implemented"
+        Outer radius [code units] of the optical-depth path estimate.
+        Required (> 0) by tau_policy local_spherical and local_kappa.
 
     tau_policy:
       type: keyword
-      allowed: ["analytic_density","local_spherical","none"]
+      allowed: ["analytic_density","local_spherical","local_kappa","eikonal","none"]
       default: "none"
       description: >
-        "Not yet implemented"
+        Optical depth used to suppress the neutrino fugacities
+        (eta_nu -> eta_nu * (1 - exp(-tau))).
+        none: thin limit everywhere.
+        analytic_density: Deaton+ 2013 density fit — COLD NS only, known
+        to fail for hot matter.
+        local_spherical: kappa * (r_outer - r) seeded by the cold fit.
+        local_kappa: per-species (kappa_a + kappa_s) * (r_outer - r) using
+        the previous step's opacities (recommended; thin at t=0, builds up
+        within one step).
 
     weakhub_table:
       type: string

@@ -427,80 +427,13 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double black_body_energy(double g_nu, doub
 
 
 // -----------------------------------------------------------------------------
-// Optical depth (tau) handling
-//  - tau_init : an approximate tau used to suppress fugacities
-//  - tau_post : an optional post-rate estimate (e.g. kappa_tot * dr)
-// Policy interface:
+// Optical depth (tau) handling has moved to eas_optical_depth.hh.
+// The functions below take the tau policy as a template parameter:
 //   double tau_init(double rho_code, const double* xyz_code, double mass_scale,
 //                   int species, double rho_cgs) const;
 //   double tau_post(double kappa_tot_cgs, double rho_code, const double* xyz_code,
 //                   double mass_scale, int species, double rho_cgs) const;
 // -----------------------------------------------------------------------------
-
-GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-double compute_analytic_tau_from_rho_cgs(double rho_cgs) {
-    // Deaton+ 2013 fit (log10 tau vs log10 rho) for cold NS-like profiles.
-    const double rcgs = safe_pos(rho_cgs);
-    const double log10_tau = 0.96 * ((Kokkos::log(rcgs) / Kokkos::log(10.0)) - 11.7);
-    const double tau = Kokkos::exp(Kokkos::log(10.0) * log10_tau);
-    return (Kokkos::isfinite(tau) && tau > 0.0) ? tau : 0.0;
-}
-
-struct tau_policy_none {
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
-                                           double /*mass_scale*/, int /*species*/,
-                                           double /*rho_cgs*/) const {
-        return 0.0;
-    }
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_post(double /*kappa_tot_cgs*/, double /*rho_code*/,
-                                           const double* /*xyz_code*/, double /*mass_scale*/,
-                                           int /*species*/, double /*rho_cgs*/) const {
-        return 0.0;
-        }
-};
-
-struct tau_policy_analytic_density {
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
-                                           double /*mass_scale*/, int /*species*/,
-                                           double rho_cgs) const {
-        return compute_analytic_tau_from_rho_cgs(rho_cgs);
-    }
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_post(double /*kappa_tot_cgs*/, double /*rho_code*/,
-                                           const double* /*xyz_code*/, double /*mass_scale*/,
-                                           int /*species*/, double rho_cgs) const {
-        return compute_analytic_tau_from_rho_cgs(rho_cgs);
-        }
-};
-
-struct tau_policy_local_spherical {
-    // Outer radius in code units (same coordinates as xyz). If <=0, tau_post returns 0.
-    double r_outer_code{0.0};
-    // Optional seed for tau_init.
-    bool seed_with_analytic{true};
-
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_init(double /*rho_code*/, const double* /*xyz_code*/,
-                                           double /*mass_scale*/, int /*species*/,
-                                           double rho_cgs) const {
-        return seed_with_analytic ? compute_analytic_tau_from_rho_cgs(rho_cgs) : 0.0;
-    }
-
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double tau_post(double kappa_tot_cgs, double /*rho_code*/,
-                                           const double* xyz_code, double mass_scale,
-                                           int /*species*/, double /*rho_cgs*/) const {
-        if (!(r_outer_code > 0.0) || !(kappa_tot_cgs > 0.0)) return 0.0;
-        const double r_code = Kokkos::sqrt(xyz_code[0]*xyz_code[0] + xyz_code[1]*xyz_code[1] + xyz_code[2]*xyz_code[2]);
-        const double dr_code = (r_outer_code > r_code) ? (r_outer_code - r_code) : 0.0;
-        const double dr_cm = dr_code * code_length_to_cm(mass_scale);
-        const double tau = kappa_tot_cgs * dr_cm;
-        return (::isfinite(tau) && tau > 0.0) ? tau : 0.0;
-    }
-};
 
 template <typename eos_t, typename tau_policy_t>
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
@@ -547,24 +480,20 @@ fugacity_state make_fugacity_state(
     using namespace grace::physical_constants;
     F.nb = safe_pos(F.rho_cgs) * nu_constants::avogadro ;// nu_constants::mnuc_cgs;
 
+    // Qnp convention — FIL/Margherita PARITY (matches the reference
+    // fugacities.hh, which subtracts Qnp, AND the leptonic cold-table
+    // beta-eq solvers, which now also subtract it).  Empirically verified:
+    // only with -Qnp does the beta-eq Ye reproduce FIL (0.06014 vs the
+    // no-Qnp 0.0595 at the central point).  The neutrino chemical potentials
+    // are therefore zero at FIL's equilibrium (mu_e+mu_p-mu_n = Qnp).
+    // mu_hat keeps -Qnp independently (kinetic Bruenn nucleon degeneracy).
     const double mu_hat = F.mu_n - F.mu_p - Qnp;
     const double mu_nue = F.mu_e + F.mu_p - F.mu_n - Qnp;
     const double mu_nuebar = -mu_nue;
 
-    // Muonic species: default heavy-lepton neutrinos have zero equilibrium
-    // chemical potential.  A genuine 5-species muonic-EOS path must replace
-    // mu_numu by
-    //     mu_mu + mu_p - mu_n - Qnp
-    // and mu_numubar by -mu_numu.  The current GRACE EOS call above does not
-    // return mu_mu, so the analytic 5-species mode is non-muonic unless that
-    // EOS interface is extended.
-    //
-    // KEN maybe an if statement is needed, maybe not
     double mu_numu = F.mu_mu + F.mu_p - F.mu_n - Qnp;
     double mu_numubar = - mu_numu;
     double mu_nux = 0.0;
-
-    //F.mu_p = F.mu_p + Qnp; //Harry does this for eta_p?
 
     const double T = safe_pos(F.temp_mev);
     F.eta_e   = F.mu_e / T;
@@ -611,6 +540,26 @@ fugacity_state make_fugacity_state(
         if (Kokkos::isfinite(fac_numubar)) F.eta_nu[NUMUBAR] *= fac_numubar;
         #endif
     }
+
+    #ifdef M1_NU_FIVESPECIES
+    // Muonic-eta stabilizers (FIL fugacities.hh).  eta_numu = mu_numu/T carries
+    // the ~105 MeV muon rest mass and explodes out of muonic equilibrium,
+    // overflowing exp(eta) in the rate blocking factors -> NaN.  Zero it where
+    // muons are negligible, then clamp to +/-5.  ONLY the muonic flavours: the
+    // electron eta is small near beta equilibrium and NUX is left untouched, as
+    // in the reference.
+    {
+        constexpr double tau_nu_thr = 1.0 ;
+        if (F.tau_n[NUMU]    < tau_nu_thr) F.eta_nu[NUMU]    = 0.0 ;
+        if (F.tau_n[NUMUBAR] < tau_nu_thr) F.eta_nu[NUMUBAR] = 0.0 ;
+        if (F.rho_cgs < 1.0e11 || F.ymu < 0.005) {
+            F.eta_nu[NUMU]    = 0.0 ;
+            F.eta_nu[NUMUBAR] = 0.0 ;
+        }
+        F.eta_nu[NUMU]    = Kokkos::fmax(-5.0, Kokkos::fmin(5.0, F.eta_nu[NUMU])) ;
+        F.eta_nu[NUMUBAR] = Kokkos::fmax(-5.0, Kokkos::fmin(5.0, F.eta_nu[NUMUBAR])) ;
+    }
+    #endif
 
     return F;
     }
@@ -773,8 +722,17 @@ void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
     #endif
 }
 
+// include_electron_flavour:
+//   - the ANALYTIC pipeline passes false (FIL reference parity: plasmon and
+//     pair additions overproduce nue/nuebar even with blocking factors;
+//     electron-flavour emission comes solely from Kirchhoff inversion of
+//     the beta absorption opacity, see compute_all_species Step 4).
+//   - the WEAKHUB pipeline passes true, preserving GRACE's long-standing
+//     weakhub behaviour where the analytic thermal extras layered on the
+//     table include the electron-flavour plasmon channel.
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out) {
+void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out,
+                                bool include_electron_flavour) {
     using namespace nu_constants;
 
     const double gamma = gamma_0 * Kokkos::sqrt((pi*pi + 3.0 * F.eta_e * F.eta_e) / 3.0);
@@ -790,11 +748,17 @@ void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out) {
         ipow<6>(gamma) * Kokkos::exp(-gamma) * (1.0 + gamma) * ipow<8>(F.temp_mev);
 
     const double Q_gamma = F.temp_mev * 0.5 * (2.0 + gamma * gamma / (1.0 + gamma));
-    // NB: no nue/nuebar plasmon contribution.  The reference implementation
-    // found that plasmon (and pair) additions to the electron flavours
-    // overproduce nue/nuebar even with blocking factors; electron-flavour
-    // emission comes solely from Kirchhoff inversion of the beta absorption
-    // opacity (see compute_all_species Step 4).
+
+    if (include_electron_flavour) {
+        const double R_gamma = ipow<2>(Cv) * gamma_const /
+                               (block[NUE] * block[NUEBAR]);
+        if (Kokkos::isfinite(R_gamma) && (R_gamma > 0.0)) {
+            out.R[NUE]    += R_gamma;
+            out.R[NUEBAR] += R_gamma;
+            out.Q[NUE]    += Q_gamma * R_gamma;
+            out.Q[NUEBAR] += Q_gamma * R_gamma;
+        }
+    }
 
     #ifdef M1_NU_FIVESPECIES
     // In 5-species mode NUX is only tau + anti-tau, so use degeneracy 2.
@@ -920,28 +884,25 @@ void add_kirchhoff_emission_from_absorption_opacity(
 // compute opacities/emissivities for one species.
 // -----------------------------------------------------------------------------
 
-template <typename eos_t, typename tau_policy_t>
+// The fugacity state F is built by the CALLER (make_fugacity_state) and
+// passed in: the caller keeps access to the optical depths F.tau_n and can
+// modify the state (e.g. tau-dependent beta equilibrium) before computing
+// the rates.  All thermodynamic inputs travel inside F.
+template <typename tau_policy_t>
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 nu_rates_all_out compute_all_species_weakhub(
     const grace::weakhub::device_handle& weakhub,
-    const eos_t& eos,
-    double rho_code,
-    double temp_code,
-    double ye,
-    double ymu,
-    double mass_scale,
+    const fugacity_state& F,
     bool plasmon_decay,
     bool bremsstrahlung,
     bool pair_annihilation,
     const double* xyz_code,
     const tau_policy_t& tau_policy,
-    bool apply_temp_correction)
+    bool apply_temp_correction,
+    const double* eps_rad)
 {
-    fugacity_state F = make_fugacity_state(eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
-
-
-    //const auto tbl = weakhub.lookup(F.rho_cgs, F.temp_mev, ye, ymu);
-    const auto tbl = weakhub.lookup(rho_code, F.temp_mev, ye, ymu);
+    //const auto tbl = weakhub.lookup(F.rho_cgs, F.temp_mev, F.ye, F.ymu);
+    const auto tbl = weakhub.lookup(F.rho_code, F.temp_mev, F.ye, F.ymu);
     rates_accum rates{};
     for (int s = NUE; s <= NUX; ++s) {
         rates.kappa_a[s] = tbl.kappa_a_en[s];
@@ -964,7 +925,7 @@ nu_rates_all_out compute_all_species_weakhub(
 
     rates_accum extra{};
     if (pair_annihilation) add_pair_process_emission(F, extra);
-    if (plasmon_decay) add_plasmon_decay_emission(F, extra);
+    if (plasmon_decay) add_plasmon_decay_emission(F, extra, /*include_electron_flavour=*/true);
     if (bremsstrahlung) add_brems_emission(F, extra);
 
     std::array<double, NUMSPECIES> kappa_a_add{{0,0,0,0,0}}, kappa_n_add{{0,0,0,0,0}};
@@ -984,14 +945,18 @@ nu_rates_all_out compute_all_species_weakhub(
 
     for (int s = NUE; s <= NUX; ++s) {
         const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
-        (void)tau_policy.tau_post(kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
+        (void)tau_policy.tau_post(kappa_tot, F.rho_code, xyz_code, F.mass_scale, s, F.rho_cgs);
     }
 
     if (apply_temp_correction) {
         for (int s = NUE; s <= NUX; ++s) {
-        const double Rloc = rates.R[s], Qloc = rates.Q[s];
-        if (Rloc > 0.0 && Qloc > 0.0) {
-            const double eps_mev = Qloc / Rloc;
+        // FIL parity: drive the spectral correction off the ACTUAL radiation
+        // field's mean energy (eps_rad[s], fluid frame, MeV), NOT the emission
+        // spectrum Q/R.  When there is no radiation yet (eps_rad = 0, e.g.
+        // iteration 0 / atmosphere) the correction is inert (fact = 1), exactly
+        // as in the reference where eps_nue -> 0 gives temp_nue -> 0 -> fact 1.
+        const double eps_mev = eps_rad ? eps_rad[s] : 0.0;
+        if (eps_mev > 0.0) {
             const double Tnu_mev = fermi::FDR<2,3>::get(F.eta_nu[s]) * eps_mev;
             double fact = 1.0;
             if (Kokkos::isfinite(Tnu_mev) && Tnu_mev > 0.0) {
@@ -1000,18 +965,21 @@ nu_rates_all_out compute_all_species_weakhub(
             if (fact < 1.0) fact = 1.0;
             }
             if (Kokkos::isfinite(fact) && fact > 0.0) {
-            // TODO is it correct like that?
             if(s == NUX){
                 rates.kappa_s[s] *= fact;
-            }else{
+            } else if (s == NUMU || s == NUMUBAR) {
+                // FIL/Weakhub parity: NO T_nu correction for the muon species
+                // in the weakhub path (driver_get_eas.cc sets numu_fact =
+                // numu_bar_fact = 1.0).  The table opacities already carry the
+                // spectral information, so scaling would double-count.
+            } else {
+                // NUE, NUEBAR
                 rates.Q[s]       *= fact;
                 rates.R[s]       *= fact;
                 rates.kappa_a[s] *= fact;
                 rates.kappa_n[s] *= fact;
                 rates.kappa_s[s] *= fact;
             }
-            //rates.Q[s] *= fact; rates.R[s] *= fact;
-            //rates.kappa_a[s] *= fact; rates.kappa_n[s] *= fact; rates.kappa_s[s] *= fact;
             }
         }
         }
@@ -1020,16 +988,16 @@ nu_rates_all_out compute_all_species_weakhub(
     nu_rates_all_out all{};
     for (int s = NUE; s <= NUX; ++s) {
         nu_rates_out out{};
-        out.eta_E   = Q_mev_to_code(rates.Q[s], mass_scale);
-        out.eta_N   = R_to_code(rates.R[s], mass_scale);
-        out.kappa_a = kappa_to_code(rates.kappa_a[s], mass_scale);
-        out.kappa_n = kappa_to_code(rates.kappa_n[s], mass_scale);
-        out.kappa_s = kappa_to_code(rates.kappa_s[s], mass_scale);
+        out.eta_E   = Q_mev_to_code(rates.Q[s], F.mass_scale);
+        out.eta_N   = R_to_code(rates.R[s], F.mass_scale);
+        out.kappa_a = kappa_to_code(rates.kappa_a[s], F.mass_scale);
+        out.kappa_n = kappa_to_code(rates.kappa_n[s], F.mass_scale);
+        out.kappa_s = kappa_to_code(rates.kappa_s[s], F.mass_scale);
         if (!Kokkos::isfinite(out.eta_E)) out.eta_E = 0.0;
         if (!Kokkos::isfinite(out.eta_N)) out.eta_N = 0.0;
-        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 0.0;
-        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 0.0;
-        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 0.0;
+        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 1.0e-30;
+        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 1.0e-30;
+        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 1.0e-30;
         all.out[s] = out;
     }
     return all;
@@ -1038,25 +1006,22 @@ nu_rates_all_out compute_all_species_weakhub(
 // -----------------------------------------------------------------------------
 // Compute *all* species at once (CUDA-friendly; avoids per-species EOS calls).
 // -----------------------------------------------------------------------------
-template <typename eos_t, typename tau_policy_t>
+// The fugacity state F is built by the CALLER (make_fugacity_state) and
+// passed in: the caller keeps access to the optical depths F.tau_n and can
+// modify the state (e.g. tau-dependent beta equilibrium) before computing
+// the rates.  All thermodynamic inputs travel inside F.
+template <typename tau_policy_t>
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
-    const eos_t& eos,
-    double rho_code,
-    double temp_code,
-    double ye,
-    double ymu,
-    double mass_scale,
+    const fugacity_state& F,
     bool beta_decay,
     bool plasmon_decay,
     bool bremsstrahlung,
     bool pair_annihilation,
     const double* xyz_code,
     const tau_policy_t& tau_policy,
-    bool apply_temp_correction)
+    bool apply_temp_correction,
+    const double* eps_rad = nullptr)
 {
-    fugacity_state F = make_fugacity_state(
-        eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
-
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
 #ifdef M1_NU_FIVESPECIES
     g_nu = {{1,1,1,1,2}};
@@ -1078,7 +1043,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     // -------------------------------------------------------------------------
     rates_accum thermal{};
     if (pair_annihilation) add_pair_process_emission(F, thermal);
-    if (plasmon_decay)     add_plasmon_decay_emission(F, thermal);
+    if (plasmon_decay)     add_plasmon_decay_emission(F, thermal, /*include_electron_flavour=*/false);
     if (bremsstrahlung)    add_brems_emission(F, thermal);
 
     // -------------------------------------------------------------------------
@@ -1146,11 +1111,12 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     // -------------------------------------------------------------------------
     if (apply_temp_correction) {
         for (int s = 0; s < NUMSPECIES; ++s) {
-            const double Rloc = rates.R[s];
-            const double Qloc = rates.Q[s];
-            if (!(Rloc > 0.0) || !(Qloc > 0.0)) continue;
+            // FIL parity: spectral correction off the radiation field's mean
+            // energy (eps_rad[s], fluid frame, MeV), not the emission Q/R.
+            // eps_rad = 0 (no radiation, e.g. it=0) -> correction inert.
+            const double eps_mev = eps_rad ? eps_rad[s] : 0.0;
+            if (!(eps_mev > 0.0)) continue;
 
-            const double eps_mev = Qloc / Rloc;
             const double Tnu_mev = fermi::FDR<2,3>::get(F.eta_nu[s]) * eps_mev;
             const double Tf_mev  = safe_pos(F.temp_mev);
 
@@ -1161,8 +1127,8 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
                 if (fact < 1.0) fact = 1.0;
             }
             if (!Kokkos::isfinite(fact) || !(fact > 0.0)) continue;
-
-            if (s == NUX) {
+            if(s == NUMU || s == NUMUBAR) fact = 1.0;
+            else if (s == NUX) {
                 rates.kappa_s[s] *= fact;
             } else {
                 rates.Q[s]       *= fact;
@@ -1180,7 +1146,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     for (int s = 0; s < NUMSPECIES; ++s) {
         const double kappa_tot = rates.kappa_a[s] + rates.kappa_s[s];
         (void)tau_policy.tau_post(
-            kappa_tot, rho_code, xyz_code, mass_scale, s, F.rho_cgs);
+            kappa_tot, F.rho_code, xyz_code, F.mass_scale, s, F.rho_cgs);
     }
 
     // -------------------------------------------------------------------------
@@ -1189,16 +1155,16 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     nu_rates_all_out all;
     for (int s = 0; s < NUMSPECIES; ++s) {
         nu_rates_out out;
-        out.eta_E   = Q_mev_to_code(rates.Q[s],       mass_scale);
-        out.eta_N   = R_to_code(rates.R[s],            mass_scale);
-        out.kappa_a = kappa_to_code(rates.kappa_a[s],  mass_scale);
-        out.kappa_n = kappa_to_code(rates.kappa_n[s],  mass_scale);
-        out.kappa_s = kappa_to_code(rates.kappa_s[s],  mass_scale);
+        out.eta_E   = Q_mev_to_code(rates.Q[s],       F.mass_scale);
+        out.eta_N   = R_to_code(rates.R[s],            F.mass_scale);
+        out.kappa_a = kappa_to_code(rates.kappa_a[s],  F.mass_scale);
+        out.kappa_n = kappa_to_code(rates.kappa_n[s],  F.mass_scale);
+        out.kappa_s = kappa_to_code(rates.kappa_s[s],  F.mass_scale);
         if (!Kokkos::isfinite(out.eta_E))   out.eta_E   = 0.0;
         if (!Kokkos::isfinite(out.eta_N))   out.eta_N   = 0.0;
-        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 0.0;
-        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 0.0;
-        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 0.0;
+        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 1.0e-30;
+        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 1.0e-30;
+        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 1.0e-30;
         all.out[s] = out;
     }
     return all;
@@ -1222,9 +1188,10 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_out compute_species(
     const tau_policy_t& tau_policy,
     bool apply_temp_correction)
 {
+    fugacity_state const F = make_fugacity_state(
+        eos, rho_code, temp_code, ye, ymu, mass_scale, xyz_code, tau_policy);
     const nu_rates_all_out all = compute_all_species(
-        eos, rho_code, temp_code, ye, ymu, mass_scale,
-        beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation,
+        F, beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation,
         xyz_code, tau_policy, apply_temp_correction);
     return all.out[species];
 }

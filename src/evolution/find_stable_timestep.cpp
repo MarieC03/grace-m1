@@ -120,6 +120,9 @@ void find_stable_timestep_impl() {
         m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<3>(VEC(i,j,k), q));
         m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<4>(VEC(i,j,k), q));
         #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<M1_PHOTON_SPECIES>(VEC(i,j,k), q));
+        #endif
         cmax = fmax(cmax, m1_cmax);
         #endif
         #else

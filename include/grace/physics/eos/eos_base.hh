@@ -546,7 +546,7 @@ class eos_base_t {
       , error_type &err) const
     {
         return static_cast<eos_impl_t const*>(this)->mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu_impl(
-            mup,mumu,mun,Xa,Xh,Xn,Xp,Abar,Zbar,temp,rho,ye,ymu,err
+            mumu,mup,mun,Xa,Xh,Xn,Xp,Abar,Zbar,temp,rho,ye,ymu,err
             ) ;
     }
     /**

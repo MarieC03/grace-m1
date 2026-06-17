@@ -163,6 +163,10 @@ namespace grace {
 #cmakedefine GRACE_ENABLE_M1
 #cmakedefine M1_NU_THREESPECIES
 #cmakedefine M1_NU_FIVESPECIES
+#cmakedefine GRACE_M1_PHOTONS
+#cmakedefine GRACE_M1_OPTICAL_DEPTH
+#cmakedefine GRACE_M1_DEBUG_EAS
+#cmakedefine GRACE_HAVE_BNS_NURATES
 #cmakedefine GRACE_ENABLE_PARTICLES
 
 #ifdef GRACE_ENABLE_M1

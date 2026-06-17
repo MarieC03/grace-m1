@@ -58,6 +58,10 @@
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
+#ifdef GRACE_M1_OPTICAL_DEPTH
+#include <grace/physics/eas_optical_depth.hh>
+#include <grace/physics/eas_kinds.hh>
+#endif
 #endif
 #include <grace/physics/eos/eos_types.hh>
 
@@ -984,6 +988,11 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
+            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+        );
+        #endif
     }) ;
     #endif
     //**************************************************************************************************/
@@ -1017,6 +1026,11 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
+            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+        );
+        #endif
     }) ;
     #endif
     //**************************************************************************************************/
@@ -1047,6 +1061,11 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,4>(
+            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+        );
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
@@ -1440,6 +1459,9 @@ void add_fluxes_and_source_terms(
         m1_eq_system.compute_source_terms<3>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         m1_eq_system.compute_source_terms<4>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_eq_system.compute_source_terms<M1_PHOTON_SPECIES>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
+        #endif
     });
     #endif
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_sources")
@@ -1731,10 +1753,24 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #endif
+            #ifdef GRACE_M1_PHOTONS
+            m1_eq_system.compute_implicit_update<M1_PHOTON_SPECIES>(
+                q, VEC(i,j,k), _idx, new_state, dt, dtfact
+            );
+            #endif
 
             #ifdef M1_NU_THREESPECIES // ! NOTE is also active for FIVESPECIES
             if ( do_backreaction ) {
                 m1_eq_system.add_backreaction<eos_t>(
+                q, VEC(i,j,k), _idx, new_state
+                );
+            }
+            #endif
+            #ifdef GRACE_M1_PHOTONS
+            // Photons: energy/momentum exchange only, no lepton-number
+            // coupling — handled by the dedicated photon backreaction.
+            if ( do_backreaction ) {
+                m1_eq_system.add_backreaction_photons(
                 q, VEC(i,j,k), _idx, new_state
                 );
             }
@@ -1787,6 +1823,18 @@ void advance_substep( double const t, double const dt, double const dtfact
     update_CT(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
     //**************************************************************************************************/
     update_fd(t,dt,dtfact,new_state,old_state,new_stag_state,old_stag_state) ;
+    //**************************************************************************************************/
+    #ifdef GRACE_M1_OPTICAL_DEPTH
+    // Eikonal optical-depth relaxation: read tau/metric from old_state (valid
+    // ghosts) + lagged kappa (aux), write the relaxed tau into new_state's
+    // interior.  Placed here so the caller's apply_boundary_conditions
+    // exchanges the fresh tau before set_m1_eas computes kappa from it
+    // (tau -> ghost exchange -> kappa, as in Cactus frankfurt_m1).
+    if ( get_tau_policy_kind() == tau_policy_kind_t::eikonal ) {
+        auto& aux = grace::variable_list::get().getaux() ;
+        update_m1_optical_depth(old_state, new_state, aux) ;
+    }
+    #endif
     //**************************************************************************************************/
     parallel::mpi_barrier() ;
     Kokkos::fence() ;

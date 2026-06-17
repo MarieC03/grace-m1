@@ -313,7 +313,7 @@ add_executable(grace src/grace.cpp)
 #target_include_directories(grace PRIVATE "${HEADER_DIR}")
 target_include_directories(grace PRIVATE
     "${HEADER_DIR}"
-    $<$<BOOL:${GRACE_ENABLE_M1}>:${CMAKE_SOURCE_DIR}/extern/bns_nurates/include>
+    $<$<BOOL:${GRACE_HAVE_BNS_NURATES}>:${CMAKE_SOURCE_DIR}/extern/bns_nurates/include>
 )
 target_link_libraries(grace PRIVATE 
         grace_objects
@@ -420,6 +420,29 @@ _grace_bool_label(GRACE_ENABLE_DETERMINISTIC_MPI_REDUCTIONS _grace_det_reduction
 _grace_bool_label(GRACE_SAME_LEVEL_FLUX_AVERAGE _grace_samelevel_avg)
 _grace_bool_label(GRACE_FREEZE_HYDRO        _grace_freeze_hydro)
 
+# M1 detail lines (shown only when M1 is enabled): evolved neutrino
+# species, photon block, and bns_nurates submodule availability.
+set(_grace_m1_details "")
+if(GRACE_ENABLE_M1)
+    if(M1_NU_FIVESPECIES)
+        set(_grace_m1_nspecies "5  (nue, nuebar, numu, numubar, nux)")
+    elseif(M1_NU_THREESPECIES)
+        set(_grace_m1_nspecies "3  (nue, nuebar, nux)")
+    else()
+        set(_grace_m1_nspecies "1  (nue)")
+    endif()
+    _grace_bool_label(GRACE_M1_PHOTONS _grace_m1_photons)
+    if(GRACE_HAVE_BNS_NURATES)
+        set(_grace_m1_nurates "available")
+    else()
+        set(_grace_m1_nurates "not available (submodule not cloned)")
+    endif()
+    set(_grace_m1_details
+"  M1 neutrino species : ${_grace_m1_nspecies}\n"
+"  M1 photon block     : ${_grace_m1_photons}\n"
+"  M1 bns_nurates      : ${_grace_m1_nurates}\n")
+endif()
+
 # Flag matter / Z4c FD-order mismatch directly in the summary so it's
 # unmissable; matches the warning emitted at configure time.
 if(NOT GRACE_MATTER_METRIC_DER_ORDER STREQUAL GRACE_Z4C_DER_ORDER)
@@ -451,6 +474,7 @@ set(_grace_summary
 "  ---------------------------------------------------------\n"
 "  Particles           : ${_grace_particles}\n"
 "  M1 radiation        : ${_grace_m1}\n"
+${_grace_m1_details}
 "  ---------------------------------------------------------\n"
 "  LORENE ID           : ${_grace_lorene}\n"
 "  FUKA ID             : ${_grace_fuka}\n"

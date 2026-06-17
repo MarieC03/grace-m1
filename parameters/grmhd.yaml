@@ -12,7 +12,7 @@ grmhd:
 
   id_type:
     type: keyword
-    allowed: ["minkowski_vacuum", "shocktube", "magnetic_rotor", "bondi_flow", "orszag_tang_vortex", "fmtorus", "tov", "blastwave", "gas_cloud","puncture","lorene_bns", "two_punctures", "fuka","current_sheet","khi"]
+    allowed: ["minkowski_vacuum", "shocktube", "magnetic_rotor", "bondi_flow", "orszag_tang_vortex", "fmtorus", "tov", "blastwave", "gas_cloud","puncture","lorene_bns", "two_punctures", "fuka","current_sheet","khi","hot_tov"]
     default: "minkowski_vacuum"
     description: >
       Initial data type
@@ -792,3 +792,14 @@ grmhd:
       range: "(*,*)"
       description: >
         Radial velocity perturbation amplitude
+
+    hot_temperature:
+      type: double
+      default: 20.0
+      range: "(0,*)"
+      description: >
+        Only used by id_type = "hot_tov".  Fixed temperature [MeV] of the
+        thermal state laid onto the cold-slice TOV structure; Ye and Ymu are
+        set to hot beta-equilibrium at (rho, hot_temperature).  Generate the
+        leptonic cold table at a COLD temperature so the structure stays
+        compact (FIL-style cold .rns structure + hot slice).

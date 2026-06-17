@@ -178,6 +178,9 @@ void compute_auxiliary_quantities(
         m1_eq_system.compute_auxiliaries<3>(VEC(i,j,k), q, dev_coords);
         m1_eq_system.compute_auxiliaries<4>(VEC(i,j,k), q, dev_coords);
         #endif
+        #ifdef GRACE_M1_PHOTONS
+        m1_eq_system.compute_auxiliaries<M1_PHOTON_SPECIES>(VEC(i,j,k), q, dev_coords);
+        #endif
     }) ;
     // now fill out the eas
     set_m1_eas<eos_t>(state,sstate,aux) ;
