@@ -192,7 +192,7 @@ namespace grace {
 
       ye = conservs[YESL] / D ;
       ymu = 0.;
-      #ifdef M1_NU_FIVESPECIES
+      #if GRACE_M1_NU_SPECIES >= 5
       ymu = conservs[YMUSL] / D ;
       #endif
 

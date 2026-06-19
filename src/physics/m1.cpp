@@ -196,12 +196,14 @@ static void set_m1_initial_data_impl(
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric,state,q,i,j,k) ;
             // set id
+            #if GRACE_M1_NU_SPECIES >= 1
             state(VEC(i,j,k),ERAD1_,q)  = metric.sqrtg() * id.erad1 ;
             state(VEC(i,j,k),NRAD1_,q)  = metric.sqrtg() * id.nrad1 ;
             state(VEC(i,j,k),FRADX1_,q) = metric.sqrtg() * id.fradx1 ;
             state(VEC(i,j,k),FRADY1_,q) = metric.sqrtg() * id.frady1 ;
             state(VEC(i,j,k),FRADZ1_,q) = metric.sqrtg() * id.fradz1 ;
-            #ifdef M1_NU_THREESPECIES
+            #endif
+            #if GRACE_M1_NU_SPECIES >= 3
             state(VEC(i,j,k),ERAD2_,q)  = metric.sqrtg() * id.erad2 ;
             state(VEC(i,j,k),NRAD2_,q)  = metric.sqrtg() * id.nrad2 ;
             state(VEC(i,j,k),FRADX2_,q) = metric.sqrtg() * id.fradx2 ;
@@ -213,7 +215,7 @@ static void set_m1_initial_data_impl(
             state(VEC(i,j,k),FRADY3_,q) = metric.sqrtg() * id.frady3 ;
             state(VEC(i,j,k),FRADZ3_,q) = metric.sqrtg() * id.fradz3 ;
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             state(VEC(i,j,k),ERAD4_,q)  = metric.sqrtg() * id.erad4 ;
             state(VEC(i,j,k),NRAD4_,q)  = metric.sqrtg() * id.nrad4 ;
             state(VEC(i,j,k),FRADX4_,q) = metric.sqrtg() * id.fradx4 ;
@@ -229,11 +231,11 @@ static void set_m1_initial_data_impl(
             // Photon block: seeded from the species-1 ID profile so the
             // existing radiation test setups (beam, scattering, vacuum)
             // drive the photon fields identically.
-            state(VEC(i,j,k),ERADPH_,q)  = metric.sqrtg() * id.erad1 ;
-            state(VEC(i,j,k),NRADPH_,q)  = metric.sqrtg() * id.nrad1 ;
-            state(VEC(i,j,k),FRADXPH_,q) = metric.sqrtg() * id.fradx1 ;
-            state(VEC(i,j,k),FRADYPH_,q) = metric.sqrtg() * id.frady1 ;
-            state(VEC(i,j,k),FRADZPH_,q) = metric.sqrtg() * id.fradz1 ;
+            state(VEC(i,j,k),ERADPH_,q)  = metric.sqrtg() * id.eradph ;
+            state(VEC(i,j,k),NRADPH_,q)  = metric.sqrtg() * id.nradph ;
+            state(VEC(i,j,k),FRADXPH_,q) = metric.sqrtg() * id.fradxph ;
+            state(VEC(i,j,k),FRADYPH_,q) = metric.sqrtg() * id.fradyph ;
+            state(VEC(i,j,k),FRADZPH_,q) = metric.sqrtg() * id.fradzph ;
             #endif
         }
     ) ;

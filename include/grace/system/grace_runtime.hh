@@ -561,25 +561,25 @@ class grace_runtime_impl_t
         const std::vector<std::string> hydro_aux  = {
             "rho", "press", "eps", "ye", "temperature",
             "Bvec[0]", "zvec[0]", "Bdiv", "c2p_err", "entropy"
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             ,"ymu"
             #endif
         };
         const std::vector<std::string> hydro_cons  = {
             "dens", "stilde[0]", "tau", "ye_star", "s_star"
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             ,"ymu_star"
             #endif
             #ifdef GRACE_M1_OPTICAL_DEPTH
             , "optd1"
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             , "optd2"
             , "optd3"
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             , "optd4"
             , "optd5",
-            #endif // M1_NU_FIVESPECIES
+            #endif // GRACE_M1_NU_SPECIES >= 5
             #endif // GRACE_M1_OPTICAL_DEPTH
         };
 
@@ -587,36 +587,42 @@ class grace_runtime_impl_t
         const std::vector<std::string> m1_vars = {
             #ifdef GRACE_ENABLE_M1
             "Erad1", "Nrad1", "Frad1[0]"
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             , "Erad2", "Nrad2", "Frad2[0]"
             , "Erad3", "Nrad3", "Frad3[0]"
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             , "Erad4", "Nrad4", "Frad4[0]"
             , "Erad5", "Nrad5", "Frad5[0]"
-            #endif // M1_NU_FIVESPECIES
+            #endif // GRACE_M1_NU_SPECIES >= 5
+            #ifdef GRACE_M1_PHOTONS
+            , "Erad_ph", "Nrad_ph", "Frad_ph[0]"
+            #endif
             #endif // GRACE_ENABLE_M1
         };
 
         const std::vector<std::string> rates_aux  = {
             #ifdef GRACE_ENABLE_M1
             "kappa_a1", "kappa_s1", "eta1", "kappa_n1", "eta_n1"
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             , "kappa_a2", "kappa_s2", "eta2", "kappa_n2", "eta_n2"
             , "kappa_a3", "kappa_s3", "eta3", "kappa_n3", "eta_n3"
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             , "kappa_a4", "kappa_s4", "eta4", "kappa_n4", "eta_n4"
             , "kappa_a5", "kappa_s5", "eta5", "kappa_n5", "eta_n5"
+            #endif
+            #ifdef GRACE_M1_PHOTONS
+            , "kappa_a_ph", "kappa_s_ph", "eta_ph", "kappa_n_ph", "eta_n_ph"
             #endif
             #ifdef GRACE_M1_DEBUG_EAS
             // Debug: per-species fugacity eta_nu and the matter chemical
             // potentials [MeV] that build it.
             , "eta_nu1"
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             , "eta_nu2", "eta_nu3"
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             , "eta_nu4", "eta_nu5"
             #endif
             , "mu_e", "mu_mu", "mu_p", "mu_n"

@@ -88,14 +88,16 @@ void relax_cell(
     // sweep MONOTONE (tau can only fall, from the large cold-fit seed toward the
     // true min path).  Omitting it lets tau spuriously INCREASE when all
     // neighbours are larger -> non-monotone -> over-trapping -> unphysical.
+    #if GRACE_M1_NU_SPECIES >= 1
     double const kc0 = aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)+aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ;
     double b0 = state(VEC(i,j,k),m1_optd_idx<0>(),q) ;
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     double const kc1 = aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)+aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ;
     double const kc2 = aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)+aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ;
     double b1 = state(VEC(i,j,k),m1_optd_idx<1>(),q), b2 = state(VEC(i,j,k),m1_optd_idx<2>(),q) ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     double const kc3 = aux(VEC(i,j,k),m1_kappaa_idx<3>(),q)+aux(VEC(i,j,k),m1_kappas_idx<3>(),q) ;
     double const kc4 = aux(VEC(i,j,k),m1_kappaa_idx<4>(),q)+aux(VEC(i,j,k),m1_kappas_idx<4>(),q) ;
     double b3 = state(VEC(i,j,k),m1_optd_idx<3>(),q), b4 = state(VEC(i,j,k),m1_optd_idx<4>(),q) ;
@@ -117,11 +119,13 @@ void relax_cell(
                          + 2.0*( gxy*d0*d1 + gxz*d0*d2 + gyz*d1*d2 ) ;
         double const ds  = Kokkos::sqrt(Kokkos::fmax(0.0, ds2)) ;
 
+        #if GRACE_M1_NU_SPECIES >= 1
         {
             double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<0>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<0>(),q) ;
             b0 = Kokkos::fmin(b0, 0.5*(kc0+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<0>(),q)) ;
         }
-        #ifdef M1_NU_THREESPECIES
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
         {
             double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<1>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<1>(),q) ;
             b1 = Kokkos::fmin(b1, 0.5*(kc1+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<1>(),q)) ;
@@ -131,7 +135,7 @@ void relax_cell(
             b2 = Kokkos::fmin(b2, 0.5*(kc2+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<2>(),q)) ;
         }
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         {
             double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<3>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<3>(),q) ;
             b3 = Kokkos::fmin(b3, 0.5*(kc3+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<3>(),q)) ;
@@ -143,12 +147,14 @@ void relax_cell(
         #endif
     }
 
+    #if GRACE_M1_NU_SPECIES >= 1
     tau_out[0] = Kokkos::fmax(0.0, b0) ;
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     tau_out[1] = Kokkos::fmax(0.0, b1) ;
     tau_out[2] = Kokkos::fmax(0.0, b2) ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     tau_out[3] = Kokkos::fmax(0.0, b3) ;
     tau_out[4] = Kokkos::fmax(0.0, b4) ;
     #endif
@@ -170,12 +176,14 @@ void init_m1_optical_depth(grace::var_array_t& state, grace::var_array_t& aux)
     {
         double const rho_cgs = aux(VEC(i,j,k),RHO_,q) / nu_constants::RHOGF ;
         double const tau0    = compute_analytic_tau_from_rho_cgs(rho_cgs) ;
+        #if GRACE_M1_NU_SPECIES >= 1
         state(VEC(i,j,k), m1_optd_idx<0>(), q) = tau0 ;
-        #ifdef M1_NU_THREESPECIES
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
         state(VEC(i,j,k), m1_optd_idx<1>(), q) = tau0 ;
         state(VEC(i,j,k), m1_optd_idx<2>(), q) = tau0 ;
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         state(VEC(i,j,k), m1_optd_idx<3>(), q) = tau0 ;
         state(VEC(i,j,k), m1_optd_idx<4>(), q) = tau0 ;
         #endif
@@ -208,12 +216,14 @@ void update_m1_optical_depth(
         double tau_out[5] = {0,0,0,0,0} ;
         relax_cell(state_read, aux, VEC(i,j,k), q, dx0, dx1, dx2, tau_out) ;
 
+        #if GRACE_M1_NU_SPECIES >= 1
         state_write(VEC(i,j,k), m1_optd_idx<0>(), q) = tau_out[0] ;
-        #ifdef M1_NU_THREESPECIES
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
         state_write(VEC(i,j,k), m1_optd_idx<1>(), q) = tau_out[1] ;
         state_write(VEC(i,j,k), m1_optd_idx<2>(), q) = tau_out[2] ;
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         state_write(VEC(i,j,k), m1_optd_idx<3>(), q) = tau_out[3] ;
         state_write(VEC(i,j,k), m1_optd_idx<4>(), q) = tau_out[4] ;
         #endif

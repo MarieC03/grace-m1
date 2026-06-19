@@ -284,7 +284,7 @@ struct compute_bns_nurates_eas
         const double rhoL  = aux(i, j, k, RHO_,  q);
         const double tempL = aux(i, j, k, TEMP_,  q); // MeV
         const double yeL   = aux(i, j, k, YE_,    q);
-    #ifndef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES < 5
         const double ymuL = 0.0;
     #else
         const double ymuL = aux(i, j, k, YMU_,    q);;
@@ -309,9 +309,13 @@ struct compute_bns_nurates_eas
         FILL_METRIC_ARRAY(metric, state, q, i, j, k);
 
         m1_prims_array_t pnue, pnua, pnux;
+        #if GRACE_M1_NU_SPECIES >= 1
         FILL_M1_PRIMS_ARRAY(pnue, state, aux, q, 0, VEC(i, j, k));
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
         FILL_M1_PRIMS_ARRAY(pnua, state, aux, q, 1, VEC(i, j, k));
         FILL_M1_PRIMS_ARRAY(pnux, state, aux, q, 2, VEC(i, j, k));
+        #endif
 
         const double inv_sqrtg = 1.0 / metric.sqrtg();
         for (int iv = 0; iv < 5; ++iv) {
@@ -400,32 +404,29 @@ struct compute_bns_nurates_eas
         constexpr double ec  = bns_unit_conv::eta_E_to_code();   // MeV nm^-3 s^-1 -> code
         constexpr double enc = bns_unit_conv::eta_N_to_code();   // nm^-3 s^-1 -> code
 
-        // Energy absorption opacity [code]
+#if GRACE_M1_NU_SPECIES >= 1
         aux(i, j, k, KAPPAA1_, q) = eas.kappa_a[id_nue]  * kc;
-        aux(i, j, k, KAPPAA2_, q) = eas.kappa_a[id_anue] * kc;
-        aux(i, j, k, KAPPAA3_, q) = (eas.kappa_a[id_nux] + eas.kappa_a[id_anux]) * kc;
-
-        // Number absorption opacity [code]
         aux(i, j, k, KAPPAAN1_, q) = eas.kappa_0_a[id_nue]  * kc;
-        aux(i, j, k, KAPPAAN2_, q) = eas.kappa_0_a[id_anue] * kc;
-        aux(i, j, k, KAPPAAN3_, q) = (eas.kappa_0_a[id_nux] + eas.kappa_0_a[id_anux]) * kc;
-
-        // Scattering opacity [code]
         aux(i, j, k, KAPPAS1_, q) = eas.kappa_s[id_nue]  * kc;
-        aux(i, j, k, KAPPAS2_, q) = eas.kappa_s[id_anue] * kc;
-        aux(i, j, k, KAPPAS3_, q) = (eas.kappa_s[id_nux] + eas.kappa_s[id_anux]) * kc;
-
-        // Energy emissivity [code]
         aux(i, j, k, ETA1_, q) = eas.eta[id_nue]  * ec;
-        aux(i, j, k, ETA2_, q) = eas.eta[id_anue] * ec;
-        aux(i, j, k, ETA3_, q) = (eas.eta[id_nux] + eas.eta[id_anux]) * ec;
-
-        // Number emissivity [code]
         aux(i, j, k, ETAN1_, q) = eas.eta_0[id_nue]  * enc;
-        aux(i, j, k, ETAN2_, q) = eas.eta_0[id_anue] * enc;
-        aux(i, j, k, ETAN3_, q) = (eas.eta_0[id_nux] + eas.eta_0[id_anux]) * enc;
+#endif
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 3
+        aux(i, j, k, KAPPAA2_, q) = eas.kappa_a[id_anue] * kc;
+        aux(i, j, k, KAPPAAN2_, q) = eas.kappa_0_a[id_anue] * kc;
+        aux(i, j, k, KAPPAS2_, q) = eas.kappa_s[id_anue] * kc;
+        aux(i, j, k, ETA2_, q) = eas.eta[id_anue] * ec;
+        aux(i, j, k, ETAN2_, q) = eas.eta_0[id_anue] * enc;
+
+        aux(i, j, k, KAPPAA3_, q) = (eas.kappa_a[id_nux] + eas.kappa_a[id_anux]) * kc;
+        aux(i, j, k, KAPPAAN3_, q) = (eas.kappa_0_a[id_nux] + eas.kappa_0_a[id_anux]) * kc;
+        aux(i, j, k, KAPPAS3_, q) = (eas.kappa_s[id_nux] + eas.kappa_s[id_anux]) * kc;
+        aux(i, j, k, ETA3_, q) = (eas.eta[id_nux] + eas.eta[id_anux]) * ec;
+        aux(i, j, k, ETAN3_, q) = (eas.eta_0[id_nux] + eas.eta_0[id_anux]) * enc;
+#endif
+
+#if GRACE_M1_NU_SPECIES >= 5
         // In 5-species mode NUX above already carries only tau+antitau (2 species).
         // NUMU and NUMUBAR are currently zero in bns_nurates equilibrium mode
         // (no muon EOS). Set them explicitly.

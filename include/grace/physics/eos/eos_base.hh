@@ -44,7 +44,7 @@ enum EOS_ERROR_T {
     EOS_EPS_TOO_LOW,
     EOS_YE_TOO_LOW,
     EOS_YE_TOO_HIGH,
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     EOS_YMU_TOO_LOW,
     EOS_YMU_TOO_HIGH,
     #endif

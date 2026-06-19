@@ -161,6 +161,7 @@ TEST_CASE("c2p round-trip / Minkowski, no B", "[c2p][hydro]")
         p0[RHOL]  = rho ;
         p0[TEMPL] = temp0 ;
         p0[YEL]   = 0.0 ;
+        double ymu = 0.0 ;
         p0[ZXL]   = z_mag * DIRS[i_dir][0] ;
         p0[ZYL]   = z_mag * DIRS[i_dir][1] ;
         p0[ZZL]   = z_mag * DIRS[i_dir][2] ;
@@ -169,8 +170,8 @@ TEST_CASE("c2p round-trip / Minkowski, no B", "[c2p][hydro]")
         // Fill pressure / eps / csnd / entropy from EOS given (temp, rho, ye).
         double csnd2 ;
         grace::eos_err_t err{} ;
-        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_impl(
-                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], err) ;
+        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], ymu, err) ;
 
         grmhd_cons_array_t cons{} ;
         prims_to_conservs(p0, cons, metric) ;
@@ -264,6 +265,7 @@ TEST_CASE("c2p round-trip / Minkowski, magnetisation sweep", "[c2p][mhd]")
         p0[RHOL]  = RHO0 ;
         p0[TEMPL] = TEMP0 ;
         p0[YEL]   = 0.0 ;
+        double ymu = 0.0 ;
         // Velocity along +x (fixed direction); B direction varies.
         p0[ZXL]   = Z0 ;
         p0[ZYL]   = 0.0 ;
@@ -274,8 +276,8 @@ TEST_CASE("c2p round-trip / Minkowski, magnetisation sweep", "[c2p][mhd]")
 
         double csnd2 ;
         grace::eos_err_t err{} ;
-        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_impl(
-                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], err) ;
+        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], ymu, err) ;
 
         grmhd_cons_array_t cons{} ;
         prims_to_conservs(p0, cons, metric) ;
@@ -401,6 +403,7 @@ TEST_CASE("c2p round-trip / Schwarzschild-CKS, no B", "[c2p][hydro][curved]")
         p0[RHOL]  = rho ;
         p0[TEMPL] = temp0 ;
         p0[YEL]   = 0.0 ;
+        double ymu = 0.0 ;
         p0[ZXL]   = z_mag * dx * inv_norm ;
         p0[ZYL]   = z_mag * dy * inv_norm ;
         p0[ZZL]   = z_mag * dz * inv_norm ;
@@ -408,8 +411,8 @@ TEST_CASE("c2p round-trip / Schwarzschild-CKS, no B", "[c2p][hydro][curved]")
 
         double csnd2 ;
         grace::eos_err_t err{} ;
-        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_impl(
-                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], err) ;
+        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], ymu, err) ;
 
         grmhd_cons_array_t cons{} ;
         prims_to_conservs(p0, cons, metric) ;

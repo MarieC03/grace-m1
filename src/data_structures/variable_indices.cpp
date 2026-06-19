@@ -411,10 +411,12 @@ void register_variables() {
     // m1
     auto m1_bc = detail::get_bc_type(get_param<std::string>("m1","bc_kind")) ;
     // evolved
+    #if GRACE_M1_NU_SPECIES >= 1
     register_evolved_scalar(ERAD1_,"Erad1",m1_bc,"second_order") ;
     register_evolved_scalar(NRAD1_,"Nrad1",m1_bc,"second_order") ;
     register_evolved_vector({FRADX1_,FRADY1_,FRADZ1_},"Frad1",m1_bc,"second_order") ;
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     register_evolved_scalar(ERAD2_,"Erad2",m1_bc,"second_order") ;
     register_evolved_scalar(NRAD2_,"Nrad2",m1_bc,"second_order") ;
     register_evolved_vector({FRADX2_,FRADY2_,FRADZ2_},"Frad2",m1_bc,"second_order") ;
@@ -422,7 +424,7 @@ void register_variables() {
     register_evolved_scalar(NRAD3_,"Nrad3",m1_bc,"second_order") ;
     register_evolved_vector({FRADX3_,FRADY3_,FRADZ3_},"Frad3",m1_bc,"second_order") ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     register_evolved_scalar(ERAD4_,"Erad4",m1_bc,"second_order") ;
     register_evolved_scalar(NRAD4_,"Nrad4",m1_bc,"second_order") ;
     register_evolved_vector({FRADX4_,FRADY4_,FRADZ4_},"Frad4",m1_bc,"second_order") ;
@@ -440,23 +442,27 @@ void register_variables() {
     #ifdef GRACE_M1_OPTICAL_DEPTH
     // Inert (zero-flux) evolved scalars: registered for ghost exchange,
     // AMR prolongation and BCs; updated by the eikonal relaxation sweep.
+    #if GRACE_M1_NU_SPECIES >= 1
     register_evolved_scalar(OPTD1_,"optd1",m1_bc,"second_order") ;
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     register_evolved_scalar(OPTD2_,"optd2",m1_bc,"second_order") ;
     register_evolved_scalar(OPTD3_,"optd3",m1_bc,"second_order") ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     register_evolved_scalar(OPTD4_,"optd4",m1_bc,"second_order") ;
     register_evolved_scalar(OPTD5_,"optd5",m1_bc,"second_order") ;
     #endif
     #endif
     // aux
+    #if GRACE_M1_NU_SPECIES >= 1
     register_aux_scalar(KAPPAA1_,"kappa_a1") ;
     register_aux_scalar(KAPPAS1_,"kappa_s1") ;
     register_aux_scalar(ETA1_,"eta1") ;
     register_aux_scalar(KAPPAAN1_,"kappa_n1") ;
     register_aux_scalar(ETAN1_,"eta_n1") ;
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     register_aux_scalar(KAPPAA2_,"kappa_a2") ;
     register_aux_scalar(KAPPAS2_,"kappa_s2") ;
     register_aux_scalar(ETA2_,"eta2") ;
@@ -468,7 +474,7 @@ void register_variables() {
     register_aux_scalar(KAPPAAN3_,"kappa_n3") ;
     register_aux_scalar(ETAN3_,"eta_n3") ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     register_aux_scalar(KAPPAA4_,"kappa_a4") ;
     register_aux_scalar(KAPPAS4_,"kappa_s4") ;
     register_aux_scalar(ETA4_,"eta4") ;
@@ -490,11 +496,11 @@ void register_variables() {
     #endif
     #ifdef GRACE_M1_DEBUG_EAS
     register_aux_scalar(ETANU1_,"eta_nu1") ;
-    #ifdef M1_NU_THREESPECIES
+    #if GRACE_M1_NU_SPECIES >= 3
     register_aux_scalar(ETANU2_,"eta_nu2") ;
     register_aux_scalar(ETANU3_,"eta_nu3") ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     register_aux_scalar(ETANU4_,"eta_nu4") ;
     register_aux_scalar(ETANU5_,"eta_nu5") ;
     #endif

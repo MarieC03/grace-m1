@@ -86,9 +86,25 @@ using m1_eas_array_t = std::array<double,N_M1_EAS> ;
 // as the ispec template argument and the map routes to the dedicated
 // ERADPH_/.../KAPPAANPH_ variables instead.
 // ---------------------------------------------------------------------------
-constexpr int M1_PHOTON_SPECIES = -1 ;
-
 #ifdef GRACE_M1_PHOTONS
+// Photons are addressed as the block right after the neutrinos, i.e. index
+// n_nu (== GRACE_M1_NU_SPECIES, since the legal values 0/1/3/5 each map to
+// themselves).  Non-photon builds use -1 as an unreachable sentinel.
+constexpr int M1_PHOTON_SPECIES = GRACE_M1_NU_SPECIES ;
+#else
+constexpr int M1_PHOTON_SPECIES = -1 ;
+#endif
+#if GRACE_M1_NU_SPECIES < 1
+// Photon-only build: no neutrino radiation block exists (NU_BASE undefined),
+// so only the explicitly-addressed photon index is valid.  NU_BASE/NU_STRIDE
+// are left unreferenced on purpose.
+#define GRACE_M1_IDX_FN(NAME, NU_BASE, NU_STRIDE, PH_IDX)                     \
+template<int ispec> GRACE_HOST_DEVICE constexpr int NAME() {                  \
+    static_assert(ispec == M1_PHOTON_SPECIES,                                 \
+        "GRACE_M1_NU_SPECIES==0: only the photon block index is valid") ;     \
+    return PH_IDX ;                                                           \
+}
+#elif defined(GRACE_M1_PHOTONS)
 #define GRACE_M1_IDX_FN(NAME, NU_BASE, NU_STRIDE, PH_IDX)                     \
 template<int ispec> GRACE_HOST_DEVICE constexpr int NAME() {                  \
     if constexpr (ispec == M1_PHOTON_SPECIES) return PH_IDX ;                 \
@@ -114,10 +130,15 @@ GRACE_M1_IDX_FN(m1_kappaan_idx, KAPPAAN1_, GRACE_N_M1_AUX,  KAPPAANPH_)
 #undef GRACE_M1_IDX_FN
 
 #ifdef GRACE_M1_OPTICAL_DEPTH
+#if GRACE_M1_NU_SPECIES < 1
+template<int ispec>
+GRACE_HOST_DEVICE constexpr int m1_optd_idx() = delete;
+#else
 // Per-block optical-depth index (scalar, stride 1).  No photon variant.
 template<int ispec> GRACE_HOST_DEVICE constexpr int m1_optd_idx() {
     return OPTD1_ + ispec ;
 }
+#endif
 #endif
 
 #define FILL_M1_PRIMS_ARRAY(primsarr,vview,aview,q,ispec,...)\

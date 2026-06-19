@@ -421,7 +421,7 @@ void generate_leptonic_cold_table(
         if (   err.test(EOS_RHO_TOO_LOW)        || err.test(EOS_RHO_TOO_HIGH)
             || err.test(EOS_EPS_TOO_LOW)        || err.test(EOS_EPS_TOO_HIGH)
             || err.test(EOS_YE_TOO_LOW)         || err.test(EOS_YE_TOO_HIGH)
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             || err.test(EOS_YMU_TOO_LOW)        || err.test(EOS_YMU_TOO_HIGH)
             #endif
             || err.test(EOS_TEMPERATURE_TOO_LOW)|| err.test(EOS_TEMPERATURE_TOO_HIGH)

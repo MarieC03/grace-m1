@@ -111,6 +111,20 @@ m1:
       description: >
           "Needed right now. Planned to remove"
 
+    rho_min:
+      type: double
+      default: 1.e-11
+      range: "[0,*)"
+      description: >
+        Rest-mass density floor [code units] for the neutrino EAS rates.
+        Below this density the cell is treated as transparent: all emission
+        and opacity aux fields are set to zero and the (expensive) EOS /
+        fugacity / rate evaluation is skipped.  Most of the grid is
+        low-density atmosphere, so this short-circuit is a large speedup.
+        Keep it well below the neutrinosphere density (where emission becomes
+        relevant) so it does not alter the physics; validate against a run
+        with rho_min = 0 if unsure.
+
     beta_decay:
       type: bool
       default: true

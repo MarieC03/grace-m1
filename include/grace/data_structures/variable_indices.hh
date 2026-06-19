@@ -168,12 +168,14 @@ enum evol_hrsc_var_cc_idx : int {
     YESTAR_,
     ENTROPYSTAR_,
     #ifdef GRACE_ENABLE_M1
+    #if GRACE_M1_NU_SPECIES >= 1
     ERAD1_,
     NRAD1_,
     FRADX1_,
     FRADY1_,
     FRADZ1_,
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     ERAD2_,
     NRAD2_,
     FRADX2_,
@@ -185,7 +187,7 @@ enum evol_hrsc_var_cc_idx : int {
     FRADY3_,
     FRADZ3_,
     #endif 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     ERAD4_,
     NRAD4_,
     FRADX4_,
@@ -215,12 +217,14 @@ enum evol_hrsc_var_cc_idx : int {
     // Inert evolved variables: zero flux/source, carried unchanged by the RK
     // and overwritten by the relaxation sweep; registered only so they get
     // ghost exchange + AMR prolongation + BCs.
+    #if GRACE_M1_NU_SPECIES >= 1
     OPTD1_,
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     OPTD2_,
     OPTD3_,
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     OPTD4_,
     OPTD5_,
     #endif
@@ -326,13 +330,15 @@ enum aux_var_idx : int {
     C2P_DENS_ERR_,
     C2P_ERR_,
     #ifdef GRACE_ENABLE_M1
+    #if GRACE_M1_NU_SPECIES >= 1
     KAPPAA1_,
     KAPPAS1_,
     ETA1_,
     ETAN1_,
     KAPPAAN1_,
     //M1_IMPL_ERR1_,
-    #ifdef M1_NU_THREESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
     KAPPAA2_,
     KAPPAS2_,
     ETA2_,
@@ -346,7 +352,7 @@ enum aux_var_idx : int {
     KAPPAAN3_,
     //M1_IMPL_ERR3_,
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     KAPPAA4_,
     KAPPAS4_,
     ETA4_,
@@ -375,11 +381,11 @@ enum aux_var_idx : int {
     // GRACE_M1_DEBUG_EAS CMake option.
     //   eta_nu = mu_nu / T  (per species)  -- the equilibrium fugacity.
     ETANU1_,
-    #ifdef M1_NU_THREESPECIES
+    #if GRACE_M1_NU_SPECIES >= 3
     ETANU2_,
     ETANU3_,
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     ETANU4_,
     ETANU5_,
     #endif

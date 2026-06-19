@@ -164,12 +164,12 @@ tau_policy_fixed make_lagged_kappa_tau(
     tf.tau[NUE] =
         ( aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)
         + aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ) * dr ;
-    #ifdef M1_NU_THREESPECIES
+    #if GRACE_M1_NU_SPECIES >= 3
     tf.tau[NUEBAR] =
         ( aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)
         + aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ) * dr ;
     #endif
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     tf.tau[NUMU] =
         ( aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)
         + aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ) * dr ;
@@ -179,7 +179,7 @@ tau_policy_fixed make_lagged_kappa_tau(
     tf.tau[NUX] =
         ( aux(VEC(i,j,k),m1_kappaa_idx<4>(),q)
         + aux(VEC(i,j,k),m1_kappas_idx<4>(),q) ) * dr ;
-    #elif defined(M1_NU_THREESPECIES)
+    #elif (GRACE_M1_NU_SPECIES >= 3)
     tf.tau[NUX] =
         ( aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)
         + aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ) * dr ;
@@ -210,13 +210,15 @@ tau_policy_fixed make_eikonal_tau(
     VEC(const int i, const int j, const int k), int64_t q)
 {
     tau_policy_fixed tf{} ;
+    #if GRACE_M1_NU_SPECIES >= 1
     tf.tau[NUE] = state(VEC(i,j,k), m1_optd_idx<0>(), q) ;
-    #ifdef M1_NU_FIVESPECIES
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 5
     tf.tau[NUEBAR]  = state(VEC(i,j,k), m1_optd_idx<1>(), q) ;
     tf.tau[NUMU]    = state(VEC(i,j,k), m1_optd_idx<2>(), q) ;
     tf.tau[NUMUBAR] = state(VEC(i,j,k), m1_optd_idx<3>(), q) ;
     tf.tau[NUX]     = state(VEC(i,j,k), m1_optd_idx<4>(), q) ;
-    #elif defined(M1_NU_THREESPECIES)
+    #elif (GRACE_M1_NU_SPECIES >= 3)
     tf.tau[NUEBAR]  = state(VEC(i,j,k), m1_optd_idx<1>(), q) ;
     tf.tau[NUX]     = state(VEC(i,j,k), m1_optd_idx<2>(), q) ;
     #endif

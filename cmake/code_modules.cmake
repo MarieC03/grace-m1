@@ -3,19 +3,25 @@
 # files no longer exist.)  Optional add-ons sit alongside it.
 #option(GRACE_ENABLE_GRMHD "Enable GRMHD equation module" ON)
 
-# M1 neutrino transport
-option(GRACE_ENABLE_M1 "Enable M1 neutrino transport" OFF)
-option(M1_NU_THREESPECIES "Enable 3-species neutrino M1 scheme" OFF)
-option(M1_NU_FIVESPECIES "Enable 5-species neutrino M1 scheme" OFF)
-# --- enforce hierarchy: 5-species implies 3-species implies M1 ---
-if(M1_NU_FIVESPECIES)
-    set(M1_NU_THREESPECIES ON)
-    set(GRACE_ENABLE_M1 ON)
-    message(STATUS "M1 with 5-Species enabled.")
+# M1 radiation transport.
+#
+# GRACE_M1_NU_SPECIES selects the grey neutrino scheme:
+#   0 -> no neutrinos (photon-only transport; requires GRACE_M1_PHOTONS)
+#   1 -> nue
+#   3 -> nue, nuebar, nux
+#   5 -> nue, nuebar, numu, numubar, nux
+# The species form strict supersets, so the source tests it with
+# `#if GRACE_M1_NU_SPECIES >= {1,3,5}`.  Any neutrino species turns on the
+# shared M1 infrastructure (GRACE_ENABLE_M1); the photon block does too.
+option(GRACE_ENABLE_M1 "Enable M1 radiation transport" OFF)
+set(GRACE_M1_NU_SPECIES "0" CACHE STRING "Grey neutrino species evolved by M1 (0, 1, 3, or 5)")
+set_property(CACHE GRACE_M1_NU_SPECIES PROPERTY STRINGS 0 1 3 5)
+if(NOT GRACE_M1_NU_SPECIES MATCHES "^(0|1|3|5)$")
+    message(FATAL_ERROR "GRACE_M1_NU_SPECIES must be 0, 1, 3, or 5 (got '${GRACE_M1_NU_SPECIES}').")
 endif()
-if(M1_NU_THREESPECIES)
+if(GRACE_M1_NU_SPECIES GREATER 0)
     set(GRACE_ENABLE_M1 ON)
-    message(STATUS "M1 with 3-Species enabled.")
+    message(STATUS "M1 neutrino transport: ${GRACE_M1_NU_SPECIES}-species.")
 endif()
 
 # Photon M1 transport: a single, explicitly-addressed radiation block with
@@ -50,6 +56,16 @@ option(GRACE_M1_DEBUG_EAS "Output EAS-rate diagnostics (eta_nu, mu_e/mu_mu/mu_p/
 if(GRACE_M1_DEBUG_EAS)
     set(GRACE_ENABLE_M1 ON)
     message(STATUS "M1 EAS-rate diagnostics enabled.")
+endif()
+
+# Consistency: M1 must transport something.  Catches an enabled M1 build (e.g.
+# a stale GRACE_ENABLE_M1=ON in the cache, or photon/debug flags alone) that
+# selects zero neutrino species and no photons.
+if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES EQUAL 0 AND NOT GRACE_M1_PHOTONS)
+    message(FATAL_ERROR
+        "M1 is enabled but GRACE_M1_NU_SPECIES=0 and GRACE_M1_PHOTONS=OFF — "
+        "nothing to transport.  Set -DGRACE_M1_NU_SPECIES={1,3,5} and/or "
+        "-DGRACE_M1_PHOTONS=ON.")
 endif()
 
 # bns_nurates is an optional header-only submodule providing one of the M1

@@ -78,7 +78,7 @@ struct grhd_c2p_t {
 
         ye = conservs[YESL] / D ;
         ymu = 0;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         ymu = conservs[YMUSL] / D ;
         #endif
         q  = conservs[TAUL] / D ;
@@ -111,7 +111,7 @@ struct grhd_c2p_t {
 
         prims[RHOL] = D/W ;
         prims[YEL]  = ye ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         prims[YMUL]  = ymu ;
         #endif
         /* Enforce range on eps tilde */

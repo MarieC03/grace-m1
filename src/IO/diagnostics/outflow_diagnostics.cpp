@@ -48,13 +48,24 @@ namespace grace {
 std::vector<std::string> outflows::flux_names = {"Mdot_unbound_geo", "Mdot_unbound_bern", "Mdot_tot"} ;
 
 #ifdef GRACE_ENABLE_M1
-#if defined(M1_NU_FIVESPECIES)
-std::vector<std::string> m1_outflows::flux_names = {"Lrad_nue", "Lrad_nuebar", "Lrad_nux"};
-#elif defined(M1_NU_THREESPECIES)
-std::vector<std::string> m1_outflows::flux_names = {"Lrad_nue", "Lrad_nuebar", "Lrad_numu", "Lrad_numubar", "Lrad_nux"};
-#else
-std::vector<std::string> m1_outflows::flux_names = {"Lrad_nu1"};
+// Labels follow the radiation-block order used in compute_local_fluxes:
+// the neutrino species (one per evolved block) first, then the photon block
+// last (it accumulates into flux_loc[n_fluxes-1]).
+std::vector<std::string> m1_outflows::flux_names = {
+#if GRACE_M1_NU_SPECIES >= 5
+    "Lrad_nue", "Lrad_nuebar", "Lrad_numu", "Lrad_numubar", "Lrad_nux"
+#elif GRACE_M1_NU_SPECIES >= 3
+    "Lrad_nue", "Lrad_nuebar", "Lrad_nux"
+#elif GRACE_M1_NU_SPECIES >= 1
+    "Lrad_nu1"
 #endif
+#ifdef GRACE_M1_PHOTONS
+#if GRACE_M1_NU_SPECIES >= 1
+    ,
+#endif
+    "Lrad_photon"
+#endif
+};
 #endif
 
 std::array<double,outflows::n_fluxes>
@@ -231,6 +242,7 @@ m1_outflows::compute_local_fluxes(
         double const betay = ivals(i, loc_var_idx_t::BETAYL);
         double const betaz = ivals(i, loc_var_idx_t::BETAZL);
 
+#if GRACE_M1_NU_SPECIES >= 1
         // Species 0 (nu_e / single-species)
         {
             double const E  = ivals(i, loc_var_idx_t::E1L);
@@ -246,8 +258,9 @@ m1_outflows::compute_local_fluxes(
             // Project onto outward radial normal
             flux_loc[0] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
         }
+#endif
 
-#ifdef M1_NU_THREESPECIES
+#if GRACE_M1_NU_SPECIES >= 3
         // Species 1 (anti-nu_e)
         {
             double const E  = ivals(i, loc_var_idx_t::E2L);
@@ -280,7 +293,7 @@ m1_outflows::compute_local_fluxes(
         }
 #endif
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
         // Species 3 (nu_mu)
         {
             double const E  = ivals(i, loc_var_idx_t::E4L);
@@ -312,6 +325,24 @@ m1_outflows::compute_local_fluxes(
             flux_loc[4] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
         }
 #endif
+#ifdef GRACE_M1_PHOTONS
+        // Photon block (accumulates into the last flux slot)
+        {
+            double const E  = ivals(i, loc_var_idx_t::EPHL);
+            double const Fx = ivals(i, loc_var_idx_t::FXPHL);
+            double const Fy = ivals(i, loc_var_idx_t::FYPHL);
+            double const Fz = ivals(i, loc_var_idx_t::FZPHL);
+
+            // Physical coordinate flux: alpha * F^i - beta^i * E
+            double const phys_Fx = alp * Fx - betax * E;
+            double const phys_Fy = alp * Fy - betay * E;
+            double const phys_Fz = alp * Fz - betaz * E;
+
+            // Project onto outward radial normal
+            flux_loc[n_fluxes-1] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
+        }
+#endif // GRACE_M1_PHOTONS
+
     }
 
     const int sym_mult = scalar_symmetry_multiplier();

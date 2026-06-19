@@ -111,19 +111,23 @@ void find_stable_timestep_impl() {
         #if (GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4)
         double cmax = GET_CMAX;
         #ifdef GRACE_ENABLE_M1
+        #if GRACE_M1_NU_SPECIES >= 1
         double m1_cmax = m1_eq_system.template compute_max_eigenspeed<0>(VEC(i,j,k), q);
-        #ifdef M1_NU_THREESPECIES
-        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<1>(VEC(i,j,k), q));
-        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<2>(VEC(i,j,k), q));
+        #else
+        double m1_cmax = 0.0 ;   // photon-only: no neutrino species
         #endif
-        #ifdef M1_NU_FIVESPECIES
-        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<3>(VEC(i,j,k), q));
-        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<4>(VEC(i,j,k), q));
+        #if GRACE_M1_NU_SPECIES >= 3
+        m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<1>(VEC(i,j,k), q));
+        m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<2>(VEC(i,j,k), q));
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<3>(VEC(i,j,k), q));
+        m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<4>(VEC(i,j,k), q));
         #endif
         #ifdef GRACE_M1_PHOTONS
-        m1_cmax = fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<M1_PHOTON_SPECIES>(VEC(i,j,k), q));
+        m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<M1_PHOTON_SPECIES>(VEC(i,j,k), q));
         #endif
-        cmax = fmax(cmax, m1_cmax);
+        cmax = Kokkos::fmax(cmax, m1_cmax);
         #endif
         #else
         double cmax = 1 ;

@@ -148,6 +148,7 @@ struct device_handle {
       const double lymu = (nymu > 1 ? Kokkos::log(ymu > 1.0e-300 ? ymu : 1.0e-300) : 0.0);
 
       if (n_species_table == 3) {
+          #pragma unroll
           for (int s = 0; s < 2; ++s) {
               out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
@@ -157,17 +158,20 @@ struct device_handle {
           out.kappa_a_num[4] = interp_table(kappa_a_num_table, 2, lrho, ltemp, yle, lymu);
           out.kappa_s[4]     = interp_table(kappa_s_table,     2, lrho, ltemp, yle, lymu);
       } else if (n_species_table == 5) { // only use 5 species or higher when you have FIVE_SPECIES
+          #pragma unroll
           for (int s = 0; s < 5; ++s) {
               out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
       } else if (n_species_table == 6) { // I do not know why this would be 6. But if it is, clump the last
+          #pragma unroll
           for (int s = 0; s < 4; ++s) {
               out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
+          #pragma unroll
           for (int s = 4; s < 6; ++s) {
               out.kappa_a_en[4]  += interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
               out.kappa_a_num[4] += interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);

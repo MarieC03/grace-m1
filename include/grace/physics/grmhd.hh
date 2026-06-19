@@ -363,7 +363,7 @@ struct grmhd_equations_system_t
         cons[STZL]  = vars(SZ_)          ;
         cons[TAUL]  = vars(TAU_)         ;
         cons[YESL]  = vars(YESTAR_)      ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         cons[YMUSL]   = vars(YMUSTAR_)     ;
         #endif
         cons[ENTSL] = vars(ENTROPYSTAR_) ;
@@ -391,7 +391,7 @@ struct grmhd_equations_system_t
         aux(TEMP_)    = prims[TEMPL]   ;
         aux(ENTROPY_) = prims[ENTL]    ;
         aux(YE_)      = prims[YEL]     ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         aux(YMU_)      = prims[YMUL]     ;
         #endif
         aux(ZVECX_)   = prims[ZXL]     ;
@@ -437,7 +437,7 @@ struct grmhd_equations_system_t
             uint64_t const curr = c2p_errors.words[0] ;
             aux(C2P_ERR_) = static_cast<double>(prev | curr) ;
         }
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         if ( c2p_errors.test(c2p_err_enum_t::C2P_RESET_YMU) ) {
             aux(C2P_ERR_) += Kokkos::fabs(vars(YMUSTAR_) - cons[YMUSL])/(1e-50+Kokkos::fabs(cons[YMUSL])) ;
             vars(YMUSTAR_) = cons[YMUSL] ;
@@ -482,7 +482,7 @@ struct grmhd_equations_system_t
         double rho    = prims[RHOL]  ;
         double T      = prims[TEMPL] ;
         double ye     = prims[YEL] ;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
         double ymu    = prims[YMUL] ;
     #else
         double ymu    = 0.0;
@@ -538,7 +538,7 @@ struct grmhd_equations_system_t
  private:
     /***********************************************************************/
     //! Number of reconstructed variables.
-    #ifndef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES < 5
     static constexpr unsigned int GRMHD_NUM_RECON_VARS = 10 ;
     #else
     static constexpr unsigned int GRMHD_NUM_RECON_VARS = 11 ;
@@ -632,7 +632,7 @@ struct grmhd_equations_system_t
                 , ZVECY_
                 , ZVECZ_
                 , YE_
-                #ifdef M1_NU_FIVESPECIES
+                #if GRACE_M1_NU_SPECIES >= 5
                 , YMU_
                 #endif
                 , recon_thermo_idx_aux
@@ -649,7 +649,7 @@ struct grmhd_equations_system_t
                 , ZYL
                 , ZZL
                 , YEL
-                #ifdef M1_NU_FIVESPECIES
+                #if GRACE_M1_NU_SPECIES >= 5
                 , YMUL
                 #endif
                 , recon_thermo_idx_local
@@ -719,7 +719,7 @@ struct grmhd_equations_system_t
             /* grmhd_get_fluxes consumes the reconstructed entropy for the    */
             /* ENTSL flux (same as the T-recon path).                         */
             double h_dummy_L, h_dummy_R, ent_dummy_L, ent_dummy_R ;
-            #ifndef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES < 5
             double ymuL = 0.0 ;
             double ymuR = 0.0 ;
             #else
@@ -737,7 +737,7 @@ struct grmhd_equations_system_t
         }
         #else
         {
-            #ifndef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES < 5
             double ymuL = 0.0 ;
             double ymuR = 0.0 ;
             #else
@@ -794,7 +794,7 @@ struct grmhd_equations_system_t
         /***********************************************************************/
         fluxes(VEC(i,j,k),DENS_,idir,q)        = f_HLL[DENSL] ;
         fluxes(VEC(i,j,k),YESTAR_,idir,q)      = f_HLL[YESL] ;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
         fluxes(VEC(i,j,k),YMUSTAR_,idir,q)      = f_HLL[YMUSL]  ;
     #endif
         fluxes(VEC(i,j,k),ENTROPYSTAR_,idir,q) = f_HLL[ENTSL] ;
@@ -851,7 +851,7 @@ struct grmhd_equations_system_t
         double& tr            = primR[TEMPL]  ;
         double& yel           = primL[YEL]    ;
         double& yer           = primR[YEL]    ;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
         double& ymul          = primL[YMUL]   ;
         double& ymur          = primR[YMUL]   ;
     #endif
@@ -981,7 +981,7 @@ struct grmhd_equations_system_t
         f[STZL] = sqrtg * solver(fstl[2],fstr[2],stl[2],str[2],cmin,cmax) ;
         /***********************************************************************/
         f[YESL] = sqrtg * solver(yel*fdl,yer*fdr,yel*densl,yer*densr,cmin,cmax) ;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
         f[YMUSL] = sqrtg * solver(ymul*fdl,ymur*fdr,ymul*densl,ymur*densr,cmin,cmax) ;
     #endif
         /***********************************************************************/

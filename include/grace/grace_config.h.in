@@ -161,8 +161,9 @@ namespace grace {
 // 7. Optional physics modules
 //=====================================================================
 #cmakedefine GRACE_ENABLE_M1
-#cmakedefine M1_NU_THREESPECIES
-#cmakedefine M1_NU_FIVESPECIES
+// Grey neutrino species count (0, 1, 3, or 5); always defined so the
+// `#if GRACE_M1_NU_SPECIES >= N` guards are well-formed even when M1 is off.
+#define GRACE_M1_NU_SPECIES @GRACE_M1_NU_SPECIES@
 #cmakedefine GRACE_M1_PHOTONS
 #cmakedefine GRACE_M1_OPTICAL_DEPTH
 #cmakedefine GRACE_M1_DEBUG_EAS

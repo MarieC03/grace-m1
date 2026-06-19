@@ -860,12 +860,14 @@ void compute_fluxes(
         , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric,old_state,q,VEC(i,j,k)) ;
+            #if GRACE_M1_NU_SPECIES >= 1
             old_state(VEC(i,j,k),NRAD1_,q)  /=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADX1_,q) /=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADY1_,q) /=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADZ1_,q) /=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),ERAD1_,q)  /= metric.sqrtg() ;
-            #ifdef M1_NU_THREESPECIES
+            #endif
+            #if GRACE_M1_NU_SPECIES >= 3
             old_state(VEC(i,j,k),NRAD2_,q)  /=  old_state(VEC(i,j,k),ERAD2_,q);
             old_state(VEC(i,j,k),FRADX2_,q) /=  old_state(VEC(i,j,k),ERAD2_,q);
             old_state(VEC(i,j,k),FRADY2_,q) /=  old_state(VEC(i,j,k),ERAD2_,q);
@@ -878,7 +880,7 @@ void compute_fluxes(
             old_state(VEC(i,j,k),FRADZ3_,q) /=  old_state(VEC(i,j,k),ERAD3_,q);
             old_state(VEC(i,j,k),ERAD3_,q)  /= metric.sqrtg() ;
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             old_state(VEC(i,j,k),NRAD4_,q)  /=  old_state(VEC(i,j,k),ERAD4_,q);
             old_state(VEC(i,j,k),FRADX4_,q) /=  old_state(VEC(i,j,k),ERAD4_,q);
             old_state(VEC(i,j,k),FRADY4_,q) /=  old_state(VEC(i,j,k),ERAD4_,q);
@@ -890,6 +892,14 @@ void compute_fluxes(
             old_state(VEC(i,j,k),FRADY5_,q) /=  old_state(VEC(i,j,k),ERAD5_,q);
             old_state(VEC(i,j,k),FRADZ5_,q) /=  old_state(VEC(i,j,k),ERAD5_,q);
             old_state(VEC(i,j,k),ERAD5_,q)  /= metric.sqrtg() ;
+            #endif
+            //TODO Check if Photons are correctly implemented
+            #ifdef GRACE_M1_PHOTONS
+            old_state(VEC(i,j,k),NRADPH_,q)  /=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADXPH_,q) /=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADYPH_,q) /=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADZPH_,q) /=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),ERADPH_,q)  /= metric.sqrtg() ;
             #endif
         }
     ) ;
@@ -972,7 +982,7 @@ void compute_fluxes(
          m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         ) ;
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -980,7 +990,7 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -1010,7 +1020,7 @@ void compute_fluxes(
          m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         ) ;
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -1018,7 +1028,7 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -1048,7 +1058,7 @@ void compute_fluxes(
          m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         ) ;
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -1056,7 +1066,7 @@ void compute_fluxes(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
         );
@@ -1102,12 +1112,14 @@ void compute_fluxes(
 
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric,old_state,q,VEC(i,j,k)) ;
+            #if GRACE_M1_NU_SPECIES >= 1
             old_state(VEC(i,j,k),ERAD1_,q)  *= metric.sqrtg() ;
             old_state(VEC(i,j,k),NRAD1_,q)  *=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADX1_,q) *=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADY1_,q) *=  old_state(VEC(i,j,k),ERAD1_,q);
             old_state(VEC(i,j,k),FRADZ1_,q) *=  old_state(VEC(i,j,k),ERAD1_,q);
-            #ifdef M1_NU_THREESPECIES
+            #endif
+            #if GRACE_M1_NU_SPECIES >= 3
             old_state(VEC(i,j,k),ERAD2_,q)  *= metric.sqrtg() ;
             old_state(VEC(i,j,k),NRAD2_,q)  *=  old_state(VEC(i,j,k),ERAD2_,q);
             old_state(VEC(i,j,k),FRADX2_,q) *=  old_state(VEC(i,j,k),ERAD2_,q);
@@ -1120,7 +1132,7 @@ void compute_fluxes(
             old_state(VEC(i,j,k),FRADY3_,q) *=  old_state(VEC(i,j,k),ERAD3_,q);
             old_state(VEC(i,j,k),FRADZ3_,q) *=  old_state(VEC(i,j,k),ERAD3_,q);
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             old_state(VEC(i,j,k),ERAD4_,q)  *= metric.sqrtg() ;
             old_state(VEC(i,j,k),NRAD4_,q)  *=  old_state(VEC(i,j,k),ERAD4_,q);
             old_state(VEC(i,j,k),FRADX4_,q) *=  old_state(VEC(i,j,k),ERAD4_,q);
@@ -1132,6 +1144,14 @@ void compute_fluxes(
             old_state(VEC(i,j,k),FRADX5_,q) *=  old_state(VEC(i,j,k),ERAD5_,q);
             old_state(VEC(i,j,k),FRADY5_,q) *=  old_state(VEC(i,j,k),ERAD5_,q);
             old_state(VEC(i,j,k),FRADZ5_,q) *=  old_state(VEC(i,j,k),ERAD5_,q);
+            #endif
+            //TODO Check if photons are correctly implemented
+            #ifdef GRACE_M1_PHOTONS
+            old_state(VEC(i,j,k),ERADPH_,q)  *= metric.sqrtg() ;
+            old_state(VEC(i,j,k),NRADPH_,q)  *=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADXPH_,q) *=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADYPH_,q) *=  old_state(VEC(i,j,k),ERADPH_,q);
+            old_state(VEC(i,j,k),FRADZPH_,q) *=  old_state(VEC(i,j,k),ERADPH_,q);
             #endif
         }
     ) ;
@@ -1451,11 +1471,11 @@ void add_fluxes_and_source_terms(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
 
         m1_eq_system.compute_source_terms<0>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.compute_source_terms<1>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         m1_eq_system.compute_source_terms<2>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.compute_source_terms<3>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         m1_eq_system.compute_source_terms<4>(q, VEC(i,j,k), idx, new_state, dt, dtfact );
         #endif
@@ -1737,7 +1757,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             m1_eq_system.compute_implicit_update<0>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             m1_eq_system.compute_implicit_update<1>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
@@ -1745,7 +1765,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #endif
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             m1_eq_system.compute_implicit_update<3>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
@@ -1759,7 +1779,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             );
             #endif
 
-            #ifdef M1_NU_THREESPECIES // ! NOTE is also active for FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3 // 3- and 5-species
             if ( do_backreaction ) {
                 m1_eq_system.add_backreaction<eos_t>(
                 q, VEC(i,j,k), _idx, new_state

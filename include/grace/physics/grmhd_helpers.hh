@@ -111,7 +111,7 @@ enum GRMHD_PRIMS_LOC_INDICES {
     ZYL,
     ZZL,
     YEL,
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     YMUL,
     #endif
     TEMPL,
@@ -130,7 +130,7 @@ enum GRMHD_FLUX_LOC_INDICES : int {
   STZF,
   TAUF,
   YESTARF,
-  #ifdef M1_NU_FIVESPECIES
+  #if GRACE_M1_NU_SPECIES >= 5
   YMUSTARF,
   #endif
   ENTROPYSTARF,
@@ -149,7 +149,7 @@ enum GRMHD_CONS_LOC_INDICES {
     STZL,
     TAUL,
     YESL,
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     YMUSL,
     #endif
     ENTSL,
@@ -353,7 +353,7 @@ g = grace::metric_array_t{  { view(__VA_ARGS__,GTXX_,q)   \
                           , view(__VA_ARGS__,ALP_,q) }
 #endif
 
-#ifndef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES < 5
 #define FILL_PRIMS_ARRAY_ZVEC(primsarr,vview,q,...)        \
 primsarr[RHOL]   = vview(__VA_ARGS__,RHO_,q);             \
 primsarr[PRESSL] = vview(__VA_ARGS__,PRESS_,q);           \
@@ -384,7 +384,7 @@ primsarr[BYL]    = vview(__VA_ARGS__,BY_,q);              \
 primsarr[BZL]    = vview(__VA_ARGS__,BZ_,q)
 #endif
 
-#ifndef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES < 5
 #define FILL_CONS_ARRAY(consarr,vview,q,...)               \
 consarr[DENSL]  = vview(__VA_ARGS__,DENS_,q);             \
 consarr[TAUL]   = vview(__VA_ARGS__,TAU_,q);              \

@@ -427,7 +427,7 @@ static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
                     aux(VEC(i,j,k),ZVECZ_,q)  = w * id.vz ;
                     // set ye
                     aux(VEC(i,j,k),YE_,q)  = id.ye  ;
-                    #ifdef M1_NU_FIVESPECIES
+                    #if GRACE_M1_NU_SPECIES >= 5
                     aux(VEC(i,j,k),YMU_,q) = id.ymu ;
                     #endif
 

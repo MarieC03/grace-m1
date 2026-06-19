@@ -64,9 +64,9 @@ struct m1_equations_system_t
     private:
     //! Base class type
     using base_t = hrsc_evolution_system_t<m1_equations_system_t>;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     static constexpr std::array<int,5> ye_coupling_sign {1,-1,1,-1,0} ;
-    #elif defined(M1_NU_THREESPECIES)
+    #elif (GRACE_M1_NU_SPECIES >= 3)
     static constexpr std::array<int,3> ye_coupling_sign {1,-1,0} ;
     #endif
     public:
@@ -518,14 +518,14 @@ struct m1_equations_system_t
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
         /**************************************************************************************************/
         // if needed add dN to ye here!
-        //#ifdef M1_NU_THREESPECIES
+        //#if GRACE_M1_NU_SPECIES >= 3
         //if constexpr ( ispec == 0 || ispec == 1) {
         //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),YESTAR_,q) += ye_coupling_sign[ispec] * dN ;
         //}
         //#endif
         ////KEN may have done a mistake, or at least not nice code
-        //#ifdef M1_NU_FIVESPECIES
+        //#if GRACE_M1_NU_SPECIES >= 5
         //if constexpr ( ispec == 2 || ispec == 3) {
         //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
         //state_new(VEC(i,j,k),YMUSTAR_,q) += ye_coupling_sign[ispec] * dN ;
@@ -556,9 +556,10 @@ struct m1_equations_system_t
 
         eos_t eos;
 
-        #if defined(M1_NU_FIVESPECIES)
+        #if GRACE_M1_NU_SPECIES >= 1
+        #if (GRACE_M1_NU_SPECIES >= 5)
         constexpr int n_species = 5;
-        #elif defined(M1_NU_THREESPECIES)
+        #elif (GRACE_M1_NU_SPECIES >= 3)
         constexpr int n_species = 3;
         #else
         constexpr int n_species = 1;
@@ -601,9 +602,10 @@ struct m1_equations_system_t
                 }
             }
         #endif
+        #endif // GRACE_M1_NU_SPECIES >= 1
 
         // We define dN in sense Ye. Old - New. Less nrad_e more ye.
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         const double dN1 = this->_state(VEC(i,j,k),NRAD1_,q)
            - state_new(VEC(i,j,k),NRAD1_,q) ;
         const double dN2 = this->_state(VEC(i,j,k),NRAD2_,q)
@@ -640,7 +642,7 @@ struct m1_equations_system_t
         }
         #endif
 
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         const double dN3 = this->_state(VEC(i,j,k),NRAD3_,q)
            - state_new(VEC(i,j,k),NRAD3_,q) ;
         const double dN4 = this->_state(VEC(i,j,k),NRAD4_,q)

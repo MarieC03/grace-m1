@@ -170,11 +170,11 @@ void compute_auxiliary_quantities(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
         m1_eq_system.compute_auxiliaries<0>(VEC(i,j,k), q, dev_coords);
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.compute_auxiliaries<1>(VEC(i,j,k), q, dev_coords);
         m1_eq_system.compute_auxiliaries<2>(VEC(i,j,k), q, dev_coords);
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.compute_auxiliaries<3>(VEC(i,j,k), q, dev_coords);
         m1_eq_system.compute_auxiliaries<4>(VEC(i,j,k), q, dev_coords);
         #endif

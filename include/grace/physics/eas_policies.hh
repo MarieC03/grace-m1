@@ -63,6 +63,9 @@ struct test_eas_op {
         grace::var_array_t _aux
     ) : aux(_aux)
     {
+        #if GRACE_M1_NU_SPECIES < 1
+        ERROR("If you want to use_test_eas_op you have to activate at least one Species \nGRACE_M1_NU_SPECIES={1,3,5} ") ;
+        #endif
         auto _which_test = grace::get_param<std::string>(
             "m1", "id_type"
         ) ;
@@ -99,6 +102,7 @@ struct test_eas_op {
         , double* xyz
     ) const
     {
+        #if GRACE_M1_NU_SPECIES >= 1
         auto u = Kokkos::subview(aux,VEC(i,j,k),Kokkos::ALL(),q) ;
         double r=0;
         switch (which_test) {
@@ -164,7 +168,7 @@ struct test_eas_op {
 
             break ;
         }
-        #ifdef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES >= 3
         aux(i,j,k,KAPPAA2_,q) = aux(i,j,k,KAPPAA1_,q);
         aux(i,j,k,KAPPAAN2_,q) = aux(i,j,k,KAPPAA1_,q);
         aux(i,j,k,KAPPAS2_,q) = aux(i,j,k,KAPPAS1_,q);
@@ -176,7 +180,7 @@ struct test_eas_op {
         aux(i,j,k,ETA3_,q) = aux(i,j,k,ETA1_,q);
         aux(i,j,k,ETAN3_,q) = aux(i,j,k,ETAN1_,q);
         #endif
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         aux(i,j,k,KAPPAA4_,q) = aux(i,j,k,KAPPAA1_,q);
         aux(i,j,k,KAPPAAN4_,q) = aux(i,j,k,KAPPAA1_,q);
         aux(i,j,k,KAPPAS4_,q) = aux(i,j,k,KAPPAS1_,q);
@@ -188,6 +192,7 @@ struct test_eas_op {
         aux(i,j,k,ETA5_,q) = aux(i,j,k,ETA1_,q);
         aux(i,j,k,ETAN5_,q) = aux(i,j,k,ETAN1_,q);
         #endif
+        #endif // GRACE_M1_NU_SPECIES >= 1
     }
 
     var_array_t aux ;
@@ -275,6 +280,7 @@ struct neutrinos_eas_op
         aux(_aux),
         dt(grace::get_timestep()),
         mass_scale(grace::get_param<double>("coordinate_system", "mass_scale")),
+        eas_rho_min(grace::get_param<double>("m1", "eas", "rho_min")),
         beta_decay(grace::get_param<bool>("m1", "eas", "beta_decay")),
         plasmon_decay(grace::get_param<bool>("m1", "eas", "plasmon_decay")),
         bremsstrahlung(grace::get_param<bool>("m1", "eas", "bremsstrahlung")),
@@ -441,7 +447,7 @@ struct neutrinos_eas_op
 
         f[0] = Ye_t + eq_nu_number_fraction(Ft, NUE)
                     - eq_nu_number_fraction(Ft, NUEBAR) - Yle ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         f[1] = Ymu_t + eq_nu_number_fraction(Ft, NUMU)
                      - eq_nu_number_fraction(Ft, NUMUBAR) - Ylmu ;
         f[2] = e + eq_nu_energy_code(Ft, NUE) + eq_nu_energy_code(Ft, NUEBAR)
@@ -465,7 +471,7 @@ struct neutrinos_eas_op
         double& T_eq, double& Ye_eq, double& Ymu_eq) const
     {
         T_eq = T_old ; Ye_eq = Ye_old ; Ymu_eq = Ymu_old ;
-        #ifndef M1_NU_THREESPECIES
+        #if GRACE_M1_NU_SPECIES < 3
         // Requires at least nue + nuebar + nux evolved blocks.
         return false ;
         #else
@@ -481,7 +487,7 @@ struct neutrinos_eas_op
         const double N_nue    = state(VEC(i,j,k), m1_nrad_idx<0>(), q) * oosg ;
         const double N_nuebar = state(VEC(i,j,k), m1_nrad_idx<1>(), q) * oosg ;
         const double Yle  = Ye_old + (N_nue - N_nuebar) / D ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         const double N_numu    = state(VEC(i,j,k), m1_nrad_idx<2>(), q) * oosg ;
         const double N_numubar = state(VEC(i,j,k), m1_nrad_idx<3>(), q) * oosg ;
         const double Ylmu = Ymu_old + (N_numu - N_numubar) / D ;
@@ -500,7 +506,7 @@ struct neutrinos_eas_op
         E_rad += fluid_frame_J<0>(VEC(i,j,k), q, metric) ;
         E_rad += fluid_frame_J<1>(VEC(i,j,k), q, metric) ;
         E_rad += fluid_frame_J<2>(VEC(i,j,k), q, metric) ;
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         E_rad += fluid_frame_J<3>(VEC(i,j,k), q, metric) ;
         E_rad += fluid_frame_J<4>(VEC(i,j,k), q, metric) ;
         #endif
@@ -532,7 +538,7 @@ struct neutrinos_eas_op
 
         // Map solver components -> v indices: 5sp solves (Ye,Ymu,T) with
         // residuals (f0,f1,f2); 3sp solves (Ye,T) with residuals (f0,f1).
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         const int vidx[3] = {0, 1, 2} ;
         #else
         const int vidx[3] = {0, 2, 2} ;
@@ -615,7 +621,7 @@ struct neutrinos_eas_op
         Ymu_eq = v[1] ;
         T_eq   = v[2] ;
         return true ;
-        #endif /* M1_NU_THREESPECIES */
+        #endif /* GRACE_M1_NU_SPECIES >= 3 */
     }
 
     // This is only beta eq for ye
@@ -637,13 +643,48 @@ struct neutrinos_eas_op
         return;
     }
 
+    // Transparent low-density cell: zero every EAS rate output (emission +
+    // opacity, all species) without touching the EOS.  Mirrors the per-species
+    // write block at the end of operator().
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    void floor_eas(VEC(const int i, const int j, const int k), int64_t q) const {
+        #if (GRACE_M1_NU_SPECIES >= 1)
+        aux(i,j,k,ETA1_,q)=1.e-30; aux(i,j,k,KAPPAA1_,q)=1.e-30; aux(i,j,k,KAPPAS1_,q)=1.e-30; aux(i,j,k,ETAN1_,q)=1.e-30; aux(i,j,k,KAPPAAN1_,q)=1.e-30;
+        #endif
+        #if (GRACE_M1_NU_SPECIES >= 3)
+        aux(i,j,k,ETA2_,q)=1.e-30; aux(i,j,k,KAPPAA2_,q)=1.e-30; aux(i,j,k,KAPPAS2_,q)=1.e-30; aux(i,j,k,ETAN2_,q)=1.e-30; aux(i,j,k,KAPPAAN2_,q)=1.e-30;
+        aux(i,j,k,ETA3_,q)=1.e-30; aux(i,j,k,KAPPAA3_,q)=1.e-30; aux(i,j,k,KAPPAS3_,q)=1.e-30; aux(i,j,k,ETAN3_,q)=1.e-30; aux(i,j,k,KAPPAAN3_,q)=1.e-30;
+        #endif
+        #if (GRACE_M1_NU_SPECIES >= 5)
+        aux(i,j,k,ETA4_,q)=1.e-30; aux(i,j,k,KAPPAA4_,q)=1.e-30; aux(i,j,k,KAPPAS4_,q)=1.e-30; aux(i,j,k,ETAN4_,q)=1.e-30; aux(i,j,k,KAPPAAN4_,q)=1.e-30;
+        aux(i,j,k,ETA5_,q)=1.e-30; aux(i,j,k,KAPPAA5_,q)=1.e-30; aux(i,j,k,KAPPAS5_,q)=1.e-30; aux(i,j,k,ETAN5_,q)=1.e-30; aux(i,j,k,KAPPAAN5_,q)=1.e-30;
+        #endif
+        #ifdef GRACE_M1_DEBUG_EAS
+        // Keep the debug fugacity / chemical-potential fields consistent with a
+        // transparent cell (no F is built here) so they don't show stale data.
+        // To inspect F in the low-density region, set m1.eas.rho_min = 0.
+        #if (GRACE_M1_NU_SPECIES >= 1)
+        aux(i,j,k,ETANU1_,q)=1.e-30;
+        #endif
+        #if (GRACE_M1_NU_SPECIES >= 5)
+        aux(i,j,k,ETANU2_,q)=1.e-30; aux(i,j,k,ETANU3_,q)=1.e-30; aux(i,j,k,ETANU4_,q)=1.e-30; aux(i,j,k,ETANU5_,q)=1.e-30;
+        #elif (GRACE_M1_NU_SPECIES >= 3)
+        aux(i,j,k,ETANU2_,q)=1.e-30; aux(i,j,k,ETANU3_,q)=1.e-30;
+        #endif
+        aux(i,j,k,MUE_,q)=1.e-30; aux(i,j,k,MUMU_,q)=1.e-30; aux(i,j,k,MUP_,q)=1.e-30; aux(i,j,k,MUN_,q)=1.e-30;
+        #endif
+    }
+
     // Main Kernel
     void KOKKOS_INLINE_FUNCTION operator()(VEC(const int i, const int j, const int k), int64_t q, double* xyz) const {
        const double rho = aux(VEC(i,j,k),RHO_,q);
+       // Transparent atmosphere: floor the rates and skip the EOS / fugacity /
+       // rate evaluation entirely.  Most of the grid lives here.
+       if (rho < eas_rho_min) { floor_eas(VEC(i,j,k), q); return; }
        double T         = aux(VEC(i,j,k),TEMP_,q);
        double Ye        = aux(VEC(i,j,k),YE_,q);
        double Ymu       = 0.0;
-       #ifdef M1_NU_FIVESPECIES
+       #if GRACE_M1_NU_SPECIES >= 5
         Ymu = aux(VEC(i,j,k),YMU_,q);
         #endif
         if (betaeq_mode == betaeq_mode_t::chemical) find_ye_betaeq(rho, T, Ye, Ymu);
@@ -656,9 +697,10 @@ struct neutrinos_eas_op
         if (apply_temp_correction) {
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
+            #if GRACE_M1_NU_SPECIES >= 1
             eps_rad[0] = fluid_frame_eps_mev<0>(VEC(i,j,k), q, metric) ;
             eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             eps_rad[2] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             eps_rad[3] = fluid_frame_eps_mev<3>(VEC(i,j,k), q, metric) ;
             eps_rad[4] = fluid_frame_eps_mev<4>(VEC(i,j,k), q, metric) ;
@@ -666,6 +708,7 @@ struct neutrinos_eas_op
             // 3-species: evolved index 2 is NUX -> rates slot NUX (4).
             eps_rad[NUX] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             #endif
+            #endif // GRACE_M1_NU_SPECIES >= 1
         }
 
         // The rate source (weakhub table vs analytic) and the tau policy are
@@ -738,7 +781,7 @@ struct neutrinos_eas_op
             const double oosqrtg = 1.0 / metric.sqrtg() ;
             bool N_ok =
                 state(VEC(i,j,k), m1_nrad_idx<0>(), q)*oosqrtg > 1.0e-16 ;
-            #ifdef M1_NU_THREESPECIES
+            #if GRACE_M1_NU_SPECIES >= 3
             N_ok = N_ok
                 && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16
                 && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16 ;
@@ -775,7 +818,7 @@ struct neutrinos_eas_op
                     // implicit solver's responsibility, not done here.
                     aux(VEC(i,j,k),TEMP_,q) = T ;
                     aux(VEC(i,j,k),YE_,q)   = Ye ;
-                    #ifdef M1_NU_FIVESPECIES
+                    #if GRACE_M1_NU_SPECIES >= 5
                     aux(VEC(i,j,k),YMU_,q)  = Ymu ;
                     #endif
                     all = evaluate_rates() ;
@@ -784,13 +827,13 @@ struct neutrinos_eas_op
         }
 
 
-        #if defined(M1_NU_FIVESPECIES)
+        #if (GRACE_M1_NU_SPECIES >= 5)
         { const nu_rates_out r = all.out[NUE];     aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUEBAR];  aux(i,j,k,ETA2_,q)=r.eta_E; aux(i,j,k,KAPPAA2_,q)=r.kappa_a; aux(i,j,k,KAPPAS2_,q)=r.kappa_s; aux(i,j,k,ETAN2_,q)=r.eta_N; aux(i,j,k,KAPPAAN2_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUMU];    aux(i,j,k,ETA3_,q)=r.eta_E; aux(i,j,k,KAPPAA3_,q)=r.kappa_a; aux(i,j,k,KAPPAS3_,q)=r.kappa_s; aux(i,j,k,ETAN3_,q)=r.eta_N; aux(i,j,k,KAPPAAN3_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUMUBAR]; aux(i,j,k,ETA4_,q)=r.eta_E; aux(i,j,k,KAPPAA4_,q)=r.kappa_a; aux(i,j,k,KAPPAS4_,q)=r.kappa_s; aux(i,j,k,ETAN4_,q)=r.eta_N; aux(i,j,k,KAPPAAN4_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUX];     aux(i,j,k,ETA5_,q)=r.eta_E; aux(i,j,k,KAPPAA5_,q)=r.kappa_a; aux(i,j,k,KAPPAS5_,q)=r.kappa_s; aux(i,j,k,ETAN5_,q)=r.eta_N; aux(i,j,k,KAPPAAN5_,q)=r.kappa_n; }
-        #elif defined(M1_NU_THREESPECIES)
+        #elif (GRACE_M1_NU_SPECIES >= 3)
         { const nu_rates_out r = all.out[NUE];    aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUEBAR]; aux(i,j,k,ETA2_,q)=r.eta_E; aux(i,j,k,KAPPAA2_,q)=r.kappa_a; aux(i,j,k,KAPPAS2_,q)=r.kappa_s; aux(i,j,k,ETAN2_,q)=r.eta_N; aux(i,j,k,KAPPAAN2_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUX];    aux(i,j,k,ETA3_,q)=r.eta_E; aux(i,j,k,KAPPAA3_,q)=r.kappa_a; aux(i,j,k,KAPPAS3_,q)=r.kappa_s; aux(i,j,k,ETAN3_,q)=r.eta_N; aux(i,j,k,KAPPAAN3_,q)=r.kappa_n; }
@@ -800,13 +843,15 @@ struct neutrinos_eas_op
         // Debug: dump the per-species equilibrium fugacity eta_nu = mu_nu / T
         // (already (1-exp(-tau))-suppressed and clamped in make_fugacity_state)
         // so it can be compared cell-by-cell against the reference evolution.
+        #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
-        #if defined(M1_NU_FIVESPECIES)
+        #endif
+        #if (GRACE_M1_NU_SPECIES >= 5)
         aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
         aux(i,j,k,ETANU3_,q) = F.eta_nu[NUMU];
         aux(i,j,k,ETANU4_,q) = F.eta_nu[NUMUBAR];
         aux(i,j,k,ETANU5_,q) = F.eta_nu[NUX];
-        #elif defined(M1_NU_THREESPECIES)
+        #elif (GRACE_M1_NU_SPECIES >= 3)
         aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
         aux(i,j,k,ETANU3_,q) = F.eta_nu[NUX];
         #endif
@@ -825,6 +870,7 @@ struct neutrinos_eas_op
   var_array_t aux;
   double dt;
   double mass_scale;
+  double eas_rho_min;   // [code units] floor the rates & skip the EOS below this
   bool beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation;
   bool apply_temp_correction;
   bool use_weakhub;

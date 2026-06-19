@@ -46,7 +46,7 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_EPS_TOO_LOW,
     C2P_YE_TOO_LOW,
     C2P_YE_TOO_HIGH,
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     C2P_YMU_TOO_LOW,
     C2P_YMU_TOO_HIGH,
     #endif
@@ -102,7 +102,7 @@ enum c2p_err_enum_t : uint8_t {
         C2P_RESET_STILDE,
         C2P_RESET_ENTROPY,
         C2P_RESET_YE,
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         C2P_RESET_YMU,
         #endif
         // Signal-mirror bits begin. Pure diagnostic; not consumed by the
@@ -146,7 +146,7 @@ void c2p_set_all_resets(c2p_err_t& err)
     err.set(C2P_RESET_STILDE)  ;
     err.set(C2P_RESET_ENTROPY) ;
     err.set(C2P_RESET_YE)      ;
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
         err.set(C2P_RESET_YMU)     ;
     #endif
 }
@@ -188,7 +188,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         err.set(C2P_RESET_ENTROPY) ;
         if constexpr (has_ye_v<eos_t>) {
                     err.set(C2P_RESET_YE) ;
-                    #ifdef M1_NU_FIVESPECIES
+                    #if GRACE_M1_NU_SPECIES >= 5
                     err.set(C2P_RESET_YMU) ;
                     #endif
         }
@@ -200,7 +200,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         if (sig.test(C2P_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
     }
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     if (sig.test(C2P_YMU_TOO_LOW) or sig.test(C2P_YMU_TOO_HIGH)) {
         err.set(C2P_RESET_YMU) ;
     }
@@ -276,7 +276,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
         err.set(C2P_RESET_ENTROPY) ;
         if constexpr (has_ye_v<eos_t>) {
             err.set(C2P_RESET_YE) ;
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             err.set(C2P_RESET_YMU) ;
             #endif
         }
@@ -286,7 +286,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
     if constexpr (has_ye_v<eos_t>) {
         if (eos_err.test(EOS_YE_TOO_LOW))  { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_LOW)  ; }
         if (eos_err.test(EOS_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         if (eos_err.test(EOS_YMU_TOO_LOW) or eos_err.test(EOS_YMU_TOO_HIGH)) {
             err.set(C2P_RESET_YMU) ;
         }

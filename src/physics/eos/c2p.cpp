@@ -106,7 +106,7 @@ limit_primitives(
         // recompute other prims
         eos_err_t eos_err ;
         double csnd2;
-    #ifndef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES < 5
         double ymu = 0.0;
     #else
         double& ymu = prims[YMUL];
@@ -133,7 +133,7 @@ limit_conservatives(
     double rhoL = cons[DENSL] ;
     double yeL  = cons[YESL]  / (cons[DENSL]) ;
     double ymuL = 0;
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     ymuL = cons[YMUSL]  / (cons[DENSL]) ;
 #endif
 
@@ -178,14 +178,14 @@ reset_to_atmosphere(
 {
     prims[RHOL]  = atmo.rho_fl ;
     prims[YEL]   = atmo.ye_fl  ;
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     prims[YMUL]   = atmo.ymu_fl  ;
 #endif
     prims[TEMPL] = atmo.temp_fl ;
     prims[ZXL]   = 0. ;
     prims[ZYL]   = 0. ;
     prims[ZZL]   = 0. ;
-#ifndef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES < 5
     double ymu = 0.;
 #else
     double& ymu = prims[YMUL];
@@ -265,7 +265,7 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         c2p_err.set(c2p_err_enum_t::C2P_RESET_YE) ;
     }
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     /* Check that the ymu is within bounds */
     prims[YMUL] = cons[YMUSL]/cons[DENSL] ;
     double ymumax = eos.get_c2p_ymu_max();
@@ -398,7 +398,7 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         // get pressure, eps and entropy
         double csnd2 ;
         eos_err_t eos_err;
-    #ifndef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES < 5
         double ymu = 0.;
     #else
         double& ymu = prims[YMUL];
@@ -487,7 +487,7 @@ prims_to_conservs( grace::grmhd_prims_array_t& prims
     cons[TAUL]  = sqrtg * tau ;
     cons[ENTSL] = sqrtg * sstar ;
     cons[YESL]  = cons[DENSL] * prims[YEL] ;
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     cons[YMUSL]  = cons[DENSL] * prims[YMUL] ;
 #endif
     ////

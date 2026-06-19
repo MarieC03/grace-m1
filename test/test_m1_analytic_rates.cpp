@@ -439,7 +439,7 @@ TEST_CASE("Pair process: species splits and mean energy", "[m1rates][kernels]") 
     const double eps_fraction = 0.5 * F.temp_mev * (eta_m + eta_m);
     REQUIRE_THAT(out.Q[NUX] / out.R[NUX], WithinRel(eps_fraction, kExactTol));
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     // NUX carries tau + anti-tau (1/18) = twice the mu-channel (1/36).
     REQUIRE(out.R[NUMU] > 0.0);
     REQUIRE_THAT(out.R[NUMUBAR], WithinRel(out.R[NUMU],       kExactTol));
@@ -472,7 +472,7 @@ TEST_CASE("Plasmon decay: no electron-flavour emission, heavy-lepton split",
     REQUIRE(out.R[NUEBAR] == 0.0);
     REQUIRE(out.R[NUX] > 0.0);
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     // Degeneracy 2 for NUX (tau pair) vs 1 per muon channel.
     REQUIRE(out.R[NUMU] > 0.0);
     REQUIRE_THAT(out.R[NUMUBAR], WithinRel(out.R[NUMU],       kExactTol));
@@ -489,7 +489,7 @@ TEST_CASE("Bremsstrahlung: heavy-lepton split sums to four pair channels",
     rates_accum out{};
     add_brems_emission(F, out);
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     REQUIRE(out.R[NUMU] > 0.0);
     REQUIRE_THAT(out.R[NUMUBAR], WithinRel(out.R[NUMU],       kExactTol));
     REQUIRE_THAT(out.R[NUX],     WithinRel(2.0 * out.R[NUMU], kExactTol));
@@ -509,7 +509,7 @@ TEST_CASE("Bremsstrahlung: heavy-lepton split sums to four pair channels",
     std::swap(G.Xn, G.Xp);
     rates_accum swapped{};
     add_brems_emission(G, swapped);
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     REQUIRE_THAT(swapped.R[NUMU], WithinRel(out.R[NUMU], kExactTol));
 #else
     REQUIRE_THAT(swapped.R[NUX], WithinRel(out.R[NUX], kExactTol));
@@ -539,7 +539,7 @@ TEST_CASE("Kirchhoff inversion round-trips kappa -> (Q,R) -> kappa",
           "[m1rates][kernels]") {
     fugacity_state F = make_hot_state();
     std::array<double, NUMSPECIES> g_nu{{1, 1, 0, 0, 4}};
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     g_nu = {{1, 1, 1, 1, 2}};
 #endif
     std::array<double, NUMSPECIES> kappa_a{{1e-4, 2e-4, 3e-4, 4e-4, 5e-4}};
@@ -689,7 +689,7 @@ TEST_CASE("compute_all_species: process flags gate the rates",
     }
 }
 
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
 TEST_CASE("compute_all_species: muon species suppressed below threshold",
           "[m1rates][integration]") {
     using namespace nu_constants;
@@ -748,7 +748,7 @@ TEST_CASE("compute_all_species: heavy-lepton emissivities equal the thermal "
                  WithinRel(Q_mev_to_code(thermal.Q[NUX], 1.0), 1e-12));
     REQUIRE_THAT(all.out[NUX].eta_N,
                  WithinRel(R_to_code(thermal.R[NUX], 1.0), 1e-12));
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     // rho = 1e13 g/cc and T = 10 MeV are above the muon suppression
     // thresholds, so the muon channels must carry exactly 1x brems too.
     REQUIRE_THAT(all.out[NUMU].eta_E,

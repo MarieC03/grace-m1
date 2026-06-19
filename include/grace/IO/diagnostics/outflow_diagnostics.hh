@@ -119,14 +119,19 @@ struct m1_outflows :
     enum loc_var_idx_t : int {
         // Metric
         BETAXL=0, BETAYL, BETAZL, ALPL,
+#if GRACE_M1_NU_SPECIES >= 1
         E1L, FX1L, FY1L, FZ1L,
-#ifdef M1_NU_THREESPECIES
+#endif
+#if GRACE_M1_NU_SPECIES >= 3
         E2L, FX2L, FY2L, FZ2L,
         E3L, FX3L, FY3L, FZ3L,
 #endif
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
         E4L, FX4L, FY4L, FZ4L,
         E5L, FX5L, FY5L, FZ5L,
+#endif
+#ifdef GRACE_M1_PHOTONS
+        EPHL, FXPHL, FYPHL, FZPHL,
 #endif
         NUM_VARS
     };
@@ -135,12 +140,19 @@ struct m1_outflows :
     enum loc_aux_idx_t : int { NUM_AUX = 0 };
 
     // One luminosity entry per species
-#if defined(M1_NU_THREESPECIES)
-    static constexpr size_t n_fluxes = 3;
-#elif defined(M1_NU_FIVESPECIES)
-    static constexpr size_t n_fluxes = 5;
+#ifdef GRACE_M1_PHOTONS
+    static constexpr size_t photon_flux = 1;
 #else
-    static constexpr size_t n_fluxes = 1;
+    static constexpr size_t photon_flux = 0;
+#endif
+#if (GRACE_M1_NU_SPECIES >= 5)
+    static constexpr size_t n_fluxes = 5 + photon_flux;
+#elif (GRACE_M1_NU_SPECIES >= 3)
+    static constexpr size_t n_fluxes = 3 + photon_flux;
+#elif (GRACE_M1_NU_SPECIES >= 1)
+    static constexpr size_t n_fluxes = 1 + photon_flux;
+#else
+    static constexpr size_t n_fluxes = 0 + photon_flux;
 #endif
 
     static std::vector<std::string> flux_names;
@@ -150,15 +162,20 @@ struct m1_outflows :
     {
         // Radiation flux components per species (state array indices)
         this->var_interp_idx = {
-            BETAX_, BETAY_, BETAZ_, ALP_,
-            ERAD1_, FRADX1_, FRADY1_, FRADZ1_
-#if defined(M1_NU_THREESPECIES) || defined(M1_NU_FIVESPECIES)
+            BETAX_, BETAY_, BETAZ_, ALP_
+#if GRACE_M1_NU_SPECIES >= 1
+            , ERAD1_, FRADX1_, FRADY1_, FRADZ1_
+#endif
+#if GRACE_M1_NU_SPECIES >= 3
             , ERAD2_, FRADX2_, FRADY2_, FRADZ2_
             , ERAD3_, FRADX3_, FRADY3_, FRADZ3_
 #endif
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
             , ERAD4_, FRADX4_, FRADY4_, FRADZ4_
             , ERAD5_, FRADX5_, FRADY5_, FRADZ5_
+#endif
+#ifdef GRACE_M1_PHOTONS
+            , ERADPH_, FRADXPH_, FRADYPH_, FRADZPH_
 #endif
         };
         this->aux_interp_idx = {};

@@ -740,7 +740,7 @@ class leptonic_eos_4d_t
     KOKKOS_INLINE_FUNCTION void limit_ymu(double& ymu, err_t& err) const {
         if ( ymu < this->eos_ymumin ) {
             ymu = this->eos_ymumin ;
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             err.set(EOS_YMU_TOO_LOW) ;
             #else
             err.set(EOS_YE_TOO_LOW) ;
@@ -748,7 +748,7 @@ class leptonic_eos_4d_t
         }
         if ( ymu > this->eos_ymumax ) {
             ymu = this->eos_ymumax ;
-            #ifdef M1_NU_FIVESPECIES
+            #if GRACE_M1_NU_SPECIES >= 5
             err.set(EOS_YMU_TOO_HIGH) ;
             #else
             err.set(EOS_YE_TOO_HIGH) ;

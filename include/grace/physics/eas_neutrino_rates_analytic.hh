@@ -533,7 +533,7 @@ fugacity_state make_fugacity_state(
         if (Kokkos::isfinite(fac_nue))    F.eta_nu[NUE]    *= fac_nue;
         if (Kokkos::isfinite(fac_nuebar)) F.eta_nu[NUEBAR] *= fac_nuebar;
 
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         const double fac_numu    = 1.0 - Kokkos::exp(-F.tau_n[NUMU]);
         const double fac_numubar = 1.0 - Kokkos::exp(-F.tau_n[NUMUBAR]);
         if (Kokkos::isfinite(fac_numu))    F.eta_nu[NUMU]    *= fac_numu;
@@ -541,7 +541,7 @@ fugacity_state make_fugacity_state(
         #endif
     }
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     // Muonic-eta stabilizers (FIL fugacities.hh).  eta_numu = mu_numu/T carries
     // the ~105 MeV muon rest mass and explodes out of muonic equilibrium,
     // overflowing exp(eta) in the rate blocking factors -> NaN.  Zero it where
@@ -691,7 +691,7 @@ void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
     const double pair_heavy_coupling =
         ipow<2>(Cv - Ca) + ipow<2>(Cv + Ca - 2.0);
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     // In 5-species mode:
     //   NUMU    = nu_mu
     //   NUMUBAR = anti-nu_mu
@@ -710,7 +710,7 @@ void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
         out.Q[NUX] += R_pair_x * eps_fraction;
     }
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     const double R_pair_numu = (1.0/36.0) * pair_const * pair_heavy_coupling /
                              (block[NUMU] * block[NUMUBAR]);
     if (Kokkos::isfinite(R_pair_numu) && (R_pair_numu > 0.0)) {
@@ -760,7 +760,7 @@ void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out,
         }
     }
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     // In 5-species mode NUX is only tau + anti-tau, so use degeneracy 2.
     const double R_gamma_x = 2.0 * ipow<2>(Cv - 1.0) * gamma_const /
                            (block[NUX] * block[NUX]);
@@ -775,7 +775,7 @@ void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out,
         out.Q[NUX] += Q_gamma * R_gamma_x;
     }
 
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     const double R_gamma_numu = ipow<2>(Cv - 1.0) * gamma_const /
                               (block[NUMU] * block[NUMUBAR]);
     if (Kokkos::isfinite(R_gamma_numu) && (R_gamma_numu > 0.0)) {
@@ -795,7 +795,7 @@ void add_brems_emission(const fugacity_state& F, rates_accum& out) {
         0.231 * (2.0778e2 * erg_to_mev) * factorY * ipow<2>(F.rho_cgs) * ipow<4>(F.temp_mev) * Kokkos::sqrt(safe_pos(F.temp_mev));
     const double Q_brems = R_brems * F.temp_mev / 0.231 * 0.504;
     if (Kokkos::isfinite(R_brems) && (R_brems > 0.0) && Kokkos::isfinite(Q_brems) && (Q_brems > 0.0)) {
-        #ifdef M1_NU_FIVESPECIES
+        #if GRACE_M1_NU_SPECIES >= 5
         // In 5-species mode:
         //   NUMU    = one heavy species
         //   NUMUBAR = one heavy species
@@ -911,7 +911,7 @@ nu_rates_all_out compute_all_species_weakhub(
     }
 
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     g_nu = {{1,1,1,1,2}};
     #endif
 
@@ -936,7 +936,7 @@ nu_rates_all_out compute_all_species_weakhub(
         rates.kappa_a[s] += kappa_a_add[s];
         rates.kappa_n[s] += kappa_n_add[s];
     }
-    #ifdef M1_NU_FIVESPECIES
+    #if GRACE_M1_NU_SPECIES >= 5
     if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
         rates.Q[NUMU] = rates.R[NUMU] = rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = 0.0;
         rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
@@ -1023,7 +1023,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     const double* eps_rad = nullptr)
 {
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     g_nu = {{1,1,1,1,2}};
 #endif
 
@@ -1099,7 +1099,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     // -------------------------------------------------------------------------
     // Step 7: Suppress muon species below threshold (5-species mode only).
     // -------------------------------------------------------------------------
-#ifdef M1_NU_FIVESPECIES
+#if GRACE_M1_NU_SPECIES >= 5
     if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
         rates.Q[NUMU]    = rates.R[NUMU]    = rates.kappa_a[NUMU]    = rates.kappa_n[NUMU]    = 0.0;
         rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
