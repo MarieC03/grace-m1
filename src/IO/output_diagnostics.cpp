@@ -92,6 +92,11 @@ void output_diagnostics() {
     outflows outfl{} ;
     outfl.compute_and_write() ;
 
+    #ifdef GRACE_ENABLE_M1
+    m1_outflows rad_outfl{};
+    rad_outfl.compute_and_write();
+    #endif
+
     em_energy_diagnostic em_energy{} ; 
     em_energy.compute_and_write() ; 
 
@@ -111,6 +116,11 @@ void initialize_diagnostic_files() {
     outflows outfl{} ; 
     outfl.initialize_files() ; 
 
+    #ifdef GRACE_ENABLE_M1
+    m1_outflows rad_outfl{};
+    rad_outfl.initialize_files();
+    #endif
+
     em_energy_diagnostic em_energy{} ; 
     em_energy.initialize_files() ;
 
@@ -120,4 +130,4 @@ void initialize_diagnostic_files() {
     parallel::mpi_barrier() ;
 }
 
-} } 
+} }

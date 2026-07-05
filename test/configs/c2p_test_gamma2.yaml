@@ -1,4 +1,11 @@
 name: "grace"
+# A `system:` block must be present so the schema's master_rank default (0) is
+# merged in -- the MPI runtime reads system.master_rank at startup, and an
+# absent section (not just an absent key) leaves it undefined and segfaults.
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
 amr: {
   npoints_block_x: 6,
   npoints_block_y: 6,
@@ -8,22 +15,33 @@ amr: {
 }
 eos: {
   eos_type: "hybrid",
-  cold_eos_type: "piecewise_polytrope",
-
-  ye_atmosphere: 0,
-  temp_atmosphere: 0,
-  rho_atmosphere: 1.e-14,
   eps_maximum: 1.e+05,
-  gamma_th: 1.8,
-
-  atm_is_beta_eq: true,
-  extend_table_high: false,
-
+  hybrid_eos: {
+    cold_eos_type: "piecewise_polytrope",
+    gamma_th: 1.8
+  },
   piecewise_polytrope: {
     n_pieces: 1,
     gammas: [ 2. ],
     rhos:   [ ],
     kappa_0: 1.685819e+02
+  }
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-14,
+    temp_fl: 0,
+    ye_fl: 0,
+    # hybrid (gamma-law) EOS has no composition -> no beta equilibrium
+    atmosphere_is_beta_eq: false
+  }
+}
+m1: {
+  eas: {
+    # In M1-enabled builds the default 'test' EAS policy aborts
+    # ("Unknown m1 test") during set_initial_data with a real id_type.
+    # Ignored in M1-off builds.
+    kind: "neutrino_analytic"
   }
 }
 checkpoints: {

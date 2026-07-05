@@ -107,6 +107,53 @@ add_grace_test(particle_aux_fetch_test    test_particle_aux_fetch.cpp)
 add_grace_test(particle_advance_test      test_particle_advance.cpp)
 endif()
 
+if( GRACE_ENABLE_M1 )
+add_kokkos_test(m1_analytic_rates_test test_m1_analytic_rates.cpp)
+add_test(NAME m1_analytic_rates_test COMMAND mpirun -n 1 ./m1_analytic_rates_test)
+# Pure serial unit checks — pin OpenMP to one thread so the test is immune
+# to the macOS duplicate-libomp teardown crash that affects multi-threaded
+# Kokkos test binaries.
+set_tests_properties(m1_analytic_rates_test PROPERTIES
+    LABELS "fast;physics;m1"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+
+# Weakhub opacity-table lookup on synthetic in-memory tables: species-slot
+# mapping per GRACE_M1_NU_SPECIES (regression for the 6-species-table /
+# 3-species-run under-opacity -> T-runaway bug), interpolation exactness,
+# bounds clamping.  No table file or weakhub parfile section needed.
+add_kokkos_test(weakhub_table_test test_weakhub_table.cpp)
+add_test(NAME weakhub_table_test COMMAND mpirun -n 1 ./weakhub_table_test)
+set_tests_properties(weakhub_table_test PROPERTIES
+    LABELS "fast;physics;m1"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+
+# Lepton-number bookkeeping of the M1 -> hydro backreaction on hand-built
+# single-cell state (mock EOS bounds): sign conventions (nue absorbed ->
+# Ye up, anue -> Ye down, muon pair -> Ymu), lepton-number conservation
+# under the composition limiter, energy-positivity revert, and photons
+# leaving Ye/Ymu untouched.  Compiled only for >= 3 species (the Ye
+# coupling exists); the Ymu cases activate at 5.
+if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
+    add_kokkos_test(m1_backreaction_test test_m1_backreaction.cpp)
+    add_test(NAME m1_backreaction_test COMMAND mpirun -n 1 ./m1_backreaction_test)
+    set_tests_properties(m1_backreaction_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
+# Golden-node check of the PRODUCTION Weakhub loader against the raw HDF5
+# contents of a real opacity table: lookup at exact grid nodes must return
+# the stored values (catches axis-ordering / reorder-loop / metadata bugs
+# the synthetic test cannot).  Uses a machine-local table path (see the
+# yaml) -> not CI-portable; excluded from the "fast" lane.
+add_grace_test(weakhub_golden_test test_weakhub_golden.cpp)
+add_test(NAME weakhub_golden_test COMMAND
+        mpirun -n 1 ./weakhub_golden_test --grace-parfile ./configs/weakhub_golden_test.yaml)
+set_tests_properties(weakhub_golden_test PROPERTIES
+    LABELS "physics;m1;weakhub"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # All four kokkos_tests_main-using binaries link MPI (via grace_parallel /
 # grace_singleton transitive deps) and call `parallel::mpi_init` at
 # startup; launch via `mpirun -n 1` so the OpenMPI runtime is set up
@@ -303,9 +350,27 @@ add_test(NAME metric_test COMMAND
         mpirun -n 1 ./metric_test --grace-parfile ./configs/basic_config.yaml )
 set_tests_properties(metric_test PROPERTIES LABELS "fast;coords")
 
+# NB: the test main (grace::initialize) consumes "--grace-parfile <path>" by
+# shrinking argc; it does NOT rewrite argv, and Catch2 reads the first argc
+# entries of the original array.  So any Catch2 tag filter MUST come first and
+# --grace-parfile MUST come last, otherwise Catch2 sees "--grace-parfile" and
+# errors.  "~[leptonic]" excludes the leptonic case (which needs eos_type =
+# leptonic + a 5-species build); it is a no-op tag in non-5-species builds
+# where that test case is compiled out.
 add_test(NAME gamma2_c2p_test COMMAND
-        mpirun -n 1 ./c2p_test --grace-parfile ./configs/c2p_test_gamma2.yaml )
+        mpirun -n 1 ./c2p_test "~[leptonic]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
 set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
+
+# Leptonic (4D, with muons) c2p round-trip.  Only meaningful in a 5-species
+# build: the test case carries the YMUL/YMUSL slots and is #if'd out below 5,
+# so registering it there would make Catch2 fail with "no tests matched".
+# Uses absolute machine-local table paths (see the yaml) -> not CI-portable;
+# label it "leptonic" so it can be excluded by label as well as by tag.
+if(GRACE_M1_NU_SPECIES EQUAL 5)
+    add_test(NAME leptonic_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[leptonic]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
+    set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+endif()
 
 add_test(NAME grmhd_kernels_test COMMAND
         mpirun -n 1 ./grmhd_kernels_test --grace-parfile ./configs/basic_config.yaml )

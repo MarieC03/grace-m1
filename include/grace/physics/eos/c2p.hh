@@ -3,26 +3,26 @@
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
  * @brief Shared c2p signal / error bitsets and post-recovery handlers (resets, atmosphere fall-back, EOS-level signal dispatch).
  * @date 2024-06-10
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #ifndef GRACE_PHYSICS_EOS_C2P_HH
@@ -46,6 +46,10 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_EPS_TOO_LOW,
     C2P_YE_TOO_LOW,
     C2P_YE_TOO_HIGH,
+    #if GRACE_M1_NU_SPECIES >= 5
+    C2P_YMU_TOO_LOW,
+    C2P_YMU_TOO_HIGH,
+    #endif
     C2P_RHO_TOO_HIGH,
     C2P_RHO_TOO_LOW,
     C2P_ENT_TOO_LOW,
@@ -53,7 +57,7 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_VEL_TOO_HIGH,
     C2P_SIGMA_TOO_HIGH,
     C2P_NSIG
-} ; 
+} ;
 
 // c2p_err bit layout:
 //   bits 0-4:  reset-which-conserved flags. These drive the conservative
@@ -94,34 +98,35 @@ enum c2p_sig_enum_t : uint8_t {
 // Total bits used: 22 — comfortably below double mantissa (2^53).
 enum c2p_err_enum_t : uint8_t {
     C2P_RESET_DENS=0,
-    C2P_RESET_TAU,
-    C2P_RESET_STILDE,
-    C2P_RESET_ENTROPY,
-    C2P_RESET_YE,
-    // Signal-mirror bits begin. Pure diagnostic; not consumed by the
-    // conservative-reset dispatch in compute_auxiliaries.
-    C2P_SIG_RHO_TOO_LOW,
-    C2P_SIG_RHO_TOO_HIGH,
-    C2P_SIG_EPS_TOO_LOW,
-    C2P_SIG_EPS_TOO_HIGH,
-    C2P_SIG_YE_TOO_LOW,
-    C2P_SIG_YE_TOO_HIGH,
-    C2P_SIG_ENT_TOO_LOW,
-    C2P_SIG_ENT_TOO_HIGH,
-    C2P_SIG_TEMP_TOO_LOW,
-    C2P_SIG_TEMP_TOO_HIGH,
-    C2P_SIG_PRESS_TOO_LOW,
-    C2P_SIG_PRESS_TOO_HIGH,
-    C2P_SIG_VEL_TOO_HIGH,
-    C2P_SIG_SIGMA_TOO_HIGH,
-    // c2p outcome bits — set by the dispatch logic in conservs_to_prims,
-    // not the per-signal handlers. Use these to distinguish "primary c2p
-    // succeeded with quiet flooring" from "primary c2p failed and the
-    // entropy backup recovered the cell" from "atmosphere reset fired".
-    C2P_ENT_BACKUP_USED,
-    C2P_ATMO_RESET,
-    C2P_T_FLOORED,
-    C2P_N_ERR
+        C2P_RESET_TAU,
+        C2P_RESET_STILDE,
+        C2P_RESET_ENTROPY,
+        C2P_RESET_YE,
+        #if GRACE_M1_NU_SPECIES >= 5
+        C2P_RESET_YMU,
+        #endif
+        // Signal-mirror bits begin. Pure diagnostic; not consumed by the
+        // conservative-reset dispatch in compute_auxiliaries.
+        C2P_SIG_RHO_TOO_LOW,
+        C2P_SIG_RHO_TOO_HIGH,
+        C2P_SIG_EPS_TOO_LOW,
+        C2P_SIG_EPS_TOO_HIGH,
+        C2P_SIG_YE_TOO_LOW,
+        C2P_SIG_YE_TOO_HIGH,
+        C2P_SIG_ENT_TOO_LOW,
+        C2P_SIG_ENT_TOO_HIGH,
+        C2P_SIG_TEMP_TOO_LOW,
+        C2P_SIG_TEMP_TOO_HIGH,
+        C2P_SIG_PRESS_TOO_LOW,
+        C2P_SIG_PRESS_TOO_HIGH,
+        C2P_SIG_VEL_TOO_HIGH,
+        C2P_SIG_SIGMA_TOO_HIGH,
+        // c2p outcome bits — set by the dispatch logic in conservs_to_prims,
+        // not the per-signal handlers.
+        C2P_ENT_BACKUP_USED,
+        C2P_ATMO_RESET,
+        C2P_T_FLOORED,
+        C2P_N_ERR
 } ;
 
 using c2p_sig_t = bitset_t<C2P_NSIG> ;
@@ -141,6 +146,9 @@ void c2p_set_all_resets(c2p_err_t& err)
     err.set(C2P_RESET_STILDE)  ;
     err.set(C2P_RESET_ENTROPY) ;
     err.set(C2P_RESET_YE)      ;
+    #if GRACE_M1_NU_SPECIES >= 5
+        err.set(C2P_RESET_YMU)     ;
+    #endif
 }
 
 /**
@@ -178,7 +186,12 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
-        if constexpr (has_ye_v<eos_t>) err.set(C2P_RESET_YE) ;
+        if constexpr (has_ye_v<eos_t>) {
+                    err.set(C2P_RESET_YE) ;
+                    #if GRACE_M1_NU_SPECIES >= 5
+                    err.set(C2P_RESET_YMU) ;
+                    #endif
+        }
         err.set(C2P_SIG_RHO_TOO_LOW) ;
     }
 
@@ -186,6 +199,12 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         if (sig.test(C2P_YE_TOO_LOW))  { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_LOW)  ; }
         if (sig.test(C2P_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
     }
+
+    #if GRACE_M1_NU_SPECIES >= 5
+    if (sig.test(C2P_YMU_TOO_LOW) or sig.test(C2P_YMU_TOO_HIGH)) {
+        err.set(C2P_RESET_YMU) ;
+    }
+    #endif
 
     if (sig.test(C2P_ENT_TOO_LOW))  { err.set(C2P_RESET_ENTROPY); err.set(C2P_SIG_ENT_TOO_LOW)  ; }
     if (sig.test(C2P_ENT_TOO_HIGH)) { err.set(C2P_RESET_ENTROPY); err.set(C2P_SIG_ENT_TOO_HIGH) ; }
@@ -255,13 +274,23 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
         err.set(C2P_RESET_TAU)     ;
         err.set(C2P_RESET_STILDE)  ;
         err.set(C2P_RESET_ENTROPY) ;
-        if constexpr (has_ye_v<eos_t>) err.set(C2P_RESET_YE) ;
+        if constexpr (has_ye_v<eos_t>) {
+            err.set(C2P_RESET_YE) ;
+            #if GRACE_M1_NU_SPECIES >= 5
+            err.set(C2P_RESET_YMU) ;
+            #endif
+        }
         err.set(C2P_SIG_RHO_TOO_LOW) ;
     }
 
     if constexpr (has_ye_v<eos_t>) {
         if (eos_err.test(EOS_YE_TOO_LOW))  { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_LOW)  ; }
         if (eos_err.test(EOS_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
+        #if GRACE_M1_NU_SPECIES >= 5
+        if (eos_err.test(EOS_YMU_TOO_LOW) or eos_err.test(EOS_YMU_TOO_HIGH)) {
+            err.set(C2P_RESET_YMU) ;
+        }
+        #endif
     }
 
     if (eos_err.test(EOS_ENTROPY_TOO_HIGH)) { err.set(C2P_RESET_ENTROPY); err.set(C2P_SIG_ENT_TOO_HIGH) ; }
@@ -349,7 +378,7 @@ conservs_to_prims( grace::grmhd_cons_array_t&
                       , excision_params_t const& excision
                       , c2p_params_t const& c2p_pars
                       , double * rtp
-                      , c2p_err_t& c2p_err 
+                      , c2p_err_t& c2p_err
                       , bool dry_run = false ) ;
 
 void GRACE_HOST_DEVICE GRACE_DEVICE_EXTERNAL_LINKAGE
@@ -373,6 +402,7 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 #undef INSTANTIATE_TEMPLATE
 }
 

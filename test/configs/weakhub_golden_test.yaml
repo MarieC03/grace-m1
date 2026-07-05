@@ -1,0 +1,58 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Config for the Weakhub golden-node test (test_weakhub_golden.cpp).
+#
+# Purpose: boot a minimal GRACE so grace::initialize loads the Weakhub
+# opacity table through the PRODUCTION path (m1.eas.kinds selects
+# neutrino_weakhub -> weakhub::initialize_weakhub_from_params inside
+# set_m1_eas).  The test then re-reads the same HDF5 file independently and
+# checks device_handle::lookup at exact grid nodes.
+#
+# The EOS is the analytic gamma-2 hybrid polytrope so NO EOS table files are
+# needed; only the weakhub table path below is machine-local (a 3-species
+# npe DD2 grey table) -> local/manual check, not CI-portable.
+# ---------------------------------------------------------------------------
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "hybrid",
+  eps_maximum: 1.e+05,
+  hybrid_eos: {
+    cold_eos_type: "piecewise_polytrope",
+    gamma_th: 1.8
+  },
+  piecewise_polytrope: {
+    n_pieces: 1,
+    gammas: [ 2. ],
+    rhos:   [ ],
+    kappa_0: 1.685819e+02
+  }
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-14,
+    temp_fl: 0,
+    ye_fl: 0,
+    # hybrid (gamma-law) EOS has no composition -> no beta equilibrium
+    atmosphere_is_beta_eq: false
+  }
+}
+m1: {
+  eas: {
+    kinds: ["neutrino_weakhub"],
+    # Machine-local 3-species (nue, anue, nux) DD2 grey table.
+    weakhub_table: "/Users/miler/Codes/Weakhub/dURCA_convenforbetaproc_DD2_grey_npe_20240723_Weakhub_grey.h5"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}

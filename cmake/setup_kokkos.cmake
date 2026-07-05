@@ -79,6 +79,31 @@ endif()
 
 if( GRACE_ENABLE_OMP )
     find_package(OpenMP REQUIRED)
+
+    # --- macOS: use the SAME libomp as the Homebrew Kokkos ----------------
+    # Homebrew-Kokkos links the standalone keg libomp
+    # (/opt/homebrew/opt/libomp), whereas find_package(OpenMP) with the
+    # Homebrew-LLVM toolchain finds LLVM's libomp (/opt/homebrew/opt/llvm).
+    # Two distinct libomp images in one process -> the __kmp_* runtime
+    # globals collide -> crash in __kmp_suspend_64 during
+    # Kokkos::OpenMP::impl_initialize.  Pin grace onto the same keg libomp:
+    #   * repoint the imported target's library to the keg libomp
+    #   * put -L<keg>/lib first on the link search path so clang's implicit
+    #     -lomp (added by -fopenmp) also resolves to the keg variant
+    if(APPLE)
+        execute_process(COMMAND brew --prefix libomp
+                        OUTPUT_VARIABLE LIBOMP_PREFIX
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
+        set(_keg_omp "${LIBOMP_PREFIX}/lib/libomp.dylib")
+        if(EXISTS "${_keg_omp}")
+            set_property(TARGET OpenMP::OpenMP_CXX PROPERTY
+                         INTERFACE_LINK_LIBRARIES "${_keg_omp}")
+            add_link_options("-L${LIBOMP_PREFIX}/lib"
+                             "-Wl,-rpath,${LIBOMP_PREFIX}/lib")
+            message(STATUS "Pinned OpenMP to keg libomp: ${_keg_omp}")
+        endif()
+    endif()
+    # ---------------------------------------------------------------------
 endif()
 
 if ( GRACE_ENABLE_CUDA )

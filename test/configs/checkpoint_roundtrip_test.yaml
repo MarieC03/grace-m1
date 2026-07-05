@@ -106,3 +106,14 @@ eos: {
   },
   eps_maximum: 1.0e+05
 }
+
+m1: {
+  eas: {
+    # In M1-enabled builds the default 'test' EAS policy aborts
+    # ("Unknown m1 test") during set_initial_data with a real id_type.
+    # The analytic provider needs no table files; it also gives the M1
+    # radiation fields non-trivial ID so the bit-exact diff is meaningful.
+    # Ignored in M1-off builds.
+    kind: "neutrino_analytic"
+  }
+}

@@ -4,25 +4,25 @@
  * @brief Top-level GRACE executable: parses the command line, calls initialize / set_initial_data / evolve / finalize.
  * @version 0.1
  * @date 2024-03-18
- * 
+ *
  * @copyright This file is part of GRACE.
  * GRACE is an evolution framework that uses Finite Difference
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 /**********************************************************************************/
 /**********************************************************************************/
@@ -60,22 +60,22 @@ int main(int argc, char* argv[])
     /**********************************************************************************/
     using namespace grace::variables ;
     using namespace Kokkos ;
-    using namespace grace ; 
+    using namespace grace ;
     /**********************************************************************************/
     /*                               Initialize runtime                               */
     /**********************************************************************************/
-    grace::initialize(argc, argv) ; 
+    grace::initialize(argc, argv) ;
     /**********************************************************************************/
     if ( grace::get_param<bool>("checkpoints","checkpoint_at_startup") ) {
-        grace::checkpoint_handler::get().save_checkpoint() ; 
+        grace::checkpoint_handler::get().save_checkpoint() ;
     }
     /**********************************************************************************/
     /**********************************************************************************/
-    int64_t regrid_every = grace::get_param<int64_t>("amr","regrid_every") ;  
+    int64_t regrid_every = grace::get_param<int64_t>("amr","regrid_every") ;
     int64_t volume_output_every = grace::get_param<int64_t>("IO","volume_output_every") ;
-    int64_t plane_surface_output_every = 
+    int64_t plane_surface_output_every =
         grace::get_param<int64_t>("IO","plane_surface_output_every") ;
-    int64_t sphere_surface_output_every = 
+    int64_t sphere_surface_output_every =
         grace::get_param<int64_t>("IO","sphere_surface_output_every") ;
     int64_t scalar_output_every =
         grace::get_param<int64_t>("IO","scalar_output_every") ;
@@ -85,10 +85,10 @@ int main(int argc, char* argv[])
         grace::get_param<int64_t>("IO","diagnostic_output_every") ;
     /**********************************************************************************/
     if ( grace::get_param<bool>("IO","do_initial_output") ) {
-        GRACE_INFO("Performing initial output") ; 
+        GRACE_INFO("Performing initial output") ;
         grace::IO::write_cell_output(volume_output_every>0,plane_surface_output_every>0,sphere_surface_output_every>0) ;
     }
-        
+
     grace::IO::compute_reductions() ;
     grace::IO::initialize_output_files() ;
     grace::IO::initialize_diagnostic_files() ;
@@ -105,34 +105,34 @@ int main(int argc, char* argv[])
     /**********************************************************************************/
     std::string tstep_mode = grace::get_param<std::string>("evolution","timestep_selection_mode") ;
     if ( tstep_mode == "manual" ) {
-        grace::set_timestep(grace::get_param<double>("evolution","timestep")) ; 
+        grace::set_timestep(grace::get_param<double>("evolution","timestep")) ;
     }
     /**********************************************************************************/
     /*                             Record Time                                        */
     /**********************************************************************************/
-    grace::runtime::get().start_walltime_clock() ; 
+    grace::runtime::get().start_walltime_clock() ;
     /**********************************************************************************/
     /*                           Evolution loop                                       */
     /**********************************************************************************/
-    while( ! grace::check_termination_condition() ) 
-    {   
+    while( ! grace::check_termination_condition() )
+    {
         /**********************************************************************************/
         if(tstep_mode == "automatic"){
             grace::find_stable_timestep() ;
         }
-        grace::evolve() ; 
+        grace::evolve() ;
         /**********************************************************************************/
         grace::increment_iteration(); grace::increment_simulation_time() ;
-        int64_t iter = grace::get_iteration() ; 
-        if (    (iter % regrid_every == 0) 
-            and (regrid_every>0)) 
+        int64_t iter = grace::get_iteration() ;
+        if (    (iter % regrid_every == 0)
+            and (regrid_every>0))
         {
             auto grid_has_changed = grace::amr::regrid() ;
             if ( grid_has_changed ) {
                 /******************************************************************************************/
                 /*                         Update ghost layer                                             */
                 /******************************************************************************************/
-                auto& ghost = grace::amr_ghosts::get() ; 
+                auto& ghost = grace::amr_ghosts::get() ;
                 ghost.update() ;
                 //******************************************************************************************/
                 /*                         Refill the ghostzones                                           */
@@ -164,42 +164,42 @@ int main(int argc, char* argv[])
                 /*                           Recompute violations                                          */
                 //******************************************************************************************/
                 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
-                grace::compute_constraint_violations() ; 
-                #endif 
-            } 
+                grace::compute_constraint_violations() ;
+                #endif
+            }
         }
-        if(    (volume_output_every>0) 
-           or  (plane_surface_output_every>0) 
-           or  (sphere_surface_output_every>0) ) 
+        if(    (volume_output_every>0)
+           or  (plane_surface_output_every>0)
+           or  (sphere_surface_output_every>0) )
         {
-            bool do_out_vol = 
-                (volume_output_every>0) and (iter % volume_output_every == 0) ; 
+            bool do_out_vol =
+                (volume_output_every>0) and (iter % volume_output_every == 0) ;
             bool do_out_planes =
-                (plane_surface_output_every>0) and (iter % plane_surface_output_every == 0) ; 
-            bool do_out_spheres = 
-                (sphere_surface_output_every>0) and (iter % sphere_surface_output_every == 0) ; 
+                (plane_surface_output_every>0) and (iter % plane_surface_output_every == 0) ;
+            bool do_out_spheres =
+                (sphere_surface_output_every>0) and (iter % sphere_surface_output_every == 0) ;
             grace::IO::write_cell_output(do_out_vol,do_out_planes,do_out_spheres) ;
-        } 
+        }
         if(  ((scalar_output_every>0)
           and (iter % scalar_output_every == 0))
           or ((info_output_every>0)
           and (iter % info_output_every == 0)))
         {
-            grace::IO::compute_reductions() ; 
+            grace::IO::compute_reductions() ;
         }
         if(   (scalar_output_every>0)
           and (iter % scalar_output_every == 0))
         {
-            grace::IO::write_scalar_output() ; 
+            grace::IO::write_scalar_output() ;
         }
         if(   (info_output_every>0)
           and (iter % info_output_every == 0))
         {
-            grace::IO::info_output() ; 
+            grace::IO::info_output() ;
         }
         if ( (diagnostic_output_every>0)
             and (iter%diagnostic_output_every == 0 )) {
-                grace::IO::output_diagnostics() ; 
+                grace::IO::output_diagnostics() ;
         }
         /**********************************************************************************/
         /* Update COs surfaces if needed                                                  */
@@ -224,9 +224,9 @@ int main(int argc, char* argv[])
         /**********************************************************************************/
         grace::check_nans_and_act_if_due(/*is_initial=*/false) ;
     }
-    
-    grace::grace_finalize() ; 
-    return EXIT_SUCCESS ; 
+
+    grace::grace_finalize() ;
+    return EXIT_SUCCESS ;
 }
 /**********************************************************************************/
 /**********************************************************************************/

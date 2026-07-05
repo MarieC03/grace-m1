@@ -1,28 +1,28 @@
 /**
  * @file eos_storage.cpp
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-05-29
- * 
+ *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #include <grace_config.h>
@@ -39,76 +39,77 @@
 #include <grace/physics/eos/tabulated_cold_eos.hh>
 #include <grace/physics/eos/ideal_gas_eos.hh>
 
-#include <grace/physics/eos/physical_constants.hh> 
+#include <grace/physics/eos/physical_constants.hh>
 
 #include <grace/physics/grmhd_helpers.hh>
 
 #include <grace/physics/eos/eos_storage.hh>
 #include <grace/physics/eos/read_eos_table.hh>
+#include <grace/physics/eos/read_leptonic_4d_table.hh>
 
 #include <Kokkos_Core.hpp>
 
 namespace grace {
 
-static piecewise_polytropic_eos_t setup_cold_polytrope() 
+static piecewise_polytropic_eos_t setup_cold_polytrope()
 {
     auto& params = grace::config_parser::get() ;
 
-    unsigned int _pwpoly_n_pieces = get_param<unsigned int>("eos", "piecewise_polytrope", "n_pieces") ; 
-            
-    double _pwpoly_kappas_0 = get_param<double>("eos", "piecewise_polytrope", "kappa_0") ; 
-    std::vector<double> _pwpoly_gammas_vec  = get_param<std::vector<double>>("eos", "piecewise_polytrope", "gammas") ; 
-    std::vector<double> _pwpoly_rhos_vec  =  get_param<std::vector<double>>("eos", "piecewise_polytrope", "rhos") ; 
-    
-    
+    unsigned int _pwpoly_n_pieces = get_param<unsigned int>("eos", "piecewise_polytrope", "n_pieces") ;
+
+    double _pwpoly_kappas_0 = get_param<double>("eos", "piecewise_polytrope", "kappa_0") ;
+    std::vector<double> _pwpoly_gammas_vec  = get_param<std::vector<double>>("eos", "piecewise_polytrope", "gammas") ;
+    std::vector<double> _pwpoly_rhos_vec  =  get_param<std::vector<double>>("eos", "piecewise_polytrope", "rhos") ;
+
+
     ASSERT( _pwpoly_gammas_vec.size() == _pwpoly_n_pieces
           , "Number of gammas does not coincide with n_pieces.") ;
-    ASSERT( _pwpoly_rhos_vec.size() == _pwpoly_n_pieces - 1 
+    ASSERT( _pwpoly_rhos_vec.size() == _pwpoly_n_pieces - 1
           , "The piecewise polytrope densities must be n_pieces-1.") ;
     /* Add 0 as first density */
     _pwpoly_rhos_vec.insert(_pwpoly_rhos_vec.begin(), 0.);
     for( int i=0; i<_pwpoly_rhos_vec.size()-1; ++i)
         ASSERT( _pwpoly_rhos_vec[i+1] > _pwpoly_rhos_vec[i]
-              , "Piecewise polytrope densities must be in ascending order.") ; 
-    
+              , "Piecewise polytrope densities must be in ascending order.") ;
+
     /* Fill kappas eps and press */
     std::vector<double> _pwpoly_kappas_vec(_pwpoly_n_pieces)
                       , _pwpoly_press_vec(_pwpoly_n_pieces)
-                      , _pwpoly_eps_vec(_pwpoly_n_pieces) ; 
-    
-    _pwpoly_kappas_vec[0] = _pwpoly_kappas_0 ; 
-    _pwpoly_press_vec[0]  = 0 ; 
-    _pwpoly_eps_vec[0]    = 0 ; 
+                      , _pwpoly_eps_vec(_pwpoly_n_pieces) ;
+
+    _pwpoly_kappas_vec[0] = _pwpoly_kappas_0 ;
+    _pwpoly_press_vec[0]  = 0 ;
+    _pwpoly_eps_vec[0]    = 0 ;
 
     for( int i=1; i < _pwpoly_n_pieces; ++i ) {
-        _pwpoly_kappas_vec[i] = 
-            _pwpoly_kappas_vec[i-1] * 
-            pow( _pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i-1]-_pwpoly_gammas_vec[i]) ; 
-        _pwpoly_eps_vec[i]  = 
+        _pwpoly_kappas_vec[i] =
+            _pwpoly_kappas_vec[i-1] *
+            pow( _pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i-1]-_pwpoly_gammas_vec[i]) ;
+        _pwpoly_eps_vec[i]  =
             _pwpoly_eps_vec[i-1] +
             _pwpoly_kappas_vec[i-1] *
-                pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i-1]-1.) 
+                pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i-1]-1.)
                 / ( _pwpoly_gammas_vec[i-1]-1. ) -
             _pwpoly_kappas_vec[i] *
-                pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i]-1.) 
-                / ( _pwpoly_gammas_vec[i]-1. ) ; 
+                pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i]-1.)
+                / ( _pwpoly_gammas_vec[i]-1. ) ;
         _pwpoly_press_vec[i] =
             _pwpoly_kappas_vec[i] *
-            pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i]) ; 
+            pow(_pwpoly_rhos_vec[i], _pwpoly_gammas_vec[i]) ;
     }
 
 
-    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space> 
-        _pwpoly_kappas("Piecewise polytropic indices") ; 
-    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space> 
-        _pwpoly_gammas("Piecewise polytropic adiabatic compressibilities") ; 
-    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space> 
+    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space>
+        _pwpoly_kappas("Piecewise polytropic indices") ;
+    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space>
+        _pwpoly_gammas("Piecewise polytropic adiabatic compressibilities") ;
+    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space>
         _pwpoly_rhos("Piecewise polytropic densities") ;
-    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space> 
+    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space>
         _pwpoly_press("Piecewise polytropic pressures") ;
-    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space> 
+    Kokkos::View<double [piecewise_polytropic_eos_t::max_n_pieces], grace::default_space>
         _pwpoly_eps("Piecewise polytropic specific internal energies") ;
-    
+
     #define DEEP_COPY_VEC_TO_VIEW(vec,view) \
             do { \
                 auto host_view = Kokkos::create_mirror_view(view) ; \
@@ -117,22 +118,22 @@ static piecewise_polytropic_eos_t setup_cold_polytrope()
                 }                                                   \
                 Kokkos::deep_copy(view,host_view) ;                 \
             } while(0)
-    DEEP_COPY_VEC_TO_VIEW(_pwpoly_gammas_vec,_pwpoly_gammas) ; 
+    DEEP_COPY_VEC_TO_VIEW(_pwpoly_gammas_vec,_pwpoly_gammas) ;
     DEEP_COPY_VEC_TO_VIEW(_pwpoly_kappas_vec,_pwpoly_kappas) ;
     DEEP_COPY_VEC_TO_VIEW(_pwpoly_rhos_vec,_pwpoly_rhos) ;
     DEEP_COPY_VEC_TO_VIEW(_pwpoly_press_vec,_pwpoly_press) ;
-    DEEP_COPY_VEC_TO_VIEW(_pwpoly_eps_vec,_pwpoly_eps) ; 
+    DEEP_COPY_VEC_TO_VIEW(_pwpoly_eps_vec,_pwpoly_eps) ;
 
-    GRACE_INFO("Polytropic EOS initialized.") ; 
+    GRACE_INFO("Polytropic EOS initialized.") ;
 
     std::ostringstream _pwpoly_gammas_str, _pwpoly_rhos_str
                      , _pwpoly_kappas_str, _pwpoly_press_str
                      , _pwpoly_eps_str;
-    _pwpoly_gammas_str << _pwpoly_gammas_vec ; 
-    _pwpoly_rhos_str << _pwpoly_rhos_vec ; 
-    _pwpoly_kappas_str << _pwpoly_kappas_vec ; 
-    _pwpoly_press_str << _pwpoly_press_vec ; 
-    _pwpoly_eps_str << _pwpoly_eps_vec ; 
+    _pwpoly_gammas_str << _pwpoly_gammas_vec ;
+    _pwpoly_rhos_str << _pwpoly_rhos_vec ;
+    _pwpoly_kappas_str << _pwpoly_kappas_vec ;
+    _pwpoly_press_str << _pwpoly_press_vec ;
+    _pwpoly_eps_str << _pwpoly_eps_vec ;
 
     GRACE_INFO("Polytropic has {} segments.", _pwpoly_n_pieces) ;
     GRACE_INFO("Polytropic Gammas: {}.", _pwpoly_gammas_str.str()) ;
@@ -150,21 +151,21 @@ static piecewise_polytropic_eos_t setup_cold_polytrope()
         , _pwpoly_n_pieces
         , 1e+10
         , 1e-100
-    }) ; 
+    }) ;
 
 }
 
 eos_storage_t::eos_storage_t() {
     auto& params = grace::config_parser::get() ;
 
-    std::string eos_type = get_param<std::string>("eos","eos_type") ;  
+    std::string eos_type = get_param<std::string>("eos","eos_type") ;
 
-    double c2p_eps_max  = get_param<double>("eos","eps_maximum") ;  
-    double c2p_entropy_min = get_param<double>("eos","entropy_minimum") ;  
+    double c2p_eps_max  = get_param<double>("eos","eps_maximum") ;
+    double c2p_entropy_min = get_param<double>("eos","entropy_minimum") ;
 
     if ( eos_type == "hybrid" ) {
-        std::string cold_eos_type = get_param<std::string>("eos","hybrid_eos","cold_eos_type") ;  
-        double gamma_th = get_param<double>("eos","hybrid_eos","gamma_th") ;  
+        std::string cold_eos_type = get_param<std::string>("eos","hybrid_eos","cold_eos_type") ;
+        double gamma_th = get_param<double>("eos","hybrid_eos","gamma_th") ;
 
         if( cold_eos_type == "piecewise_polytrope" ) {
 
@@ -212,14 +213,27 @@ eos_storage_t::eos_storage_t() {
             ERROR("Unsupported cold_eos_type.") ;
         }
     } else if ( eos_type == "tabulated") {
-        _tabulated = read_eos_table() ; 
+        // linear_pressure (signed-LINEAR pressure storage) is a leptonic-only
+        // mode: the leptonic EOS reads TABPRESS directly to carry the negative
+        // nuclear spinodal of the electron-free baryon table.  The tabulated EOS
+        // instead stores and exp()s log(P), so linear_pressure=true would feed it
+        // exp(P) -> garbage.  read_eos_table() is shared with the leptonic baryon
+        // read, so the check belongs here where eos_type is known.
+        if ( get_param<bool>("eos","tabulated_eos","linear_pressure") )
+            ERROR("eos.tabulated_eos.linear_pressure=true is only valid with "
+                  "eos_type=leptonic.  The tabulated EOS stores log(P) and exp()s "
+                  "it, so set eos.tabulated_eos.linear_pressure=false for "
+                  "eos_type=tabulated.") ;
+        _tabulated = read_eos_table() ;
+    } else if ( eos_type == "leptonic") {
+        _leptonic_4d = read_leptonic_4d_table() ;
     } else if ( eos_type == "ideal_gas") {
         _gammalaw = ideal_gas_eos_t(
             get_param<double>("grmhd", "atmosphere", "temp_fl"),
             c2p_eps_max
-        ) ; 
+        ) ;
     } else {
-         ERROR("Unsupported eos_type") ; 
+         ERROR("Unsupported eos_type") ;
     }
 
 }

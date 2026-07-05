@@ -1,0 +1,115 @@
+# Dynamical spacetime TOV -- LOW-LOW-RES smoke test
+# Derived from A0_z4c.yaml (Font+ 2001, gr-qc/0110047).
+# Purpose: cheap end-to-end run to verify the build/runtime on a laptop
+# (macOS), NOT a science-quality setup.  Built WITHOUT M1.
+#
+# Grid:  single uniform octant grid, block 16^3 over [0,30].  No AMR, no FMR.
+#   base dx        = 30 / 16           = 1.875
+#   initial level 1                    -> dx = 0.9375  (~10 cells across the star, R~9.6)
+name: "A0_z4c_lowres"
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: 0.0,
+  xmax: 30.0,
+  ymin: 0.0,
+  ymax: 30.0,
+  zmin: 0.0,
+  zmax: 30.0,
+
+  reflection_symmetries: {
+    x: true,
+    y: true,
+    z: true
+  },
+
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+
+  # No AMR, no FMR: single uniform octant grid.
+  max_refinement_level: 1,
+  regrid_every: -1,
+  n_fmr_boxes: 0
+}
+
+IO: {
+  # Smoke test: only scalar + info output, every iteration.
+  # No volume, no surface output.
+  do_initial_output: false,
+  volume_output_every: -1,
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+
+  info_output_every: 1,
+  info_output_max_reductions: ["rho"],
+  info_output_min_reductions: ["alp"],
+  info_output_norm2_reductions: ["z4c_H"],
+
+  scalar_output_every: 1,
+  scalar_output_minmax: ["rho","press","eps","alp"],
+  scalar_output_norm2: ["z4c_H"],
+  scalar_output_integral: ["dens"],
+
+  output_use_hdf5: true,
+  hdf5_compression_level: 0,
+  output_extra_quantities: false
+}
+
+checkpoints: {
+  # No checkpoint output for the smoke test.
+  checkpoint_at_startup: false,
+  checkpoint_at_termination: false
+}
+
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  n_device_streams: 4
+}
+
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.25,
+  termination_condition: "iteration",
+  final_iteration: 20
+}
+
+grmhd: {
+  id_type: "tov",
+
+  tov: {
+    rho_c: 1.28e-3,
+    press_floor: 1.6384e-22,
+    dr: 1e-3
+  },
+
+  atmosphere: {
+    temp_fl:  1.28e-10,
+    rho_fl: 1.28e-12
+  },
+
+  c2p: {
+    tolerance: 1e-10,
+    max_lorentz: 50,
+    use_c2p_entropy_backup: false
+  },
+
+  B_field_initialization: "none"
+}
+
+z4c: {
+  eps_diss: 0.1,
+  eta: 1.4
+}
+
+eos: {
+  eos_type: "ideal_gas",
+
+  ideal_gas_eos: {
+    gamma: 2.0,
+    kappa_id: 100
+  },
+
+  eps_maximum: 1.e+05
+}

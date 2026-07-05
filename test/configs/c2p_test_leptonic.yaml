@@ -1,0 +1,88 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# c2p round-trip test config for the 4D leptonic (Margherita-style) EOS.
+#
+# Drives the "[c2p][leptonic]" TEST_CASE in test_c2p.cpp.  Exercises the
+# conservative<->primitive inversion with composition (Ye) AND muon
+# fraction (Ymu) as advected scalars -- the regime that stresses the
+# Kastaun inversion in production muonic runs.
+#
+# REQUIRES a 5-species build (-DGRACE_M1_NU_SPECIES=5) so the prims/cons
+# arrays carry the YMUL/YMUSL slots; the test case is compiled out
+# otherwise.
+#
+# Table paths are absolute and machine-specific (~500 MB total) -- this is
+# a local/manual check, not a CI-portable test.  Cold baryon slice lives
+# one level above the 4D table directory.
+# ---------------------------------------------------------------------------
+# A `system:` block must be present so the schema's master_rank default (0) is
+# merged in -- the MPI runtime reads system.master_rank at startup, and an
+# absent section (not just an absent key) leaves it undefined and segfaults.
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "leptonic",
+
+  tabulated_eos: {
+    # electron-free baryon table (muonic runs); linear_pressure required because
+    # the baryon-only pressure is negative in the nuclear spinodal.
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+
+  leptonic: {
+    # regenerated lepton table (gen_lepton_table.py, ideal Fermi gas + photons);
+    # the older Bollig-derived table carries a x1.5 (e) / x5 (mu) P/eps bug.
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken.h5",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
+    add_ele_contribution: true,
+    cold_table_temperature: 0.100001
+  },
+
+  # c2p validity ceiling (c2p_eps_max).  The round-trip sweep includes hot
+  # (T ~ 50 MeV), low-density states whose radiation-dominated eps exceeds
+  # the production default 1e5 -- those are valid table states, so give the
+  # test a roomier ceiling.  The sweep additionally skips any sample above
+  # half this value, so the test stays correct for any setting here.
+  eps_maximum: 1.e+07
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-11,
+    # Strictly below the table minimum exp(ltempmin) = 0.1: temp_fl == min(T_tab)
+    # puts the T < temp_fl check on an FP straddle and fires C2P_T_FLOORED
+    # patchily across near-identical cold-envelope cells (blocky atmosphere).
+    temp_fl: 0.099,
+    ye_fl: 0.05,
+    # leptonic EOS has composition -> override ye_fl with beta-eq Ye
+    atmosphere_is_beta_eq: true
+  },
+  c2p: {
+    # The entropy backup re-inverts distrusted (cold-envelope) cells through
+    # the noisy advected entropy -> eps scatter.  Off for deterministic
+    # round-trips; the [leptonic][entropy] test cases toggle it explicitly.
+    use_c2p_entropy_backup: false
+  }
+}
+m1: {
+  eas: {
+    # The default 'test' EAS policy aborts ("Unknown m1 test") when M1
+    # initial data is set with a real id_type; this is a 5-species build so
+    # M1 init always runs.  The analytic provider needs no table files.
+    kind: "neutrino_analytic"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}

@@ -17,3 +17,6 @@
 [submodule "extern/yaml-cpp"]
 	path = extern/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp.git
+[submodule "extern/bns_nurates"]
+	path = extern/bns_nurates
+	url = https://github.com/RelNucAs/bns_nurates.git

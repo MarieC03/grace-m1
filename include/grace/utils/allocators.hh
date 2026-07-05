@@ -59,10 +59,27 @@ class new_delete_allocator
         //**************************************************************************************************
         [[nodiscard]] static inline void*
         allocate(std::size_t size,
-                 std::size_t alignment ) 
+                 std::size_t alignment )
         {
-            return std::aligned_alloc(alignment, size) ; 
-        } 
+            // ===================================================================
+            // [macOS aligned_alloc fix - Method A]
+            // -------------------------------------------------------------------
+            // std::aligned_alloc (C11/POSIX) requires the alignment to be a
+            // power of two that is at least sizeof(void*), and the requested
+            // size to be an integral multiple of that alignment. glibc silently
+            // tolerates violations (e.g. alignment == alignof(int) == 4), which
+            // is why an under-aligned singleton constructs fine on Linux/HPC but
+            // returns NULL here on macOS -> placement-new on a null buffer ->
+            // this == nullptr -> EXC_BAD_ACCESS on the first member write.
+            // Clamp the alignment up to the platform default new alignment and
+            // round the size up to a multiple of it so aligned_alloc behaves
+            // identically on macOS and Linux.
+            // ===================================================================
+            std::size_t const min_align = alignof(std::max_align_t) ;
+            if ( alignment < min_align ) alignment = min_align ;
+            size = (size + alignment - 1) & ~(alignment - 1) ;
+            return std::aligned_alloc(alignment, size) ;
+        }
         //**************************************************************************************************
 
         //**************************************************************************************************

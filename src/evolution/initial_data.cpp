@@ -1,28 +1,28 @@
 /**
  * @file initial_data.cpp
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
- * @brief 
+ * @brief
  * @date 2024-05-15
- * 
+ *
  * @copyright This file is part of of the General Relativistic Astrophysics
  * Code for Exascale.
  * GRACE is an evolution framework that uses Finite Volume
  * methods to simulate relativistic spacetimes and plasmas
  * Copyright (C) 2023-2026 Carlo Musolino and GRACE Contributors
- *                                    
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * any later version.
- *   
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *   
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- * 
+ *
  */
 
 #include <grace_config.h>
@@ -42,7 +42,7 @@
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
-#endif 
+#endif
 #include <grace/physics/eos/eos_types.hh>
 
 #include <Kokkos_Core.hpp>
@@ -52,38 +52,42 @@ namespace grace {
 void set_initial_data() {
     auto const eos_type = grace::get_param<std::string>("eos", "eos_type") ;
     if( eos_type == "hybrid" ) {
-        auto const cold_eos_type = 
-            get_param<std::string>("eos","hybrid_eos","cold_eos_type") ;  
+        auto const cold_eos_type =
+            get_param<std::string>("eos","hybrid_eos","cold_eos_type") ;
         if( cold_eos_type == "piecewise_polytrope" ) {
             set_initial_data_impl<grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>>() ;
         } else if ( cold_eos_type == "tabulated" ) {
             set_initial_data_impl<grace::hybrid_eos_t<grace::tabulated_cold_eos_t>>() ;
         }
     } else if ( eos_type == "tabulated" ) {
-        set_initial_data_impl<grace::tabulated_eos_t>() ; 
+        set_initial_data_impl<grace::tabulated_eos_t>() ;
+    } else if ( eos_type == "leptonic" ) {
+        set_initial_data_impl<grace::leptonic_eos_4d_t>() ;
     } else if ( eos_type == "ideal_gas" ) {
-        set_initial_data_impl<grace::ideal_gas_eos_t>() ; 
+        set_initial_data_impl<grace::ideal_gas_eos_t>() ;
     }
+    else {ERROR("Unknown EOS for initial Data" << eos_type);}
 }
 
 template< typename eos_t >
 void set_initial_data_impl() {
-    Kokkos::Profiling::pushRegion("ID") ; 
+    Kokkos::Profiling::pushRegion("ID") ;
     using namespace grace ;
 
     set_grmhd_initial_data<eos_t>();
-    Kokkos::fence() ; 
+    Kokkos::fence() ;
     #ifdef GRACE_ENABLE_M1
     set_m1_initial_data<eos_t>();
-    #endif 
-    Kokkos::Profiling::popRegion() ; 
-} 
+    #endif
+    Kokkos::Profiling::popRegion() ;
+}
 #define INSTANTIATE_TEMPLATE(EOS)   \
 template                            \
 void set_initial_data_impl<EOS>()
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
 }

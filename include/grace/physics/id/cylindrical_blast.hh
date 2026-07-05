@@ -127,10 +127,11 @@ struct cylindrical_blast_id_t {
         id.bz = 0.0;
 
         eos_err_t err;
-        id.ye = _eos.ye_cold__press(id.press, err);
+        id.ye  = _eos.ye_cold__press(id.press, err);
+        id.ymu = 0.0;
         double h, csnd2;
-        id.eps = _eos.eps_h_csnd2_temp_entropy__press_rho_ye(
-            h, csnd2, id.temp, id.entropy, id.press, id.rho, id.ye, err
+        id.eps = _eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu(
+            h, csnd2, id.temp, id.entropy, id.press, id.rho, id.ye, id.ymu, err
         );
 
         return std::move(id);
