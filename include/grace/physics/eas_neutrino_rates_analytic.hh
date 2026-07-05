@@ -938,8 +938,8 @@ nu_rates_all_out compute_all_species_weakhub(
     }
     #if GRACE_M1_NU_SPECIES >= 5
     if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
-        rates.Q[NUMU] = rates.R[NUMU] = rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = 0.0;
-        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
+        rates.Q[NUMU] = rates.R[NUMU] = rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = 1.0e-30;
+        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 1.0e-30;
     }
     #endif
 

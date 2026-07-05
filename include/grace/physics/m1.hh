@@ -342,8 +342,43 @@ struct m1_equations_system_t
                 : metric.alp() <= excision_params.alp_ex ;
         double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ;
         double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ;
-        if ( cl.E < E_atmo * (1. + 1.e-3 ) || prims[NRADL] < E_atmo * (1. + 1.e-3 ))
+        bool const E_bad = cl.E         < E_atmo * (1. + 1.e-3 ) ;
+        bool const N_bad = prims[NRADL] < E_atmo * (1. + 1.e-3 ) ;
+        #ifdef GRACE_M1_DEBUG_EAS
+        // Debug: log numu (ispec==2) floor events on IN-STAR cells (electron
+        // neutrino well above the floor, so the legitimately-floored atmosphere
+        // -- where ALL species sit at E_atmo -- is skipped).  With M1-aware FOFC
+        // active these should essentially vanish.  Off unless -DGRACE_M1_DEBUG_EAS.
+        if constexpr ( ispec == 2 ) {
+            if ( E_bad || N_bad ) {
+                const double E_nue = this->_state(VEC(i,j,k), m1_erad_idx<0>(), q)
+                                   / metric.sqrtg() ;
+                if ( E_nue > 1.0e3 * E_atmo )
+                    printf("[M1 floor numu] i=%d j=%d k=%d q=%ld  E=%.6e N=%.6e  E_atmo=%.6e  "
+                           "E_nue=%.6e  trig(E<atmo=%d N<atmo=%d)\n",
+                           int(i), int(j), int(k), (long)q, cl.E, prims[NRADL], E_atmo, E_nue,
+                           int(E_bad), int(N_bad)) ;
+            }
+        }
+        #endif
+        if ( E_bad && !N_bad )
         {
+            // Energy undershot (e.g. a residual transport artifact) but the
+            // NUMBER is healthy: restore an isotropic energy consistent with the
+            // surviving N (eps = eps_atmo) and KEEP N, instead of nuking the
+            // whole species.  The implicit source then relaxes E toward B(eta_nu).
+            // With M1-aware FOFC active this branch should rarely fire.
+            double const E_keepN = prims[NRADL] * eps_atmo ;
+            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * E_keepN ;
+            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
+            // N (state holds sqrtg*N) is deliberately left untouched.
+            epsilon = eps_atmo ;
+        }
+        else if ( E_bad || N_bad )
+        {
+            // Number (or both) is bad -> full atmosphere reset (original behaviour).
             double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ;
             this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * atmo_state[0];
             this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = atmo_state[1] ;
@@ -447,7 +482,8 @@ struct m1_equations_system_t
         } ;
         /**************************************************************************************************/
         // call rootfinder
-        unsigned long maxiter = 200 ;
+        // TODO change back to 200
+        unsigned long maxiter = 250 ;
         int err = 0;
         utils::rootfind_nd_newton_raphson<4>(
             func, dfunc, U, maxiter, 1e-15, err
@@ -516,6 +552,25 @@ struct m1_equations_system_t
         ) ;
         //VOLATILE_WRITE(NRAD_,metric.sqrtg()*N) ;
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
+        #ifdef GRACE_M1_DEBUG_EAS
+        // Debug: for numu (ispec==2), log the implicit solve's in/out E and N and
+        // the eas it used, but only for cells that (a) produce a suspiciously low
+        // numu result (within ~1e3x the radiation floor) AND (b) sit inside the
+        // star (electron neutrino well above floor).  Condition (b) skips the
+        // (legitimately floored) atmosphere so stdout isn't flooded.  Off unless
+        // -DGRACE_M1_DEBUG_EAS.
+        if constexpr ( ispec == 2 ) {
+            const double E_nue = this->_state(VEC(i,j,k), m1_erad_idx<0>(), q)
+                               / metric.sqrtg() ;
+            if ( (U0 < 1.0e3*atmo_params.E_fl || N < 1.0e3*atmo_params.E_fl)
+                 && E_nue > 1.0e3*atmo_params.E_fl ) {
+                printf("[M1 implicit numu] i=%d j=%d k=%d q=%ld  Ein=%.6e Eout=%.6e  "
+                       "Nin=%.6e Nout=%.6e  eta=%.6e kappa_a=%.6e  E_nue=%.6e\n",
+                       int(i), int(j), int(k), (long)q, prims[ERADL], U0,
+                       prims[NRADL], N, eas[ETAL], eas[KAL], E_nue) ;
+            }
+        }
+        #endif
         /**************************************************************************************************/
         // if needed add dN to ye here!
         //#if GRACE_M1_NU_SPECIES >= 3
@@ -545,16 +600,19 @@ struct m1_equations_system_t
                          ,      const int j
                          ,      const int k)
                          , grace::scalar_array_t<GRACE_NSPACEDIM> const idx
-                         , grace::var_array_t const state_new ) const
+                         , grace::var_array_t const state_new
+                         // NB: must be the LOADED EOS, fetched on the host and
+                         // captured into the kernel (same pattern as the grmhd
+                         // system's _eos).  The historic `eos_t eos;` local had
+                         // uninitialized Ye/Ymu bounds (eos_base_t() = default,
+                         // bare double members), so the composition limiter
+                         // below compared against indeterminate values.
+                         , eos_t const& eos ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
-        /**************************************************************************************************/
-        /* Read in the metric                                                                             */
-        metric_array_t metric ;
-        FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k)) ;
-
-        eos_t eos;
+        // NB: no metric needed here -- the backreaction works purely on
+        // differences of densitized fields, so the sqrtg factors cancel.
 
         #if GRACE_M1_NU_SPECIES >= 1
         #if (GRACE_M1_NU_SPECIES >= 5)
@@ -1000,7 +1058,7 @@ struct m1_equations_system_t
         //fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
         double f_N_HLLE = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
 
-        //#define M1_USE_PPLIM
+        //#define M1_USE_PPLIM   // superseded by M1-aware FOFC; also mis-wired (a2CFL uses dt<-t). See flag_fofc_cells.
         #ifdef M1_USE_PPLIM
         {
             // Proper LLF flux: Godunov (0th-order) reconstruction gives cell-centred

@@ -164,9 +164,30 @@ struct device_handle {
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
-      } else if (n_species_table == 6) { // I do not know why this would be 6. But if it is, clump the last
+      } else if (n_species_table == 6) {
+          // Table layout: 0=nue 1=anue 2=numu 3=anumu 4=nutau 5=anutau.
+          // nue / anue map straight to slots 0,1 in every build.
           #pragma unroll
-          for (int s = 0; s < 4; ++s) {
+          for (int s = 0; s < 2; ++s) {
+              out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
+              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
+              out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+          }
+#if GRACE_M1_NU_SPECIES <= 3
+          // 3-species run (nue, anue, nux): the single nux field represents ALL
+          // four heavy-lepton species, so SUM table slots 2..5 into nux (slot 4)
+          // — we want all those neutrinos together in one field.  Slots 2,3 stay
+          // zero (g_nu = 0 there, and there are no numu/anumu M1 fields).
+          #pragma unroll
+          for (int s = 2; s < 6; ++s) {
+              out.kappa_a_en[4]  += interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
+              out.kappa_a_num[4] += interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
+              out.kappa_s[4]     += interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+          }
+#else
+          // 5-species run: numu, anumu map to slots 2,3; nux = nutau + anutau.
+          #pragma unroll
+          for (int s = 2; s < 4; ++s) {
               out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
@@ -177,6 +198,7 @@ struct device_handle {
               out.kappa_a_num[4] += interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[4]     += interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
+#endif
 
       } else {
           //ERROR("Unrecognized weakhub table") ;

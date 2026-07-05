@@ -154,8 +154,12 @@ inline eas_selection_t get_eas_selection()
 enum class betaeq_mode_t : int {
     off,        ///< use the evolved Ye/Ymu as-is
     chemical,   ///< reset Ye to neutrinoless chemical equilibrium per cell
-    timescale   ///< relax (T, Ye) toward radiation-matter equilibrium when
-                ///< the equilibration time tau_beta is shorter than dt
+    timescale,  ///< relax (T, Ye, Ymu) toward radiation-matter equilibrium with a
+                ///< SINGLE global timescale tau_beta_min (min over all species),
+                ///< applying the full joint (Ye,Ymu,T) equilibrium together
+    gieg        ///< per-flavor TWO-timescale equilibration (Gieg+ 2026, Table 3):
+                ///< independent tau_e, tau_mu -> 9-state dispatch with partial
+                ///< equilibration that holds the free-streaming flavour fixed
 };
 
 enum class tau_policy_kind_t : int {
@@ -187,8 +191,9 @@ inline betaeq_mode_t get_betaeq_mode()
     if (mode == "off")       return betaeq_mode_t::off ;
     if (mode == "chemical")  return betaeq_mode_t::chemical ;
     if (mode == "timescale") return betaeq_mode_t::timescale ;
+    if (mode == "gieg")      return betaeq_mode_t::gieg ;
     ERROR("m1.eas.betaeq_policy = '" << mode
-          << "' is not one of: off, chemical, timescale") ;
+          << "' is not one of: off, chemical, timescale, gieg") ;
 }
 
 inline tau_policy_kind_t get_tau_policy_kind()

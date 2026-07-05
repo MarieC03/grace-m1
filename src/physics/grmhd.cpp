@@ -205,6 +205,9 @@ static void set_grmhd_initial_data_current_sheet()
                     // them to deterministic defaults rather than reading
                     // uninitialised memory.
                     aux(i,j,k,YE_,q)      = 0.0;
+                    #if GRACE_M1_NU_SPECIES >= 5
+                    aux(i,j,k,YMU_,q)     = 0.0;
+                    #endif
                     aux(i,j,k,TEMP_,q)    = 0.0;
                     aux(i,j,k,ENTROPY_,q) = 0.0;
 
@@ -581,20 +584,18 @@ void set_grmhd_initial_data() {
 
         set_grmhd_initial_data_impl<eos_t,tov_id_t<eos_t>>(atmo_params,rho_c,p_floor,dr,pert_amp) ;
     } else if ( id_type == "hot_tov") {
-        // FIL-style hot TOV: cold-slice structure + hot beta-eq thermal state.
-        // Needs the leptonic EOS (the hot beta-eq solve is leptonic-only).
-        if constexpr (std::is_same_v<eos_t, grace::leptonic_eos_4d_t>) {
-            auto const rho_c    = get_param<double>("grmhd", "tov", "rho_c") ;
-            auto const p_floor  = get_param<double>("grmhd", "tov", "press_floor") ;
-            auto const dr       = get_param<double>("grmhd", "tov", "dr") ;
-            auto const pert_amp = get_param<double>("grmhd", "tov", "pert_amp") ;
-            auto const T_id     = get_param<double>("grmhd", "tov", "hot_temperature") ;
-            atmo_params_t atmo_params = get_atmo_params() ;
-            set_grmhd_initial_data_impl<eos_t,hot_tov_id_t<eos_t>>(
-                atmo_params, rho_c, p_floor, dr, pert_amp, T_id) ;
-        } else {
-            ERROR("hot_tov initial data requires eos_type = leptonic") ;
-        }
+        // FIL-style hot TOV: cold-slice structure + hot thermal state.  Works
+        // for any EOS -- the leptonic EOS sets (Ye, Ymu) from a hot beta
+        // equilibrium, every other EOS takes composition from the cold slice
+        // and only raises the temperature (see hot_tov.hh).
+        auto const rho_c    = get_param<double>("grmhd", "tov", "rho_c") ;
+        auto const p_floor  = get_param<double>("grmhd", "tov", "press_floor") ;
+        auto const dr       = get_param<double>("grmhd", "tov", "dr") ;
+        auto const pert_amp = get_param<double>("grmhd", "tov", "pert_amp") ;
+        auto const T_id     = get_param<double>("grmhd", "tov", "hot_temperature") ;
+        atmo_params_t atmo_params = get_atmo_params() ;
+        set_grmhd_initial_data_impl<eos_t,hot_tov_id_t<eos_t>>(
+            atmo_params, rho_c, p_floor, dr, pert_amp, T_id) ;
     } else if( id_type == "magnetic_rotor" ) {
         auto pars = get_param<YAML::Node>("grmhd","magnetic_rotor") ;
         auto const rho_in  = pars["rho_in"].as<double>() ;
@@ -767,6 +768,9 @@ void set_conservs_from_prims() {
         state(VEC(i,j,k),SZ_,q) = cons[STZL] ;
         state(VEC(i,j,k),TAU_,q) = cons[TAUL] ;
         state(VEC(i,j,k),YESTAR_,q) = cons[YESL] ;
+#if GRACE_M1_NU_SPECIES >= 5
+        state(VEC(i,j,k),YMUSTAR_,q) = cons[YMUSL] ;
+#endif
         state(VEC(i,j,k),ENTROPYSTAR_,q) = cons[ENTSL] ;
 
         /*************************************************/

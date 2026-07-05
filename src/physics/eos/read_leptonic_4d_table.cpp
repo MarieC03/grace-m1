@@ -595,6 +595,11 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // -------------------------------------------------------
     //  1) Load the baryon EOS via the existing GRACE pipeline.
     //     Honours [eos.tabulated_eos.*] settings in the parfile.
+    //     NB: the electron-free baryon table has NEGATIVE pressure in the
+    //     nuclear spinodal, so [eos.tabulated_eos.linear_pressure] MUST be true
+    //     for muonic / leptonic runs (signed-linear storage, not log P) — the
+    //     reader aborts with an actionable message otherwise.  total_press then
+    //     sums the signed baryon pressure with the positive lepton pressures.
     // -------------------------------------------------------
     GRACE_INFO("Reading baryon EOS for leptonic_4d setup...") ;
     tabulated_eos_t baryon_eos = read_eos_table() ;

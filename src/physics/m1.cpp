@@ -257,6 +257,34 @@ void set_m1_initial_data() {
     m1_excision_params_t m1_excision_params = get_m1_excision_params() ;
     m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ;
 
+    if (get_betaeq_mode() == betaeq_mode_t::gieg) {
+        // Physics caveat: the two-timescale scheme relaxes matter and radiation
+        // to (partial) EQUILIBRIUM states wherever the local equilibration time
+        // is short; it does NOT evolve or capture genuine non-equilibrium
+        // neutrino distributions (gray, LTE-equilibrium approximation).  Results
+        // in the partially-trapped / transition regime and under rapid dynamics
+        // are therefore approximate.
+        GRACE_WARN("m1.eas.betaeq_policy='gieg': the two-timescale equilibration "
+                   "assumes matter and radiation relax to (partial) equilibrium "
+                   "states and does NOT account for non-equilibrium neutrino "
+                   "distribution effects.  Treat the partially-trapped/transition "
+                   "regime as approximate.") ;
+
+        // Redundancy: gieg decides trapping from the LOCAL equilibration
+        // timescale tau_beta, not from a path-integrated optical depth.  Running
+        // it together with the eikonal optical depth is redundant, and the
+        // tau-driven degeneracy rescaling (make_fugacity_state) is inconsistent
+        // with the gieg equilibration.
+        if (get_tau_policy_kind() == tau_policy_kind_t::eikonal) {
+            GRACE_WARN("m1.eas.betaeq_policy='gieg' is being used together with "
+                       "tau_policy='eikonal'.  The two-timescale (gieg) scheme "
+                       "decides trapping from the local equilibration timescale "
+                       "and makes the eikonal optical depth redundant; the "
+                       "tau-driven degeneracy rescaling is also inconsistent "
+                       "with it.  Consider setting m1.eas.tau_policy='none'.") ;
+        }
+    }
+
     GRACE_VERBOSE("Setting M1 initial data of type {}", id_type) ;
     if ( id_type == "straight_beam" ) {
         auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;

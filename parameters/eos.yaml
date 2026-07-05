@@ -139,6 +139,23 @@ eos:
         emitted if the original spacing deviates from uniform by more than
         a small relative tolerance.
 
+    linear_pressure:
+      type: bool
+      default: false
+      description: >
+        Store the baryon pressure linearly (signed) in the table instead of
+        log(P).  REQUIRED for the electron-free CompOSE tables used as the
+        baryon component of the leptonic EOS: those have physically NEGATIVE
+        pressure in the nuclear spinodal (sub-saturation density, low T), where
+        log(P) would be NaN and crash the TOV / cold-table setup.  The total
+        pressure P_baryon + P_e (+ P_mu) is still positive everywhere, so the
+        signed baryon pressure sums correctly with the (positive) lepton
+        pressures.  Leave false (default) for a standalone tabulated EOS with a
+        with-electrons table: those are strictly positive, and log(P) preserves
+        interpolation accuracy across the many decades of pressure.  If the
+        table contains a non-positive pressure and this is false, the reader
+        aborts with an actionable message.
+
   leptonic:
     type: schema
     description: >

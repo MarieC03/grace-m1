@@ -439,7 +439,11 @@ struct grmhd_equations_system_t
         }
         #if GRACE_M1_NU_SPECIES >= 5
         if ( c2p_errors.test(c2p_err_enum_t::C2P_RESET_YMU) ) {
-            aux(C2P_ERR_) += Kokkos::fabs(vars(YMUSTAR_) - cons[YMUSL])/(1e-50+Kokkos::fabs(cons[YMUSL])) ;
+            // Diagnostic relative-ymu-change accumulator temporarily disabled: it
+            // blows up (tiny YMUSL denominator) for atmosphere/floor cells and
+            // pollutes c2p_err's bitmask.  The RESET_YMU bit is still OR'd above,
+            // so c2p_err stays readable as a clean bit pattern.
+            // aux(C2P_ERR_) += Kokkos::fabs(vars(YMUSTAR_) - cons[YMUSL])/(1e-50+Kokkos::fabs(cons[YMUSL])) ;
             vars(YMUSTAR_) = cons[YMUSL] ;
         }
         #endif

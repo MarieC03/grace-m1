@@ -1,61 +1,61 @@
 m1:
   description: >
-    M1 scheme 
-  type: schema 
+    M1 scheme
+  type: schema
 
-  bc_kind: 
-    type: keyword 
+  bc_kind:
+    type: keyword
     allowed: ["outgoing", "none"]
     default: "outgoing"
     description: >
       Boundary conditions
-  
-  id_type: 
+
+  id_type:
     type: keyword
-    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam"] 
+    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam"]
     default: "zero"
     description: >
-      Initialization prescription for radiation fields 
-  
+      Initialization prescription for radiation fields
+
   atmosphere:
-    type: schema 
+    type: schema
     description: >
-      Atmosphere settings for M1 
-    
-    E_fl: 
-      type: double 
+      Atmosphere settings for M1
+
+    E_fl:
+      type: double
       range: "(0,*)"
-      default: 1.e-14 
+      default: 1.e-14
       description: >
-        Floor of energy density 
-    
-    E_scaling: 
-      type: double 
+        Floor of energy density
+
+    E_scaling:
+      type: double
       range: "[0,*)"
       default: 0
       description: >
-        Radial dependence of energy density floor 
-    
+        Radial dependence of energy density floor
+
     eps_fl:
-      type: double 
-      default: 1 
-      range: "(0,*)" 
+      type: double
+      default: 1
+      range: "(0,*)"
       description: >
-        Flooring value for average energy 
-    
-    eps_min: 
-      type: double 
-      default: 1 
-      range: "(0,*)" 
+        Flooring value for average energy
+
+    eps_min:
+      type: double
+      default: 1
+      range: "(0,*)"
       description: >
-        Minimum allowed average energy 
-    
-    eps_max: 
-      type: double 
-      default: 1 
-      range: "(0,*)" 
+        Minimum allowed average energy
+
+    eps_max:
+      type: double
+      default: 1
+      range: "(0,*)"
       description: >
-        Maximum allowed average energy 
+        Maximum allowed average energy
 
     eps_scaling:
       type: double
@@ -63,37 +63,37 @@ m1:
       range: "[0,*)"
       description: >
         Value to scale eps floor with r^x
-  
-  excision: 
-    type: schema 
-    description: > 
+
+  excision:
+    type: schema
+    description: >
       Excision parameters for M1 transport
 
-    E_excision: 
-      type: double 
-      default: 1.e-14 
+    E_excision:
+      type: double
+      default: 1.e-14
       range: "(0,*)"
-      description: > 
-        Value of energy density inside excised regions 
+      description: >
+        Value of energy density inside excised regions
 
-    eps_excision: 
-      type: double 
+    eps_excision:
+      type: double
       default: 1
       range: "(0,*)"
-      description: > 
-        Value of average energy inside excised regions 
+      description: >
+        Value of average energy inside excised regions
 
-  eas: 
-    type: schema 
+  eas:
+    type: schema
     description: >
-      Parameters controlling emission absorption and scattering rates 
+      Parameters controlling emission absorption and scattering rates
 
-    kind: 
-      type: keyword 
+    kind:
+      type: keyword
       allowed: ["test", "photon_rates", "neutrino_analytic", "neutrino_weakhub", "bns_nurates"]
-      default: "test" 
-      description: > 
-        EAS provider (single).  Ignored when 'kinds' is non-empty. 
+      default: "test"
+      description: >
+        EAS provider (single).  Ignored when 'kinds' is non-empty.
 
     kinds:
       type: list
@@ -109,58 +109,85 @@ m1:
       type: bool
       default: true
       description: >
-          "Needed right now. Planned to remove"
-
-    rho_min:
-      type: double
-      default: 1.e-11
-      range: "[0,*)"
-      description: >
-        Rest-mass density floor [code units] for the neutrino EAS rates.
-        Below this density the cell is treated as transparent: all emission
-        and opacity aux fields are set to zero and the (expensive) EOS /
-        fugacity / rate evaluation is skipped.  Most of the grid is
-        low-density atmosphere, so this short-circuit is a large speedup.
-        Keep it well below the neutrinosphere density (where emission becomes
-        relevant) so it does not alter the physics; validate against a run
-        with rho_min = 0 if unsure.
+        Deprecated — no longer read by the code. The EAS provider is selected
+        exclusively via 'kind' / 'kinds'. This parameter is kept only for
+        backwards compatibility with old parameter files and has no effect.
 
     beta_decay:
       type: bool
       default: true
       description: >
-        Including beta_decay in the rates calculation
+        Include charged-current (beta-decay) reactions in the analytic neutrino
+        rates: p + e- <-> n + nue and n + e+ <-> p + anti-nue.  These are the
+        dominant source of nue/anti-nue emission and absorption near the
+        neutrinosphere.  Analytic rate path only; the weakhub table always
+        includes beta processes.
 
     plasmon_decay:
       type: bool
       default: true
       description: >
-        Including plasmon_decay in the rates calculation
+        Include plasmon decay (gamma* -> nu + anti-nu) emission.  Contributes
+        to all species at high density.  Applied in both the analytic and
+        weakhub paths (added on top of the table opacities in the latter).
 
     bremsstrahlung:
       type: bool
       default: true
       description: >
-        Including bremsstrahlung in the rates calculation
+        Include nucleon-nucleon bremsstrahlung (NN -> NN + nu + anti-nu)
+        emission.  Dominant nux emission channel at low temperatures.  Applied
+        in both the analytic and weakhub paths (added on top of the table
+        opacities in the latter).
 
     pair_annihilation:
       type: bool
       default: true
       description: >
-        Including pair_annihilation in the rates calculation
+        Include electron-positron pair annihilation (e+ + e- -> nu + anti-nu)
+        emission.  Contributes to all species at high temperatures.  Applied in
+        both the analytic and weakhub paths (added on top of the table opacities
+        in the latter).
 
     betaeq_policy:
       type: keyword
-      allowed: ["off", "chemical", "timescale"]
+      allowed: ["off", "chemical", "timescale", "gieg"]
       default: "off"
       description: >
-        Per-cell beta-equilibrium reset of Ye before evaluating the rates.
-        
-    temperature_correction: 
+        Per-cell beta-equilibrium policy applied before evaluating the rates.
+        off: Ye is used as-is from the evolved state (default).
+        chemical: Ye is reset to the chemical beta-equilibrium value
+        (mu_e + mu_p = mu_n + Qnp) at the local (rho, T) before computing
+        rates — appropriate for optically thick regions.
+        timescale: (T, Ye, Ymu) relaxed jointly toward radiation-matter
+        equilibrium using a SINGLE global timescale (min over all species).
+        gieg: per-flavor TWO-timescale equilibration (Gieg+ 2026, Table 3) —
+        electron and muon sectors classified independently (tau_e, tau_mu) and
+        equilibrated only where their own neutrinos are (partially) trapped;
+        a free-streaming flavor is left to the rates (5-species only).
+        CAVEAT: 'gieg' relaxes matter and radiation to (partial) EQUILIBRIUM
+        states and does NOT capture non-equilibrium neutrino distribution
+        effects (gray, LTE-equilibrium approximation); the partially-trapped /
+        transition regime is approximate.  It also decides trapping from the
+        local equilibration timescale, so it is REDUNDANT with (and the
+        tau-driven degeneracy rescaling is inconsistent with) an eikonal
+        optical depth — set tau_policy='none' when using 'gieg'.  Both
+        conditions emit a runtime warning at M1 setup.
+
+    temperature_correction:
       type: bool
       default: true
       description: >
-        "Missing"
+        Apply a spectral temperature correction to the neutrino opacities and
+        emission rates (FIL parity).  The effective neutrino temperature T_nu
+        is derived from the radiation field's fluid-frame mean energy via the
+        Fermi-Dirac ratio FD(2)/FD(3), and all rates are rescaled by
+        (T_nu / T_fluid)^2 when T_nu > T_fluid.  For nue and nuebar this
+        scales Q, R, kappa_a, kappa_n and kappa_s; for nux only kappa_s is
+        corrected; muon species are not corrected (the weakhub table already
+        carries the spectral information).  When no radiation is present
+        (eps_rad = 0, e.g. at it=0 or in the atmosphere) the correction is
+        inert (factor = 1).
 
     tau_outer_radius_code:
       type: double
@@ -189,69 +216,76 @@ m1:
       type: string
       default: ""
       description: >
-        "absolut path to the weakhub table"
-        
-        
+        Absolute path to the Weakhub HDF5 opacity table.  Required when
+        kind/kinds includes 'neutrino_weakhub'.  The table provides grey
+        absorption and scattering opacities as functions of density, temperature,
+        Ye, and Ymu for up to 6 neutrino species.
+
+
 
   scattering_test:
-    type: schema 
-    description: > 
-      Parameters of scattering test 
+    type: schema
+    description: >
+      Parameters of scattering test
 
-    k_s: 
-      type: double 
-      default: 100 
-      range: "(0,*)" 
-      description: > 
-        Constant scattering opacity 
-    
-    t_0: 
-      type: double 
-      default: 1 
-      range: "(0,*)" 
+    k_s:
+      type: double
+      default: 100
+      range: "(0,*)"
       description: >
-        Time of initial data 
+        Constant scattering opacity
+
+    t_0:
+      type: double
+      default: 1
+      range: "(0,*)"
+      description: >
+        Time of initial data
 
     is_static_background:
-      type: bool 
-      default: true 
+      type: bool
+      default: true
       description: >
-        Is background fluid static or moving? 
+        Is background fluid static or moving?
 
   emitting_sphere_test:
-    type: schema 
+    type: schema
     description: >
-      Parameters for emitting sphere test 
-    
-    temperature: 
-      type: double 
-      default: 1 
+      Parameters for emitting sphere test
+
+    temperature:
+      type: double
+      default: 1
       range: "(0,*)"
-      description: > 
-        Temperature for rates 
-    
+      description: >
+        Temperature for rates
+
     cross_section:
-      type: double 
-      default: 10 
+      type: double
+      default: 10
       range: "(0,*)"
-      description: > 
+      description: >
         Cross section for rates
-  backreaction: 
-    type: schema 
+
+  backreaction:
+    type: schema
     description: >
-      Parameters controlling emission absorption and scattering rates
+      Parameters controlling the coupling of the radiation field back to the
+      fluid (energy and momentum source terms in the GRMHD equations).
 
     enabled:
       type: bool
       default: true
       description: >
-        Parameter disabling backreaction
+        Enable radiation-matter backreaction.  When false, the fluid evolves
+        without any M1 source terms (useful for testing transport in a frozen
+        background).
 
     t_start:
       type: double
       default: -1
       range: "[-1,*)"
       description: >
-        If enabled sets, the time backreaction starts
-
-#Marie was here
+        Simulation time at which backreaction is activated.  Negative value
+        (default -1) means active from the start.  Useful to let the radiation
+        field build up before coupling it to the fluid.

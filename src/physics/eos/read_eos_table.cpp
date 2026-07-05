@@ -349,7 +349,7 @@ read_cold_table(
     Kokkos::deep_copy(d_rho, rho)   ;
 }
 
-grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::string const& cold_tab_fname) 
+grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::string const& cold_tab_fname, bool linear_pressure = false)
 {
     using namespace grace ; 
     using namespace grace::physical_constants ; 
@@ -496,8 +496,13 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
         double pressL, epsL, rhoL ;
         rhoL = exp(logrho[i]) ;
         { // press
-            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) * log(10.0) + log(uconv.pressure) ;
-            pressL = exp(alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS)) ;
+            // stellarcollapse stores log10(P); convert to code units.  linear_pressure
+            // stores the signed pressure directly (see read_compose_table / the
+            // leptonic spinodal); otherwise keep loge(P) as before.  (A log10 input
+            // can never be non-positive after pow10, so no guard is needed here.)
+            double const P = pow(10.0, alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS)) * uconv.pressure ;
+            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) = linear_pressure ? P : log(P) ;
+            pressL = P ;
         }
 
         { // eps
@@ -537,10 +542,24 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
     double temp_floor = get_param<double>("grmhd", "atmosphere", "temp_fl") ; 
     double rho_floor = get_param<double>("grmhd", "atmosphere", "rho_fl") ; 
 
-    double tmin_gracefact = std::exp(logtemp[1]) ; 
-    if( temp_floor < tmin_gracefact ) {
-        GRACE_WARN("Requested atmo temperature is below second point in the table {}, will be overridden.", tmin_gracefact) ; 
-        temp_floor = tmin_gracefact; 
+    // The beta-equilibrium solve below interpolates chemical potentials and
+    // needs a temperature safely inside the table's T grid; historically the
+    // requested temp_fl was overridden UP to the SECOND table point here.
+    // That override leaked into c2p_temp_atm -> atmo.temp_fl, forcing
+    // temp_fl > min(T_tab) globally: every bottom-of-table cell then entered
+    // the c2p T-floor branch each substep (permanent T_FLOORED churn), and a
+    // parfile temp_fl below the table minimum -- the setting that makes the
+    // T-floor branch a deliberate no-op -- could never take effect.  Use the
+    // interior temperature FOR THE BETA-EQ SOLVE ONLY; store the requested
+    // floor unmodified (the EOS clamps its own lookups at the atmosphere
+    // state, so a below-table floor is safe by construction).
+    double temp_betaeq = temp_floor ;
+    double const t_second = std::exp(logtemp[1]) ;
+    if( temp_floor < t_second ) {
+        GRACE_INFO("atmo temp_fl {} is below the second table T point {}; "
+                   "using the latter for the beta-eq atmosphere solve only "
+                   "(temp_fl kept as requested).", temp_floor, t_second) ;
+        temp_betaeq = t_second ;
     }
     if (rho_floor < rhomin ) {
         ERROR("Requested atmo density is below table bound.") ; 
@@ -565,7 +584,7 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
                     } ; 
                     return utils::brent(dmu, yemin, yemax, 1e-14) ; 
                 } ; 
-                acc = find_betaeq(rho_floor,temp_floor) ; 
+                acc = find_betaeq(rho_floor,temp_betaeq) ;
             }, Kokkos::Max<double>(ye_atmo)
         ) ; 
     }
@@ -578,8 +597,11 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
     GRACE_INFO("Atmosphere settings: rho: {}, temperature: {}, ye: {}", rho_floor, temp_floor, ye_atmo) ; 
 
     // read in the cold table
-    Kokkos::View<double **, grace::default_execution_space> cold_tables("eos_cold_table") ;
-    Kokkos::View<double *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho") ;
+    // NB: explicit 0 extents — Kokkos >= 5 leaves label-only dynamic extents
+    // at the SIZE_MAX ctor sentinel, which trips the mdspan representability
+    // precondition instead of giving an empty view.
+    Kokkos::View<double **, grace::default_execution_space> cold_tables("eos_cold_table", 0, 0) ;
+    Kokkos::View<double *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho", 0) ;
     double cold_energy_shift, cold_baryon_mass ;
     GRACE_INFO("Reading cold table {}", cold_tab_fname) ;
     read_cold_table(
@@ -611,7 +633,7 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
 
 }
 
-grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string const& cold_tab_fname)
+grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string const& cold_tab_fname, bool linear_pressure = false)
 {
     using namespace grace ;
     using namespace grace::physical_constants ;
@@ -638,7 +660,7 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
     hid_t parameters ; 
     HDF5_CALL(parameters, H5Gopen(file,"/Parameters",H5P_DEFAULT)) ; 
 
-    int nrho, ntemp, nye ; 
+    int nrho, ntemp, nye ;
     READ_ATTR_HDF5_COMPOSE(parameters,"pointsnb", &nrho, H5T_NATIVE_INT);
     READ_ATTR_HDF5_COMPOSE(parameters,"pointst", &ntemp, H5T_NATIVE_INT);
     READ_ATTR_HDF5_COMPOSE(parameters,"pointsyq", &nye, H5T_NATIVE_INT);
@@ -746,8 +768,8 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
                              find_index(MUE_C),   find_index(MUP_C),
                              find_index(MUN_C) };
 
-    Kokkos::View<double ****> _tables("eos_table", nrho, ntemp, nye, tabulated_eos_t::TEOS_VIDX::N_TAB_VARS) ; 
-    auto alltables = Kokkos::create_mirror_view(_tables) ; 
+    Kokkos::View<double ****> _tables("eos_table", nrho, ntemp, nye, tabulated_eos_t::TEOS_VIDX::N_TAB_VARS) ;
+    auto alltables = Kokkos::create_mirror_view(_tables) ;
 
     for (int iv = 0; iv <= 6; iv++)
     for (int k = 0; k < nye; k++)
@@ -854,8 +876,20 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
         rhoL = exp(logrho[i]) ; 
 
         {  // pressure
-            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) = log(alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) * uconv.pressure );
-            pressL = exp(alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS));
+            // CompOSE thermo[1] is pressure per VOLUME; convert to code units.
+            // linear_pressure: store the signed pressure directly (the leptonic
+            // baryon table has NEGATIVE pressure in the nuclear spinodal, where
+            // log(P) would be NaN).  Otherwise store log(P) as before.
+            double const P = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) * uconv.pressure ;
+            if (!linear_pressure && P <= 0.0) {
+                ERROR("Non-positive pressure (" << P << " code) in EOS table at "
+                      "(rho=" << rhoL << ", j=" << j << ", k=" << k << ") with "
+                      "eos.tabulated_eos.linear_pressure=false.  Electron-free / "
+                      "leptonic baryon tables have negative spinodal pressure; set "
+                      "eos.tabulated_eos.linear_pressure=true.") ;
+            }
+            alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) = linear_pressure ? P : log(P) ;
+            pressL = P ;
         }
 
 
@@ -912,10 +946,24 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
     double temp_floor = get_param<double>("grmhd", "atmosphere", "temp_fl") ; 
     double rho_floor = get_param<double>("grmhd", "atmosphere", "rho_fl") ; 
 
-    double tmin_gracefact = std::exp(logtemp[1]) ; 
-    if( temp_floor < tmin_gracefact ) {
-        GRACE_WARN("Requested atmo temperature is below second point in the table {}, will be overridden.", tmin_gracefact) ; 
-        temp_floor = tmin_gracefact; 
+    // The beta-equilibrium solve below interpolates chemical potentials and
+    // needs a temperature safely inside the table's T grid; historically the
+    // requested temp_fl was overridden UP to the SECOND table point here.
+    // That override leaked into c2p_temp_atm -> atmo.temp_fl, forcing
+    // temp_fl > min(T_tab) globally: every bottom-of-table cell then entered
+    // the c2p T-floor branch each substep (permanent T_FLOORED churn), and a
+    // parfile temp_fl below the table minimum -- the setting that makes the
+    // T-floor branch a deliberate no-op -- could never take effect.  Use the
+    // interior temperature FOR THE BETA-EQ SOLVE ONLY; store the requested
+    // floor unmodified (the EOS clamps its own lookups at the atmosphere
+    // state, so a below-table floor is safe by construction).
+    double temp_betaeq = temp_floor ;
+    double const t_second = std::exp(logtemp[1]) ;
+    if( temp_floor < t_second ) {
+        GRACE_INFO("atmo temp_fl {} is below the second table T point {}; "
+                   "using the latter for the beta-eq atmosphere solve only "
+                   "(temp_fl kept as requested).", temp_floor, t_second) ;
+        temp_betaeq = t_second ;
     }
     if (rho_floor < rhomin ) {
         ERROR("Requested atmo density is below table bound.") ; 
@@ -940,7 +988,7 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
                     } ; 
                     return utils::brent(dmu, yemin, yemax, 1e-14) ; 
                 } ; 
-                acc = find_betaeq(rho_floor,temp_floor) ; 
+                acc = find_betaeq(rho_floor,temp_betaeq) ;
             }, Kokkos::Max<double>(ye_atmo)
         ) ; 
     }
@@ -951,8 +999,11 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
     }
 
     // read in the cold table
-    Kokkos::View<double **, grace::default_execution_space> cold_tables("eos_cold_table") ;
-    Kokkos::View<double *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho") ;
+    // NB: explicit 0 extents — Kokkos >= 5 leaves label-only dynamic extents
+    // at the SIZE_MAX ctor sentinel, which trips the mdspan representability
+    // precondition instead of giving an empty view.
+    Kokkos::View<double **, grace::default_execution_space> cold_tables("eos_cold_table", 0, 0) ;
+    Kokkos::View<double *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho", 0) ;
     double cold_energy_shift, cold_baryon_mass ;
     GRACE_INFO("Reading cold table {}", cold_tab_fname) ;
     read_cold_table(
@@ -989,12 +1040,13 @@ grace::tabulated_eos_t read_eos_table()
     auto const eos_tab_name = grace::get_param<std::string>("eos", "tabulated_eos", "table_filename") ;
     auto const eos_cold_tab_name = grace::get_param<std::string>("eos", "tabulated_eos", "cold_table_filename") ;
     auto const eos_tab_kind =  grace::get_param<std::string>("eos", "tabulated_eos", "table_format") ;
+    auto const linear_pressure = grace::get_param<bool>("eos", "tabulated_eos", "linear_pressure") ;
 
     if ( eos_tab_kind == "compose" ) {
-        return read_compose_table(eos_tab_name, eos_cold_tab_name) ;
+        return read_compose_table(eos_tab_name, eos_cold_tab_name, linear_pressure) ;
     } else {
         ASSERT(eos_tab_kind=="stellarcollapse", "Should have been caught at parcheck") ;
-        return read_scollapse_table(eos_tab_name, eos_cold_tab_name) ;
+        return read_scollapse_table(eos_tab_name, eos_cold_tab_name, linear_pressure) ;
     }
 
 }
@@ -1003,8 +1055,9 @@ grace::tabulated_cold_eos_t read_tabulated_cold_eos(std::string const& cold_tab_
 {
     using namespace grace ;
 
-    Kokkos::View<double **, grace::default_execution_space> cold_tables   ("eos_cold_table") ;
-    Kokkos::View<double  *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho") ;
+    // NB: explicit 0 extents — see the Kokkos >= 5 sentinel-extents note above.
+    Kokkos::View<double **, grace::default_execution_space> cold_tables   ("eos_cold_table", 0, 0) ;
+    Kokkos::View<double  *, grace::default_execution_space> cold_table_rho("eos_cold_table_log_rho", 0) ;
     double cold_energy_shift, cold_baryon_mass ;
     GRACE_INFO("Reading tabulated cold EOS from {}", cold_tab_fname) ;
     read_cold_table(

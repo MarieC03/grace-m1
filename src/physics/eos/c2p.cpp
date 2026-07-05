@@ -278,6 +278,11 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         prims[YMUL] = ymumin ;
         c2p_err.set(c2p_err_enum_t::C2P_RESET_YMU) ;
     }
+    /* NB: yp = ye + ymu can exceed yemax after the independent clamps above.
+       The leptonic EOS handles that (fix_ymu_high_yp): where yp > yemax it caps
+       ymu to the remaining charge budget max(yemax - ye, ymumin) so yp saturates
+       at yemax, instead of dropping ymu straight to its floor.  So no c2p-level
+       composition surgery is needed here. */
 #endif
 
     /* Figure out if we are inside a bh   */
@@ -315,11 +320,41 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
                     || (c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_HIGH))
                     || (!Kokkos::isfinite(residual)) ;
 
+        //#define GRACE_C2P_DEBUG
+        #ifdef GRACE_C2P_DEBUG
+            if (c2p_failed && !dry_run) {
+                printf("[c2p fail] rho=%.4e T=%.4e ye=%.4e ymu=%.4e yp=%.4e eps=%.4e resid=%.3e | "
+                       "RHO_HI=%d EPS_HI=%d EPS_LO=%d RHO_LO=%d VEL_HI=%d finite=%d\n",
+                       prims[RHOL], prims[TEMPL], prims[YEL],
+                #if GRACE_M1_NU_SPECIES >= 5
+                       prims[YMUL], prims[YEL]+prims[YMUL],
+                #else
+                       0.0, prims[YEL],
+                #endif
+                       prims[EPSL], residual,
+                       int(c2p_ret.test(c2p_sig_enum_t::C2P_RHO_TOO_HIGH)),
+                       int(c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_HIGH)),
+                       int(c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW)),
+                       int(c2p_ret.test(c2p_sig_enum_t::C2P_RHO_TOO_LOW)),
+                       int(c2p_ret.test(c2p_sig_enum_t::C2P_VEL_TOO_HIGH)),
+                       int(Kokkos::isfinite(residual))) ;
+            }
+        #endif
+
         double beta = compute_beta(prims,metric) ;
 
         bool const c2p_distrust = c2p_failed
                     || (c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW))
                     || (beta <= c2p_pars.beta_fallback) ;
+
+        #ifdef GRACE_C2P_DEBUG
+        if (c2p_distrust && !dry_run)
+            printf("[c2p distrust] r=%.4e rho=%.4e T=%.4e eps=%.4e beta=%.4e beta_fb=%.4e | "
+                   "eps_lo=%d beta_lo=%d failed=%d\n",
+                   rtp[0], prims[RHOL], prims[TEMPL], prims[EPSL], beta, c2p_pars.beta_fallback,
+                   int(c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW)),
+                   int(beta <= c2p_pars.beta_fallback), int(c2p_failed)) ;
+        #endif
 
         // backup if needed and allowed
         if ( c2p_distrust and c2p_pars.use_ent_backup and (!dry_run) ) {

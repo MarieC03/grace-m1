@@ -413,14 +413,33 @@ class leptonic_eos_4d_t
         return press ;
     }
 
-    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    /**
+     * @brief press -> (eps, h, csnd2, T, s) inversion at fixed (rho, ye, ymu).
+     *
+     * Needed by the vacuum/atmosphere initial-data kernels, which specify
+     * the background thermodynamic state through the pressure.  The total
+     * pressure is monotone in T over the table range at fixed composition,
+     * so a single Brent in log T suffices (same pattern as the eps and
+     * entropy inversions below).  press is clamped to the reachable
+     * [P(Tmin), P(Tmax)] range, mirroring ltemp__eps_lrho_ye_ymu.
+     */
+    double GRACE_HOST_DEVICE
     eps_h_csnd2_temp_entropy__press_rho_ye_ymu_impl(
-        double&, double&, double&, double&, double&, double&,
-        double&, double&, err_t&) const
+        double& h, double& csnd2, double& temp, double& entropy,
+        double& press, double& rho, double& ye, double& ymu,
+        err_t& err) const
     {
-        Kokkos::abort("eps_h_csnd2_temp_entropy__press_rho_ye_ymu_impl"
-                      " is not implemented for leptonic_eos_4d_t.") ;
-        return 0. ;
+        limit_rho(rho, err) ;
+        limit_ye (ye,  err) ;
+        limit_ymu(ymu, err) ;
+        double const lrho  = Kokkos::log(rho) ;
+        double const ltemp = ltemp__press_lrho_ye_ymu(press, lrho, ye, ymu, err) ;
+        temp = Kokkos::exp(ltemp) ;
+        double const eps = total_eps(lrho, ltemp, ye, ymu) ;
+        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        entropy = total_entropy(lrho, ltemp, ye, ymu) ;
+        h = 1. + eps + press / rho ;
+        return eps ;
     }
 
     /**
@@ -666,6 +685,26 @@ class leptonic_eos_4d_t
         return yp_raw ;
     }
 
+    // Where yp = ye + ymu would exceed the baryon charge ceiling yemax, cap ymu
+    // to the remaining charge budget (yemax - ye), floored at ymumin, so yp
+    // saturates exactly at yemax while the muon keeps as much of the budget as
+    // fits -- instead of dropping straight to its floor.
+    //
+    // With no muons (GRACE_M1_NU_SPECIES < 5) ymu is pinned at ymumin and there
+    // is no muon charge to reconcile, so this is a no-op: yp is just ye and
+    // clamp_yp handles the ceiling.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    fix_ymu_high_yp(double ye, double ymu) const {
+#if GRACE_M1_NU_SPECIES >= 5
+        return (ye + ymu > this->eos_yemax)
+             ? Kokkos::fmax(this->eos_yemax - ye, this->eos_ymumin)
+             : ymu ;
+#else
+        (void) ye ;
+        return ymu ;
+#endif
+    }
+
     // ----------------------------------------------------------
     //  Total quantities: baryon + muon, optionally + electron.
     //  add_ele_contribution = false (default): the baryon table
@@ -676,9 +715,14 @@ class leptonic_eos_4d_t
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_press(double lrho, double ltemp, double ye, double ymu) const
     {
+        ymu = fix_ymu_high_yp(ye, ymu) ;
         double const yp   = clamp_yp(ye + ymu) ;
         double const lymu = Kokkos::log(ymu) ;
-        double const pb   = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABPRESS)) ;
+        // The baryon table is loaded with linear_pressure=true (read_leptonic),
+        // so TABPRESS is the SIGNED linear pressure — not log(P).  It is
+        // negative in the nuclear spinodal (sub-saturation); the (positive)
+        // lepton pressures below make the additive total positive.
+        double const pb   = baryon_table.interp(lrho, ltemp, yp, TABPRESS) ;
         double const pmm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_MINUS) ;
         double const pmp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_PLUS)  ;
         double const pe   = add_ele_contribution
@@ -691,6 +735,7 @@ class leptonic_eos_4d_t
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_eps(double lrho, double ltemp, double ye, double ymu) const
     {
+        ymu = fix_ymu_high_yp(ye, ymu) ;
         double const yp   = clamp_yp(ye + ymu) ;
         double const lymu = Kokkos::log(ymu) ;
         double const eb   = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABEPS)) - energy_shift ;
@@ -706,6 +751,7 @@ class leptonic_eos_4d_t
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_entropy(double lrho, double ltemp, double ye, double ymu) const
     {
+        ymu = fix_ymu_high_yp(ye, ymu) ;
         double const yp   = clamp_yp(ye + ymu) ;
         double const lymu = Kokkos::log(ymu) ;
         double const sb   = baryon_table.interp(lrho, ltemp, yp, TABENTROPY) ;
@@ -721,6 +767,7 @@ class leptonic_eos_4d_t
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     baryon_csnd2(double lrho, double ltemp, double ye, double ymu) const
     {
+        ymu = fix_ymu_high_yp(ye, ymu) ;
         return baryon_table.interp(lrho, ltemp,
                                    clamp_yp(ye + ymu),
                                    TABCSND2) ;
@@ -784,6 +831,20 @@ class leptonic_eos_4d_t
         if (eps >= eps_hi) { eps = eps_hi ; err.set(EOS_EPS_TOO_HIGH) ; return ltempmax ; }
         auto rootfun = [this, lrho, ye, ymu, eps] (double lt) {
             return total_eps(lrho, lt, ye, ymu) - eps ;
+        } ;
+        return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
+    }
+
+    KOKKOS_INLINE_FUNCTION double
+    ltemp__press_lrho_ye_ymu(double& press, double lrho,
+                             double ye, double ymu, err_t& err) const
+    {
+        double const p_lo = total_press(lrho, ltempmin, ye, ymu) ;
+        double const p_hi = total_press(lrho, ltempmax, ye, ymu) ;
+        if (press <= p_lo) { press = p_lo ; err.set(EOS_PRESS_TOO_LOW)  ; return ltempmin ; }
+        if (press >= p_hi) { press = p_hi ; err.set(EOS_PRESS_TOO_HIGH) ; return ltempmax ; }
+        auto rootfun = [this, lrho, ye, ymu, press] (double lt) {
+            return total_press(lrho, lt, ye, ymu) - press ;
         } ;
         return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
     }

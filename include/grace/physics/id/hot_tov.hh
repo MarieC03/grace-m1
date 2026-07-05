@@ -2,11 +2,18 @@
  * @file hot_tov.hh
  * @brief Hot-TOV initial data (FIL-style): the hydrostatic STRUCTURE comes from
  *        the EOS cold slice (compact if that slice is generated cold), while the
- *        THERMAL state (temperature, Ye, Ymu) is set to a hot beta equilibrium
- *        at a fixed temperature T_id.  This mirrors FIL's RNS + Margherita
- *        approach: a cold .rns structure with a hot (T=20 MeV) Ye/temperature
- *        slice laid on top.  Only the leptonic EOS supports the hot beta-eq
- *        solve (`betaeq_ye_ymu__rho_temp`).
+ *        THERMAL state is set hot -- the temperature is fixed to T_id inside the
+ *        star.  This mirrors FIL's RNS + Margherita approach: a cold .rns
+ *        structure with a hot (T=20 MeV) temperature slice laid on top.
+ *
+ *        Composition handling is EOS-aware and works for ANY EOS:
+ *          - leptonic_eos_4d_t: (Ye, Ymu) are solved from a hot beta
+ *            equilibrium at (rho, T_id) via `betaeq_ye_ymu__rho_temp`, so the
+ *            composition shifts with temperature (the muon-capable path).
+ *          - every other EOS (tabulated 3D, hybrid, ideal gas): no hot
+ *            beta-eq solver exists, so the composition is taken from the cold
+ *            slice (`ye_cold__press` / `ymu_cold__press`, always available via
+ *            the CRTP base) and only the temperature is raised to T_id.
  *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale (GRACE), Copyright (C) 2023-2026 GRACE Contributors.
@@ -18,6 +25,9 @@
 
 #include <grace_config.h>
 #include <grace/physics/id/tov.hh>   // reuse solve_tov + tov_id_t machinery
+#include <grace/physics/eos/leptonic_eos_4d.hh>  // leptonic_eos_4d_t (hot beta-eq dispatch)
+
+#include <type_traits>
 
 namespace grace {
 
@@ -80,12 +90,42 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
             // ---- inside the star ----
             // STRUCTURE: density from the cold-slice pressure profile.
             id.rho  = this->_eos.rho__press_cold(sol[0], err) ;
-            // THERMAL state: fixed temperature + hot beta-equilibrium Ye/Ymu.
-            id.temp = _T_id ;
-            double ye = 0.1, ymu = 0.0 ;
-            this->_eos.betaeq_ye_ymu__rho_temp(id.rho, _T_id, ye, ymu) ;
-            id.ye  = ye ;
-            id.ymu = ymu ;
+            // THERMAL state: T = T_id in the bulk, smoothly tapered to the
+            // atmosphere temperature over the outer (1 - taper_frac) of the
+            // stellar radius.  Rationale: at T_id the tenuous surface is
+            // radiation/pair dominated -- specific energy eps ~ 1/rho blows
+            // past the c2p eps_maximum, so the hot edge floors/atmospheres
+            // every step.  Cooling the outer envelope keeps eps bounded and
+            // the surface well-behaved, at negligible cost to the (low-mass)
+            // edge.  taper_frac = 0.98 -> the final 2% of R_iso.
+            constexpr double taper_frac = 0.95 ;
+            {
+                double w = (rL / this->_R_iso - taper_frac) / (1.0 - taper_frac) ;
+                w = Kokkos::fmin(1.0, Kokkos::fmax(0.0, w)) ;   // 0 bulk -> 1 surface
+                id.temp = _T_id + (temp_atm - _T_id) * w ;
+            }
+            // Composition is EOS-aware (see file header): the leptonic EOS
+            // solves a hot beta-equilibrium so (Ye, Ymu) shift with T; every
+            // other EOS lacks a hot beta-eq solver, so the composition is
+            // taken from the cold slice and only the temperature is raised.
+            // NB: beta-eq uses the (tapered) id.temp so the envelope stays
+            // self-consistent with its local temperature.
+            if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
+                double ye = 0.1, ymu = 0.0 ;
+                this->_eos.betaeq_ye_ymu__rho_temp(id.rho, id.temp, ye, ymu) ;
+                // Margherita fix_ymu_for_too_high_yp: at the hot, low-density
+                // surface the beta-eq can give ye + ymu > yemax (thermal muons
+                // + proton-rich).  Drop the muons there so the stored
+                // composition matches what the EOS evaluates (total_press etc.
+                // apply the same rule), keeping the initial data self-consistent.
+                if ( ye + ymu > this->_eos.get_c2p_ye_max() )
+                    ymu = this->_eos.get_c2p_ymu_min() ;
+                id.ye  = ye ;
+                id.ymu = ymu ;
+            } else {
+                id.ye  = this->_eos.ye_cold__press(sol[0], err) ;
+                id.ymu = this->_eos.ymu_cold__press(sol[0], err) ;
+            }
             // press/eps/entropy consistent with the HOT state.  NB: this is the
             // deliberate FIL-style cold-structure + hot-state mismatch (the star
             // is not in exact hydrostatic equilibrium with the hot eps; it

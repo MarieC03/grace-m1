@@ -110,6 +110,38 @@ TEST_CASE("Checkpoint round-trip is bit-exact on evolved state",
     auto state  = vars.getstate();
     auto sstate = vars.getstaggeredstate();
 
+    // --- Step 0: coverage guarantee ----------------------------------------
+    // The bit-exact diff below covers whatever is REGISTERED as evolved
+    // state.  Pin that registration to the compile-time enum so the test
+    // fails loudly if the evolved View ever stops carrying the full set --
+    // in particular the M1 radiation blocks and YMUSTAR in >=5-species
+    // builds, whose loss would otherwise only surface as a broken restart
+    // on a cluster.  state layout: (i[,j,k], var, q).
+    REQUIRE(state.extent(GRACE_NSPACEDIM) == static_cast<size_t>(N_EVOL_VARS));
+    if (parallel::mpi_comm_rank() == 0) {
+        std::cout << "[checkpoint roundtrip] evolved cc vars = " << N_EVOL_VARS
+                  << " (hydro+M1 block = " << N_HRSC_CC << ")"
+                  << ", GRACE_M1_NU_SPECIES = "
+        #ifdef GRACE_ENABLE_M1
+                  << GRACE_M1_NU_SPECIES
+        #else
+                  << 0
+        #endif
+                  << "\n";
+    }
+    #if defined(GRACE_ENABLE_M1) && GRACE_M1_NU_SPECIES >= 5
+    // Spot-pin the muon-era fields inside the diffed range: if any of these
+    // enum entries moves outside the registered block, restartability of
+    // muonic runs is silently broken.
+    REQUIRE(ERAD5_    < N_HRSC_CC);
+    REQUIRE(FRADZ5_   < N_HRSC_CC);
+    REQUIRE(NRAD5_    < N_HRSC_CC);
+    REQUIRE(YMUSTAR_  < N_HRSC_CC);
+    #endif
+    #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_PHOTONS)
+    REQUIRE(ERADPH_   < N_HRSC_CC);
+    #endif
+
     // --- Step 1: capture pre-write snapshots of EVERY evolved field -------
     auto snap_state = clone_view(state, "checkpoint_test_state_snap");
 

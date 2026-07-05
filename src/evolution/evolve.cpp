@@ -499,6 +499,9 @@ void flag_fofc_cells(
     auto excision = get_excision_params() ;
     auto c2p_pars = get_c2p_params() ;
     auto fofc_pars = get_fofc_params() ;
+    #ifdef GRACE_ENABLE_M1
+    auto m1_atmo  = get_m1_atmo_params() ;   // radiation floor scale for the FOFC positivity test
+    #endif
     // Force c2p_is_lenient = true everywhere during the dry-run: a
     // Kokkos::abort would defeat FOFC's purpose, which is precisely to
     // catch tentative states the inversion can't handle.  alp_bh_thresh
@@ -638,6 +641,42 @@ void flag_fofc_cells(
             Kokkos::atomic_or(&fofc_edges(VEC(i+1,j+1,k), 2, q), int8_t{1});
         }
         /************************************************************************************/
+
+        /************************************************************************************/
+        #ifdef GRACE_ENABLE_M1
+        // Radiation positivity (M1-aware FOFC): per species, predict the
+        // tentative cell-centre E,N after the full flux divergence (same dt and
+        // divF as add_fluxes_and_source_terms) and tag the 6 touching faces with
+        // a per-species bit when either would fall below the densitized floor.
+        // bit 0 = hydro (set above); bit (s+1) = M1 species s.  No edge tags --
+        // M1 has no constrained transport.
+        {
+            double const E_atmo_cons =
+                m1_atmo.E_fl * Kokkos::pow(rtp[0], m1_atmo.E_fl_scaling) * metric.sqrtg() ;
+            for (int s = 0; s < GRACE_M1_NU_SPECIES; ++s) {
+                int const iE = ERAD1_ + s*GRACE_N_M1_VARS ;
+                int const iN = NRAD1_ + s*GRACE_N_M1_VARS ;
+                double const E_tent = new_state(VEC(i,j,k),iE,q) + dt*dtfact*(
+                    EXPR( ( fluxes(VEC(i,j,k),iE,0,q)-fluxes(VEC(i+1,j,k),iE,0,q) )*idx(0,q)
+                        , + ( fluxes(VEC(i,j,k),iE,1,q)-fluxes(VEC(i,j+1,k),iE,1,q) )*idx(1,q)
+                        , + ( fluxes(VEC(i,j,k),iE,2,q)-fluxes(VEC(i,j,k+1),iE,2,q) )*idx(2,q))) ;
+                double const N_tent = new_state(VEC(i,j,k),iN,q) + dt*dtfact*(
+                    EXPR( ( fluxes(VEC(i,j,k),iN,0,q)-fluxes(VEC(i+1,j,k),iN,0,q) )*idx(0,q)
+                        , + ( fluxes(VEC(i,j,k),iN,1,q)-fluxes(VEC(i,j+1,k),iN,1,q) )*idx(1,q)
+                        , + ( fluxes(VEC(i,j,k),iN,2,q)-fluxes(VEC(i,j,k+1),iN,2,q) )*idx(2,q))) ;
+                if (E_tent < E_atmo_cons || N_tent < E_atmo_cons) {
+                    int const bit = 1 << (s + 1) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), bit) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), bit) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 1, q), bit) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j+1,k  ), 1, q), bit) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 2, q), bit) ;
+                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k+1), 2, q), bit) ;
+                }
+            }
+        }
+        #endif
+        /************************************************************************************/
     }) ;
 
     // compact
@@ -764,26 +803,105 @@ void apply_fofc_correction(
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t>
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
+    #ifdef GRACE_ENABLE_M1
+    // M1-aware FOFC: recompute flagged faces' radiation fluxes first-order
+    // (donor cell + HLLE) per species, gated by the per-species bits packed
+    // into the shared face tag (bit 0 = hydro, bit s+1 = species s).  Eface IS
+    // the GS getefarray() the M1 flux takes as 'vbar'; recon_t (donor_cell)
+    // serves both hydro and M1.
+    m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    auto& fofc_faces = grace::variable_list::get().getfofcfacetags() ;
+    #endif
 
-    #ifndef GRACE_FREEZE_HYDRO
+    // Flux correction runs when hydro (not frozen) OR M1 needs it.
+    #if !defined(GRACE_FREEZE_HYDRO) || defined(GRACE_ENABLE_M1)
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_fluxes_fofc")
                 , host_face_cnt(0)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fx(idx) ;
+        #ifdef GRACE_ENABLE_M1
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        #endif
+        #ifndef GRACE_FREEZE_HYDRO
+        #ifdef GRACE_ENABLE_M1
+        if ( m & 1 )            // bit 0: recompute hydro only where hydro flagged it
+        #endif
         grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_ENABLE_M1
+        if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #if GRACE_M1_NU_SPECIES >= 3
+        if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_x_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        if ( m & (1<<4) ) m1_eq_system.template compute_x_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_x_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #endif
     }) ;
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_fluxes_fofc")
                 , host_face_cnt(1)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fy(idx) ;
+        #ifdef GRACE_ENABLE_M1
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        #endif
+        #ifndef GRACE_FREEZE_HYDRO
+        #ifdef GRACE_ENABLE_M1
+        if ( m & 1 )
+        #endif
         grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_ENABLE_M1
+        if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #if GRACE_M1_NU_SPECIES >= 3
+        if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_y_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        if ( m & (1<<4) ) m1_eq_system.template compute_y_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_y_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #endif
     }) ;
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_fluxes_fofc")
                 , host_face_cnt(2)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fz(idx) ;
+        #ifdef GRACE_ENABLE_M1
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        #endif
+        #ifndef GRACE_FREEZE_HYDRO
+        #ifdef GRACE_ENABLE_M1
+        if ( m & 1 )
+        #endif
         grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_ENABLE_M1
+        if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #if GRACE_M1_NU_SPECIES >= 3
+        if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_z_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        if ( m & (1<<4) ) m1_eq_system.template compute_z_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_z_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        #endif
+        #endif
     }) ;
+    #endif
+
+    #ifndef GRACE_FREEZE_HYDRO
     // Recompute the GS edge EMF on every flagged edge using the (partly
     // updated) Eface / Ecenter / fluxes.  Same arithmetic as compute_emfs
     // — see gs_edge_emf_{x,y,z} in grmhd_helpers.hh for the discretization.
@@ -950,6 +1068,29 @@ void compute_fluxes(
             , {VEC(16,4,4),1}
         ) ;
     // non-mhd
+    #ifdef GRACE_ENABLE_FOFC
+    // FOFC needs the M1 flux one ghost deep on every axis: in the normal
+    // direction for the widened flag's F(i)/F(i+1) pair, in the transverse
+    // directions for the j+-1 / k+-1 divergence reads.  +1 each side matches
+    // hydro's NORMAL widening (flux_*_policy_mhd); M1 has no CT, so it does NOT
+    // need hydro's full-transverse (EMF-stencil) widening.  Requires ngz>=4
+    // (asserted in flag_fofc_cells).
+    auto flux_x_policy =
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
+              {VEC(ngz-1,ngz-1,ngz-1),0}
+            , {VEC(nx+ngz+2,ny+ngz+1,nz+ngz+1),nq}
+        ) ;
+    auto flux_y_policy =
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
+              {VEC(ngz-1,ngz-1,ngz-1),0}
+            , {VEC(nx+ngz+1,ny+ngz+2,nz+ngz+1),nq}
+        ) ;
+    auto flux_z_policy =
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
+              {VEC(ngz-1,ngz-1,ngz-1),0}
+            , {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+2),nq}
+        ) ;
+    #else
     auto flux_x_policy =
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(ngz,ngz,ngz),0}
@@ -965,6 +1106,7 @@ void compute_fluxes(
               {VEC(ngz,ngz,ngz),0}
             , {VEC(nx+ngz,ny+ngz,nz+ngz+1),nq}
         ) ;
+    #endif
     //**************************************************************************************************/
     //**************************************************************************************************/
     // compute x flux
@@ -980,27 +1122,27 @@ void compute_fluxes(
                 , flux_x_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
          m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,0>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,1>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,2>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,3>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,4>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
     }) ;
@@ -1018,27 +1160,27 @@ void compute_fluxes(
                 , flux_y_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
          m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,0>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,1>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,2>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,3>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,4>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
     }) ;
@@ -1056,27 +1198,27 @@ void compute_fluxes(
                 , flux_z_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
          m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,0>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,1>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,2>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,3>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,4>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
-            q, VEC(i,j,k), fluxes, vbar, dx, t, dtfact
+            q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
     }) ;
@@ -1744,6 +1886,11 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     bool const do_backreaction = backreaction_params.do_backreaction
                               && (t >= backreaction_params.t_backreact) ;
 
+    // Loaded EOS (table bounds included), fetched on the host and captured
+    // into the kernel for the backreaction composition limiter -- same
+    // pattern as the grmhd system's _eos.
+    auto const _beos = eos::get().get_eos<eos_t>() ;
+
     auto policy =
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(0,0,0),0}
@@ -1782,7 +1929,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             #if GRACE_M1_NU_SPECIES >= 3 // 3- and 5-species
             if ( do_backreaction ) {
                 m1_eq_system.add_backreaction<eos_t>(
-                q, VEC(i,j,k), _idx, new_state
+                q, VEC(i,j,k), _idx, new_state, _beos
                 );
             }
             #endif

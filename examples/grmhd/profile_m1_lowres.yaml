@@ -1,0 +1,113 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Low-res hot-TOV profiling config for the M1 + rates hot loops on macOS.
+#
+# Mirrors the production leptonic+weakhub setup (5-species build, leptonic
+# npe(mu)gamma EOS, grey Weakhub opacities, backreaction on) on the small
+# A0-style octant grid so ~20 iterations finish in minutes.  Table paths are
+# machine-local.  IO is minimized so kernel timings are not polluted.
+#
+# Run (kernel timings via Kokkos Tools):
+#   OMP_NUM_THREADS=4 KOKKOS_TOOLS_LIBS=<...>/kp_kernel_timer.so \
+#     ./build-m1-test/grace --grace-parfile examples/grmhd/profile_m1_lowres.yaml
+# ---------------------------------------------------------------------------
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: 0.0,
+  xmax: 30.0,
+  ymin: 0.0,
+  ymax: 30.0,
+  zmin: 0.0,
+  zmax: 30.0,
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  reflection_symmetries: {x: true, y: true, z: true}
+}
+IO: {
+  info_output_every: 5,
+  info_output_max_reductions: ["rho","temperature","c2p_err"],
+  scalar_output_every: -1,
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  volume_output_cell_variables: [],
+  output_extra_quantities: false
+}
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.2,
+  final_iteration: 20,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "hot_tov",
+  tov: {
+    rho_c: 1.216e-03,
+    press_floor: 1e-13,
+    dr: 1e-3
+  },
+  atmosphere: {
+    temp_fl: 9.9e-2,
+    rho_fl: 1.e-12
+  },
+  c2p: {
+    tolerance: 1e-10,
+    max_lorentz: 50,
+    use_c2p_entropy_backup: false
+  },
+  B_field_initialization: "none"
+}
+m1: {
+  eas: {
+    kinds: ["neutrino_weakhub"],
+    # Machine-local 3-species npe DD2 grey table (the only weakhub table on
+    # this Mac).  In the 5-species build the numu/anumu slots stay at the
+    # rate floor -- fine for COST profiling: the lookup, fugacity-state and
+    # implicit-solve work per cell is representative.
+    weakhub_table: "/Users/miler/Codes/Weakhub/dURCA_convenforbetaproc_DD2_grey_npe_20240723_Weakhub_grey.h5",
+    beta_decay: true,
+    plasmon_decay: true,
+    bremsstrahlung: true,
+    pair_annihilation: true,
+    temperature_correction: true,
+    tau_policy: "none",
+    betaeq_policy: "off"
+  },
+  backreaction: {
+    enabled: true
+  }
+}
+z4c: {
+  eps_diss: 0.1,
+  eta: 1.0
+}
+eos: {
+  eos_type: "leptonic",
+  tabulated_eos: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+  leptonic: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken.h5",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
+    add_ele_contribution: true,
+    cold_table_temperature: 0.100001
+  },
+  eps_maximum: 1.e+07
+}
+checkpoints: {
+  checkpoint_at_startup: false,
+  checkpoint_at_termination: false
+}

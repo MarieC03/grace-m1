@@ -280,7 +280,8 @@ struct neutrinos_eas_op
         aux(_aux),
         dt(grace::get_timestep()),
         mass_scale(grace::get_param<double>("coordinate_system", "mass_scale")),
-        eas_rho_min(grace::get_param<double>("m1", "eas", "rho_min")),
+        eas_rho_min(grace::get_param<double>("grmhd", "atmosphere", "rho_fl")
+                    * (1.0 + grace::get_param<double>("grmhd", "atmosphere", "atmo_tol"))),
         beta_decay(grace::get_param<bool>("m1", "eas", "beta_decay")),
         plasmon_decay(grace::get_param<bool>("m1", "eas", "plasmon_decay")),
         bremsstrahlung(grace::get_param<bool>("m1", "eas", "bremsstrahlung")),
@@ -424,6 +425,16 @@ struct neutrinos_eas_op
         return z_mev_cm3 * mev_to_erg * EPSGF * RHOGF ;
     }
 
+    // Equilibrium-system selector for the per-flavor (Gieg) scheme.
+    //   FULL        : both lepton sectors trapped -> solve (Ye,Ymu,T)
+    //   PARTIAL_E   : only electrons trapped     -> solve (Ye,T) at fixed Ymu
+    //   PARTIAL_MU  : only muons trapped         -> solve (Ymu,T) at fixed Ye
+    //   ENERGY_ONLY : T from energy conservation at fixed (Ye,Ymu)
+    // The energy residual includes only the participating flavours' neutrino
+    // energy (paper Sec. B: "contributions only from flavour l and heavy-lepton
+    // neutrinos"); heavy-lepton (NUX) always contributes.
+    enum class beq_mode_t : int { FULL, PARTIAL_E, PARTIAL_MU, ENERGY_ONLY } ;
+
     // Residuals of the equilibrium conditions at trial (Ye_t, Ymu_t, T_t).
     // f[0]: electron lepton number, f[1]: muon lepton number (5sp only),
     // f[2]: energy.  Returns false on EOS failure / non-finite output.
@@ -432,7 +443,7 @@ struct neutrinos_eas_op
         double rho_code, const double* xyz, tau_policy_fixed const& tauf,
         double Ye_t, double Ymu_t, double T_t,
         double Yle, double Ylmu, double u,
-        double* f) const
+        double* f, beq_mode_t mode = beq_mode_t::FULL) const
     {
         eos_err_t err{} ;
         double T_loc = T_t, rho_loc = rho_code ;
@@ -450,11 +461,16 @@ struct neutrinos_eas_op
         #if GRACE_M1_NU_SPECIES >= 5
         f[1] = Ymu_t + eq_nu_number_fraction(Ft, NUMU)
                      - eq_nu_number_fraction(Ft, NUMUBAR) - Ylmu ;
-        f[2] = e + eq_nu_energy_code(Ft, NUE) + eq_nu_energy_code(Ft, NUEBAR)
-                 + eq_nu_energy_code(Ft, NUMU) + eq_nu_energy_code(Ft, NUMUBAR)
-                 + 2.0 * eq_nu_energy_code(Ft, NUX) - u ;
+        // energy: heavy-lepton always; electron sector unless PARTIAL_MU;
+        // muon sector unless PARTIAL_E.  (FULL/ENERGY_ONLY include both.)
+        double E_nu = 2.0 * eq_nu_energy_code(Ft, NUX) ;
+        if (mode != beq_mode_t::PARTIAL_MU)
+            E_nu += eq_nu_energy_code(Ft, NUE) + eq_nu_energy_code(Ft, NUEBAR) ;
+        if (mode != beq_mode_t::PARTIAL_E)
+            E_nu += eq_nu_energy_code(Ft, NUMU) + eq_nu_energy_code(Ft, NUMUBAR) ;
+        f[2] = e + E_nu - u ;
         #else
-        (void)Ylmu ;
+        (void)Ylmu ; (void)mode ;
         f[1] = e + eq_nu_energy_code(Ft, NUE) + eq_nu_energy_code(Ft, NUEBAR)
                  + 4.0 * eq_nu_energy_code(Ft, NUX) - u ;
         f[2] = 0.0 ;
@@ -468,7 +484,8 @@ struct neutrinos_eas_op
         VEC(const int i, const int j, const int k), int64_t q,
         const double* xyz,
         double T_old, double Ye_old, double Ymu_old,
-        double& T_eq, double& Ye_eq, double& Ymu_eq) const
+        double& T_eq, double& Ye_eq, double& Ymu_eq,
+        beq_mode_t mode = beq_mode_t::FULL) const
     {
         T_eq = T_old ; Ye_eq = Ye_old ; Ymu_eq = Ymu_old ;
         #if GRACE_M1_NU_SPECIES < 3
@@ -491,30 +508,58 @@ struct neutrinos_eas_op
         const double N_numu    = state(VEC(i,j,k), m1_nrad_idx<2>(), q) * oosg ;
         const double N_numubar = state(VEC(i,j,k), m1_nrad_idx<3>(), q) * oosg ;
         const double Ylmu = Ymu_old + (N_numu - N_numubar) / D ;
-        constexpr int NEQ = 3 ;
         #else
         const double Ylmu = 0.0 ;
-        constexpr int NEQ = 2 ;
         #endif
 
-        // Total radiation energy in the FLUID frame, via the closure
-        // (reference parity).  The lepton-number targets above deliberately
-        // stay in the evolved (lab-frame, densitized) N/D bookkeeping —
-        // that is the combination the backreaction conserves into YESTAR_.
         const double rho_code = F.rho_code ;
+
+        // ---- per-mode setup (Gieg two-timescale partial equilibria) -------
+        //   uidx : active unknown v-indices (v = {Ye, Ymu, T})
+        //   ridx : enforced residual rows of betaeq_residuals (f0=e-lepton,
+        //          f1=mu-lepton, f2=energy)
+        //   E_rad: radiation energy restricted to the participating flavours
+        //   eps_y*: lepton fractions used for the matter-eps baseline
+        //   FULL reproduces the original single-timescale solve exactly.
+        // VALIDATION POINTS: (i) the eps0 baseline composition for partial
+        //   modes, (ii) the ENERGY_ONLY target u (recomputed from the passed-in
+        //   fixed Ye/Ymu, not threaded from the full solve).  Reasonable first
+        //   cut; check against the reference before trusting quantitatively.
+        int uidx[3] = {0,2,2}, ridx[3] = {0,1,2}, n_eq = 2 ;
         double E_rad = 0.0 ;
-        E_rad += fluid_frame_J<0>(VEC(i,j,k), q, metric) ;
-        E_rad += fluid_frame_J<1>(VEC(i,j,k), q, metric) ;
-        E_rad += fluid_frame_J<2>(VEC(i,j,k), q, metric) ;
+        double eps_yle = Yle, eps_ylmu = Ylmu ;
         #if GRACE_M1_NU_SPECIES >= 5
-        E_rad += fluid_frame_J<3>(VEC(i,j,k), q, metric) ;
-        E_rad += fluid_frame_J<4>(VEC(i,j,k), q, metric) ;
+        const double Je = fluid_frame_J<0>(VEC(i,j,k),q,metric)
+                        + fluid_frame_J<1>(VEC(i,j,k),q,metric) ;
+        const double Jm = fluid_frame_J<2>(VEC(i,j,k),q,metric)
+                        + fluid_frame_J<3>(VEC(i,j,k),q,metric) ;
+        const double Jx = fluid_frame_J<4>(VEC(i,j,k),q,metric) ;
+        switch (mode) {
+            case beq_mode_t::PARTIAL_E:                 // electrons trapped only
+                uidx[0]=0; uidx[1]=2; n_eq=2; ridx[0]=0; ridx[1]=2;
+                E_rad = Je + Jx ; eps_ylmu = Ymu_old ; break ;
+            case beq_mode_t::PARTIAL_MU:                // muons trapped only
+                uidx[0]=1; uidx[1]=2; n_eq=2; ridx[0]=1; ridx[1]=2;
+                E_rad = Jm + Jx ; eps_yle = Ye_old ; break ;
+            case beq_mode_t::ENERGY_ONLY:              // T from energy at fixed Y
+                uidx[0]=2; n_eq=1; ridx[0]=2;
+                E_rad = Je + Jm + Jx ; break ;
+            case beq_mode_t::FULL: default:            // both trapped
+                uidx[0]=0; uidx[1]=1; uidx[2]=2; n_eq=3;
+                ridx[0]=0; ridx[1]=1; ridx[2]=2;
+                E_rad = Je + Jm + Jx ; break ;
+        }
+        #else
+        (void)mode ;   // 3-species: FULL only -> unknowns (Ye,T), res (f0,f1)
+        uidx[0]=0; uidx[1]=2; n_eq=2; ridx[0]=0; ridx[1]=1;
+        E_rad = fluid_frame_J<0>(VEC(i,j,k),q,metric)
+              + fluid_frame_J<1>(VEC(i,j,k),q,metric)
+              + fluid_frame_J<2>(VEC(i,j,k),q,metric) ;
         #endif
 
-        // Total-energy target: eps evaluated at the TOTAL lepton fractions
-        // (as in the reference fluid_state construction).
+        // Total-energy target: eps at the (mode-dependent) baseline composition.
         eos_err_t err0{} ;
-        double T0 = T_old, rho0 = rho_code, yle0 = Yle, ylmu0 = Ylmu ;
+        double T0 = T_old, rho0 = rho_code, yle0 = eps_yle, ylmu0 = eps_ylmu ;
         const double eps0 = eos.eps__temp_rho_ye_ymu(T0, rho0, yle0, ylmu0, err0) ;
         if (!::isfinite(eps0)) return false ;
         const double u = E_rad + rho_code * (1.0 + eps0) ;
@@ -527,7 +572,7 @@ struct neutrinos_eas_op
         double v[3]  = { Ye_old, Ymu_old, T_old } ;   // (Ye, Ymu, T)
         double fv[3] ;
         if (!betaeq_residuals(rho_code, xyz, tauf,
-                              v[0], v[1], v[2], Yle, Ylmu, u, fv))
+                              v[0], v[1], v[2], Yle, Ylmu, u, fv, mode))
             return false ;
 
         const double ye_lo  = eos.get_c2p_ye_min(),  ye_hi  = eos.get_c2p_ye_max() ;
@@ -536,62 +581,55 @@ struct neutrinos_eas_op
         constexpr int    max_iter = 50 ;
         constexpr double tol      = 1.0e-10 ;
 
-        // Map solver components -> v indices: 5sp solves (Ye,Ymu,T) with
-        // residuals (f0,f1,f2); 3sp solves (Ye,T) with residuals (f0,f1).
-        #if GRACE_M1_NU_SPECIES >= 5
-        const int vidx[3] = {0, 1, 2} ;
-        #else
-        const int vidx[3] = {0, 2, 2} ;
-        #endif
-
         bool converged = false ;
         for (int it = 0; it < max_iter && !converged; ++it) {
-            // FD Jacobian J[r][c] = d f_r / d v_{vidx[c]}
+            // FD Jacobian J[r][c] = d f_{ridx[r]} / d v_{uidx[c]}
             double J[3][3] = {} ;
-            for (int c = 0; c < NEQ; ++c) {
+            for (int c = 0; c < n_eq; ++c) {
                 double vp[3] = { v[0], v[1], v[2] } ;
                 const double h =
-                    1.0e-6 * Kokkos::fmax(Kokkos::fabs(v[vidx[c]]), 1.0e-3) ;
-                vp[vidx[c]] += h ;
+                    1.0e-6 * Kokkos::fmax(Kokkos::fabs(v[uidx[c]]), 1.0e-3) ;
+                vp[uidx[c]] += h ;
                 double fp[3] ;
                 if (!betaeq_residuals(rho_code, xyz, tauf,
-                                      vp[0], vp[1], vp[2], Yle, Ylmu, u, fp))
+                                      vp[0], vp[1], vp[2], Yle, Ylmu, u, fp, mode))
                     return false ;
-                for (int r = 0; r < NEQ; ++r) J[r][c] = (fp[r] - fv[r]) / h ;
+                for (int r = 0; r < n_eq; ++r)
+                    J[r][c] = (fp[ridx[r]] - fv[ridx[r]]) / h ;
             }
 
             // Solve J dx = -f (Gaussian elimination with partial pivoting).
             double A[3][4] ;
-            for (int r = 0; r < NEQ; ++r) {
-                for (int c = 0; c < NEQ; ++c) A[r][c] = J[r][c] ;
-                A[r][NEQ] = -fv[r] ;
+            for (int r = 0; r < n_eq; ++r) {
+                for (int c = 0; c < n_eq; ++c) A[r][c] = J[r][c] ;
+                A[r][n_eq] = -fv[ridx[r]] ;
             }
-            for (int c = 0; c < NEQ; ++c) {
+            for (int c = 0; c < n_eq; ++c) {
                 int piv = c ;
-                for (int r = c+1; r < NEQ; ++r)
+                for (int r = c+1; r < n_eq; ++r)
                     if (Kokkos::fabs(A[r][c]) > Kokkos::fabs(A[piv][c])) piv = r ;
                 if (Kokkos::fabs(A[piv][c]) < 1.0e-300) return false ;
                 if (piv != c)
-                    for (int cc = 0; cc <= NEQ; ++cc) {
+                    for (int cc = 0; cc <= n_eq; ++cc) {
                         const double tmp = A[c][cc] ;
                         A[c][cc] = A[piv][cc] ; A[piv][cc] = tmp ;
                     }
-                for (int r = c+1; r < NEQ; ++r) {
+                for (int r = c+1; r < n_eq; ++r) {
                     const double m = A[r][c]/A[c][c] ;
-                    for (int cc = c; cc <= NEQ; ++cc) A[r][cc] -= m*A[c][cc] ;
+                    for (int cc = c; cc <= n_eq; ++cc) A[r][cc] -= m*A[c][cc] ;
                 }
             }
             double dx[3] = {} ;
-            for (int r = NEQ-1; r >= 0; --r) {
-                double sum = A[r][NEQ] ;
-                for (int c = r+1; c < NEQ; ++c) sum -= A[r][c]*dx[c] ;
+            for (int r = n_eq-1; r >= 0; --r) {
+                double sum = A[r][n_eq] ;
+                for (int c = r+1; c < n_eq; ++c) sum -= A[r][c]*dx[c] ;
                 dx[r] = sum / A[r][r] ;
             }
 
             // Damped, bounded update.
             double scale = 1.0 ;
-            for (int c = 0; c < NEQ; ++c) {
-                const bool is_T = (vidx[c] == 2) ;
+            for (int c = 0; c < n_eq; ++c) {
+                const bool is_T = (uidx[c] == 2) ;
                 const double cap = is_T
                     ? 0.5*Kokkos::fmax(v[2], 1.0)   // |dT| <= max(T/2, 0.5)
                     : 0.05 ;                        // |dY| <= 0.05 per step
@@ -599,18 +637,18 @@ struct neutrinos_eas_op
                     scale = Kokkos::fmin(scale, cap/Kokkos::fabs(dx[c])) ;
             }
             double vmax = 0.0 ;
-            for (int c = 0; c < NEQ; ++c) {
-                v[vidx[c]] += scale * dx[c] ;
+            for (int c = 0; c < n_eq; ++c) {
+                v[uidx[c]] += scale * dx[c] ;
                 vmax = Kokkos::fmax(vmax,
                         Kokkos::fabs(scale*dx[c])
-                      / Kokkos::fmax(Kokkos::fabs(v[vidx[c]]), 1.0e-3)) ;
+                      / Kokkos::fmax(Kokkos::fabs(v[uidx[c]]), 1.0e-3)) ;
             }
             v[0] = Kokkos::fmax(ye_lo,  Kokkos::fmin(ye_hi,  v[0])) ;
             v[1] = Kokkos::fmax(ymu_lo, Kokkos::fmin(ymu_hi, v[1])) ;
             v[2] = Kokkos::fmax(T_lo,   Kokkos::fmin(T_hi,   v[2])) ;
 
             if (!betaeq_residuals(rho_code, xyz, tauf,
-                                  v[0], v[1], v[2], Yle, Ylmu, u, fv))
+                                  v[0], v[1], v[2], Yle, Ylmu, u, fv, mode))
                 return false ;
 
             converged = (vmax < tol) ;
@@ -662,7 +700,7 @@ struct neutrinos_eas_op
         #ifdef GRACE_M1_DEBUG_EAS
         // Keep the debug fugacity / chemical-potential fields consistent with a
         // transparent cell (no F is built here) so they don't show stale data.
-        // To inspect F in the low-density region, set m1.eas.rho_min = 0.
+        // To inspect F in the low-density region, set grmhd.atmosphere.atmo_tol = -1.
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETANU1_,q)=1.e-30;
         #endif
@@ -786,6 +824,15 @@ struct neutrinos_eas_op
                 && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16
                 && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16 ;
             #endif
+            #if GRACE_M1_NU_SPECIES >= 5
+            // For 3 species idx<2> is NUX, so the guard above already covers all
+            // species; for 5 species idx<2> is numu, so we must additionally
+            // require ν̄_μ (idx 3, used by the muonic beta-eq below) and ν_x
+            // (idx 4) to be populated -- matching the all-species intent.
+            N_ok = N_ok
+                && state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosqrtg > 1.0e-16
+                && state(VEC(i,j,k), m1_nrad_idx<4>(), q)*oosqrtg > 1.0e-16 ;
+            #endif
 
             if (beta_equil_tscale < 1.0 && N_ok) {
                 const double T_old = T, Ye_old = Ye, Ymu_old = Ymu ;
@@ -826,6 +873,90 @@ struct neutrinos_eas_op
             }
         }
 
+        #if GRACE_M1_NU_SPECIES >= 5
+        // ------------------------------------------------------------------
+        // Per-flavor TWO-timescale equilibration (betaeq_policy = "gieg").
+        // Gieg+ 2026, Table 3: classify the electron and muon lepton sectors
+        // independently via tau_e, tau_mu and equilibrate each ONLY where its
+        // own (anti)neutrinos are (partially) trapped — a free-streaming
+        // flavour is left to the rates.  Replaces the single-timescale joint
+        // equilibrium of the "timescale" mode.
+        // ------------------------------------------------------------------
+        if (betaeq_mode == betaeq_mode_t::gieg && dt > 0.0) {
+            // 1. per-flavour equilibration timescale = min(nu, nubar)
+            auto tau_of = [&](int s){
+                const double ka = all.out[s].kappa_a, ks = all.out[s].kappa_s ;
+                return 1.0 / Kokkos::sqrt(ka*(ka + ks) + 1.0e-45) ;
+            } ;
+            const double tau_e  = Kokkos::fmin(tau_of(NUE),  tau_of(NUEBAR))  ;
+            const double tau_mu = Kokkos::fmin(tau_of(NUMU), tau_of(NUMUBAR)) ;
+            // 2. regime per flavour: 0 = free (tau>=dt), 1 = partial, 2 = trapped
+            auto regime = [&](double tau){ return tau >= dt ? 0 : (tau > 0.5*dt ? 1 : 2) ; } ;
+            const int Re = regime(tau_e), Rmu = regime(tau_mu) ;
+            // PT interpolation weight: 0 at tau=dt/2 (full eq) -> 1 at tau=dt (no change)
+            auto wfac = [&](double tau){ double w = tau/(0.5*dt) - 1.0 ;
+                                         return Kokkos::fmin(1.0, Kokkos::fmax(0.0, w)) ; } ;
+
+            // per-flavour radiation-number floors (mirrors the timescale N_ok)
+            metric_array_t metric ;
+            FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
+            const double oosg = 1.0 / metric.sqrtg() ;
+            const bool Ne  = (state(VEC(i,j,k), m1_nrad_idx<0>(), q)*oosg > 1.0e-16)
+                          && (state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosg > 1.0e-16) ;
+            const bool Nmu = (state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosg > 1.0e-16)
+                          && (state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosg > 1.0e-16) ;
+            const bool Nx  =  state(VEC(i,j,k), m1_nrad_idx<4>(), q)*oosg > 1.0e-16 ;
+
+            const double T0 = T, Ye0 = Ye, Ymu0 = Ymu ;
+            double T_eq=T0, Ye_eq=Ye0, Ymu_eq=Ymu0 ;
+            const bool eCoupled  = (Re  >= 1) && Ne  && Nx ;
+            const bool muCoupled = (Rmu >= 1) && Nmu && Nx ;
+            bool changed = false ;
+
+            if (eCoupled && muCoupled) {                       // both sectors trapped
+                if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
+                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::FULL)) {
+                    Ye  = (Re ==2) ? Ye_eq  : Ye0  + (Ye_eq -Ye0 )*wfac(tau_e ) ;
+                    Ymu = (Rmu==2) ? Ymu_eq : Ymu0 + (Ymu_eq-Ymu0)*wfac(tau_mu) ;
+                    if (Re==2 && Rmu==2) {
+                        T = T_eq ;                             // (T,T)
+                    } else {
+                        // mixed (T/PT): T from energy conservation at final Y's
+                        double Te=T0, da=Ye, db=Ymu ;
+                        if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz,
+                                T0, Ye, Ymu, Te, da, db, beq_mode_t::ENERGY_ONLY))
+                            T = Te ;
+                        else
+                            T = T_eq ;                         // fallback: full-eq T
+                    }
+                    changed = true ;
+                }
+            } else if (eCoupled) {                             // electrons only (Ymu fixed)
+                if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
+                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::PARTIAL_E)) {
+                    Ye = (Re==2) ? Ye_eq : Ye0 + (Ye_eq-Ye0)*wfac(tau_e) ;
+                    T  = (Re==2) ? T_eq  : T0  + (T_eq -T0 )*wfac(tau_e) ;
+                    changed = true ;                           // Ymu untouched
+                }
+            } else if (muCoupled) {                            // muons only (Ye fixed)
+                if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
+                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::PARTIAL_MU)) {
+                    Ymu = (Rmu==2) ? Ymu_eq : Ymu0 + (Ymu_eq-Ymu0)*wfac(tau_mu) ;
+                    T   = (Rmu==2) ? T_eq   : T0   + (T_eq  -T0  )*wfac(tau_mu) ;
+                    changed = true ;                           // Ye untouched
+                }
+            }
+            // (F,F), or all solves failed -> leave (T,Ye,Ymu) as-is.
+
+            if (changed) {
+                aux(VEC(i,j,k),TEMP_,q) = T ;
+                aux(VEC(i,j,k),YE_,q)   = Ye ;
+                aux(VEC(i,j,k),YMU_,q)  = Ymu ;
+                all = evaluate_rates() ;
+            }
+        }
+        #endif
+
 
         #if (GRACE_M1_NU_SPECIES >= 5)
         { const nu_rates_out r = all.out[NUE];     aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
@@ -837,6 +968,8 @@ struct neutrinos_eas_op
         { const nu_rates_out r = all.out[NUE];    aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUEBAR]; aux(i,j,k,ETA2_,q)=r.eta_E; aux(i,j,k,KAPPAA2_,q)=r.kappa_a; aux(i,j,k,KAPPAS2_,q)=r.kappa_s; aux(i,j,k,ETAN2_,q)=r.eta_N; aux(i,j,k,KAPPAAN2_,q)=r.kappa_n; }
         { const nu_rates_out r = all.out[NUX];    aux(i,j,k,ETA3_,q)=r.eta_E; aux(i,j,k,KAPPAA3_,q)=r.kappa_a; aux(i,j,k,KAPPAS3_,q)=r.kappa_s; aux(i,j,k,ETAN3_,q)=r.eta_N; aux(i,j,k,KAPPAAN3_,q)=r.kappa_n; }
+        #elif (GRACE_M1_NU_SPECIES >= 1)
+        { const nu_rates_out r = all.out[NUE];    aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
         #endif
 
         #ifdef GRACE_M1_DEBUG_EAS
@@ -870,7 +1003,7 @@ struct neutrinos_eas_op
   var_array_t aux;
   double dt;
   double mass_scale;
-  double eas_rho_min;   // [code units] floor the rates & skip the EOS below this
+  double eas_rho_min;   // rho_fl * (1 + atmo_tol) from grmhd.atmosphere
   bool beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation;
   bool apply_temp_correction;
   bool use_weakhub;
