@@ -2,8 +2,9 @@
 # Mass ratio 0.8 
 # Total adm mass 2.75 
 # Non-spinning NS 
-# We use m_u as mass unit 
+# We use m_n as mass unit 
 # for compatibility 
+# Resolution 0.25 Msun (very low!)
 name: "fuka_bns_sfho_q08"
 amr: {
   npoints_block_x: 16,
@@ -119,7 +120,7 @@ IO: {
 
 system: {
   console_log_level: "info",
-  file_log_level: "verbose",
+  file_log_level: "info",
   n_device_streams: 4
 }
 
@@ -142,7 +143,7 @@ grmhd: {
   },
 	
   atmosphere: {
-    rho_fl: 1e-14,
+    rho_fl: 1e-13,
     temp_fl: 0.01
   },
   
@@ -152,7 +153,7 @@ grmhd: {
   },
 
   c2p: {
-    use_c2p_entropy_backup: true
+    use_c2p_entropy_backup: false
   },
 
   B_field_initialization: "from_Avec", 
@@ -175,15 +176,15 @@ eos: {
   tabulated_eos: {
     table_filename: "/u/cmusolino/eos/compose/sfho/sfho.h5",
     table_format: "compose",
-    cold_table_filename: "/u/cmusolino/eos/compose/sfho/sfho_cold_mu.grace",
-    baryon_mass: "m_u"
+    cold_table_filename: "/u/cmusolino/eos/compose/sfho/sfho_cold_mn.grace",
+    baryon_mass: "m_n"
   },
   eps_maximum: 1.e+05
 }
 
 z4c: {
   eps_diss: 0.25,
-  eta: 0.6,
+  eta: 0.72,
   eta_damp_radius: 50
 }
 
@@ -204,7 +205,7 @@ spherical_surfaces: {
     },
 
     {
-      name: "mass_outflows",
+      name: "GW_3",
       radius: 750,
       resolution: 91
     }
@@ -212,11 +213,11 @@ spherical_surfaces: {
 }
 
 gw_integrals: {
-  detector_names: ["GW_1", "GW_2"]
+  detector_names: ["GW_1", "GW_2", "GW_3"]
 }
 
 outflows: {
-  detector_names: ["GW_1", "GW_2","mass_outflows"]
+  detector_names: ["GW_1", "GW_2","GW_3"]
 }
 
 co_tracker: {
@@ -249,4 +250,8 @@ mhd_diagnostics: {
 
 checkpoints: {
   walltime_interval: 6
+}
+
+adm_integrals: {
+  detector_names: ["GW_1", "GW_2", "GW_3"]
 }

@@ -35,9 +35,19 @@ The following cache variables may also be set:
   The path to the LORENE library.
 
 #]=======================================================================]
+# LORENE's own build/install exports HOME_LORENE, so we use it as the default
+# search root (mirroring FUKA/Kadath's HOME_KADATH). An explicit LORENE_ROOT
+# (cache or environment) still takes precedence for non-standard layouts.
 if (NOT LORENE_ROOT)
-    set(LORENE_ROOT "")
-    set(LORENE_ROOT "$ENV{LORENE_ROOT}")
+    if (DEFINED ENV{LORENE_ROOT})
+        set(LORENE_ROOT "$ENV{LORENE_ROOT}")
+    elseif (DEFINED ENV{HOME_LORENE})
+        set(LORENE_ROOT "$ENV{HOME_LORENE}")
+    endif()
+endif()
+
+if (NOT LORENE_ROOT)
+    message(WARNING "LORENE requested but neither LORENE_ROOT nor HOME_LORENE is set")
 endif()
 
 message("Looking for LORENE in ${LORENE_ROOT}")

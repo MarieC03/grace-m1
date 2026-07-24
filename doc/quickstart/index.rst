@@ -62,9 +62,10 @@ by ``module load`` on cluster systems:
     export YAML_ROOT=/path/to/yaml-cpp/install
     export CATCH2_ROOT=/path/to/catch2/install
 
-The ``env/`` directory in the GRACE repository contains example environment
-files for several systems; copying one as a starting point is the easiest
-path.
+The optional initial-data libraries are the exception to the ``<DEP>_ROOT``
+convention: **LORENE** is located via ``HOME_LORENE`` and **FUKA / Kadath**
+via ``HOME_KADATH`` — the environment variables those projects set themselves
+(``LORENE_ROOT`` still takes precedence if set).
 
 .. warning::
 

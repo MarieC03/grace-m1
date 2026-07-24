@@ -265,14 +265,14 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_min.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ; 
-        outfile << std::scientific << std::setprecision(15) ; 
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t' 
                 << std::left << detail::_minmax_reduction_vars_results[vname].min_val << '\n' ; 
         std::string const pfname_max = grace_runtime.scalar_io_basename() + vname + "_max.dat" ;
         std::filesystem::path fname_max = bdir /  pfname_max ; 
         std::ofstream outfile_max(fname_max.string(),std::ios::app) ; 
-        outfile_max << std::scientific << std::setprecision(15) ; 
+        outfile_max << std::scientific << std::setprecision(16) ;
         outfile_max << std::left << iter << '\t'
                     << std::left << time << '\t' 
                     << std::left << detail::_minmax_reduction_vars_results[vname].max_val << '\n' ;
@@ -281,14 +281,14 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_min.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ; 
-        outfile << std::scientific << std::setprecision(15) ; 
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t' 
                 << std::left << detail::_minmax_reduction_aux_results[vname].min_val << '\n' ; 
         std::string const pfname_max = grace_runtime.scalar_io_basename() + vname + "_max.dat" ;
         std::filesystem::path fname_max = bdir /  pfname_max ; 
         std::ofstream outfile_max(fname_max.string(),std::ios::app) ; 
-        outfile_max << std::scientific << std::setprecision(15) ; 
+        outfile_max << std::scientific << std::setprecision(16) ;
         outfile_max << std::left << iter << '\t'
                     << std::left << time << '\t' 
                     << std::left << detail::_minmax_reduction_aux_results[vname].max_val << '\n' ; 
@@ -300,7 +300,7 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_norm2.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ; 
-        outfile << std::scientific << std::setprecision(15) ; 
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t'
                 << std::left << detail::_norm2_reduction_vars_results[vname] << '\n' ; 
@@ -309,7 +309,7 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_norm2.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ;
-        outfile << std::scientific << std::setprecision(15) ;  
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t' 
                 << std::left << detail::_norm2_reduction_aux_results[vname] << '\n' ; 
@@ -321,7 +321,7 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_integral.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ; 
-        outfile << std::scientific << std::setprecision(15) ; 
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t' 
                 << std::left << detail::_integral_reduction_vars_results[vname] << '\n' ; 
@@ -330,7 +330,7 @@ void write_scalar_output() {
         std::string const pfname = grace_runtime.scalar_io_basename() + vname + "_integral.dat" ;
         std::filesystem::path fname = bdir /  pfname ; 
         std::ofstream outfile(fname.string(),std::ios::app) ; 
-        outfile << std::scientific << std::setprecision(15) ; 
+        outfile << std::scientific << std::setprecision(16) ;
         outfile << std::left << iter << '\t'
                 << std::left << time << '\t'
                 << std::left << detail::_integral_reduction_aux_results[vname] << '\n' ; 
@@ -409,6 +409,9 @@ void initialize_output_files() {
             write_header("performance_mzph.dat") ;
         if ( perf_metric == perf_metric_display::PERF_ZCPS || perf_metric == perf_metric_display::PERF_BOTH )
             write_header("performance_zcps.dat") ;
+        // M/h (simulation time advanced per wall-hour) is the headline production
+        // metric -- always emitted when any performance output is enabled.
+        write_header("performance_moverh.dat") ;
     }
     }
     parallel::mpi_barrier() ;
@@ -423,7 +426,6 @@ void info_output() {
     double  time = grace::get_simulation_time() ;
     double  initial_time = grace::get_initial_simulation_time() ;
     double walltime = grace::get_evol_runtime() ;
-    double rate = (time-initial_time) / walltime * 3.6e03 ;
 
     int64_t outinfo_every = grace::config_parser::get()["IO"]["info_output_every"].as<int64_t>() * 10 ;
 
@@ -434,12 +436,29 @@ void info_output() {
     int64_t nx,ny,nz ;
     std::tie(nx,ny,nz) = amr::get_quadrant_extents() ;
     size_t global_ncells = math::int_pow<3>(nx) * grace::amr::forest::get().get()->global_num_quadrants ;
-    int64_t iters_done = iter - initial_iter ;
-    double mzph = 0.0, zcps = 0.0 ;
-    if ( walltime > 0.0 && iters_done > 0 ) {
-        zcps = static_cast<double>(iters_done) * static_cast<double>(global_ncells) / walltime ;
-        mzph = zcps * 3.6e03 / 1.0e06 ;
+    // Per-interval performance (since the previous info_output call) rather than a
+    // cumulative average over the whole run, so the figures track *current* speed
+    // and are not dragged down by startup / regrid transients. Statics persist for
+    // the lifetime of the process; the first interval after a (re)start self-corrects.
+    static double  prev_wall = 0.0 ;
+    static int64_t prev_iter = initial_iter ;
+    static double  prev_time = initial_time ;
+    int64_t const d_iters = iter - prev_iter ;
+    double  const d_wall  = walltime - prev_wall ;
+    double  const d_time  = time     - prev_time ;
+    double mzph = 0.0, zcps = 0.0, rate = 0.0 ;
+    if ( d_wall > 0.0 && d_iters > 0 ) {
+        zcps = static_cast<double>(d_iters) * static_cast<double>(global_ncells) / d_wall ;
+        mzph = zcps * 3.6e03 / 1.0e06 ;     // million zone-updates per wall-hour
+        rate = d_time / d_wall * 3.6e03 ;   // simulation-M advanced per wall-hour (M/h)
     }
+    // Advance the interval only on a real step. The pre-loop init info_output()
+    // (grace.cpp, before start_walltime_clock) has d_iters==0 and reads a walltime
+    // measured against the not-yet-started clock; updating prev_* there would poison
+    // prev_wall with the setup time and make the *first real* interval's d_wall<0
+    // (-> a spurious 0). Skipping it leaves the first real output measuring
+    // [evolution start -> first output] and changes no later value.
+    if ( d_iters > 0 ) { prev_wall = walltime ; prev_iter = iter ; prev_time = time ; }
 
     std::ostringstream os ;
     os << std::scientific << std::setprecision(5) ;
@@ -536,7 +555,7 @@ void info_output() {
             std::string pfname = grace_runtime.scalar_io_basename() + fname_suffix ;
             std::filesystem::path fname = bdir / pfname ;
             std::ofstream outfile(fname.string(), std::ios::app) ;
-            outfile << std::scientific << std::setprecision(15) ;
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left << iter << '\t'
                     << std::left << time << '\t'
                     << std::left << value << '\n' ;
@@ -545,6 +564,7 @@ void info_output() {
             write_perf_scalar("performance_mzph.dat", mzph) ;
         if ( perf_metric == perf_metric_display::PERF_ZCPS || perf_metric == perf_metric_display::PERF_BOTH )
             write_perf_scalar("performance_zcps.dat", zcps) ;
+        write_perf_scalar("performance_moverh.dat", rate) ;
     }
 }
 

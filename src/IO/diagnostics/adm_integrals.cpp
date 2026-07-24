@@ -125,7 +125,7 @@ void adm_integrals::initialize_files() {
                              + "M_ADM_" + detector.name + ".dat";
         std::filesystem::path fname = bdir / pfname;
         std::ofstream outfile(fname.string(), std::ios::app);
-        outfile << std::fixed << std::setprecision(15);
+        outfile << std::scientific << std::setprecision(16);
         outfile << std::left << std::setw(width) << "Iteration"
                 << std::left << std::setw(width) << "Time"
                 << std::left << std::setw(width) << "M_ADM" << '\n';
@@ -342,7 +342,7 @@ void adm_integrals::compute_and_write() {
                                  + "M_ADM_" + detector.name + ".dat";
             std::filesystem::path fname = bdir / pfname;
             std::ofstream outfile(fname.string(), std::ios::app);
-            outfile << std::fixed << std::setprecision(15);
+            outfile << std::scientific << std::setprecision(16);
             outfile << std::left << iter << '\t'
                     << std::left << time << '\t'
                     << std::left << values[i] << '\n';

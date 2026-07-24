@@ -167,17 +167,15 @@ void write_plane_cell_data_impl(amr::plane_desc_t const& plane) {
              && _global_z_max >= _global_z_min /* skip if no slice data */ ) {
             double const _spread = _global_z_max - _global_z_min ;
             if ( _spread > 1e-12 ) {
-                GRACE_WARN("Plane {} (requested perp coord {:.6e}): sampled "
+                GRACE_WARN("[IO]: Plane {} (requested perp coord {:.6e}): sampled "
                            "cell-center range [{:.6e}, {:.6e}] (Δ={:.3e}) — "
-                           "stair-step across AMR levels.  Align "
-                           "plane offset to a face shared by all refinement "
-                           "levels for a true planar slice.",
+                           "stair-step across AMR levels.",
                            plane.name, plane.coord,
                            _global_z_min, _global_z_max, _spread) ;
             } else {
-                GRACE_INFO("Plane {} (requested perp coord {:.6e}): sampled "
-                           "cell-center coord {:.6e} (consistent across levels).",
-                           plane.name, plane.coord, _global_z_min) ;
+                GRACE_VERBOSE("[IO]: Plane {} (requested perp coord {:.6e}): sampled "
+                              "cell-center coord {:.6e} (consistent across levels).",
+                              plane.name, plane.coord, _global_z_min) ;
             }
         }
     }

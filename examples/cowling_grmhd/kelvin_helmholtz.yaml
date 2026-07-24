@@ -35,7 +35,7 @@ IO: {
   info_output_min_reductions: ["rho", "press", "Bvec[1]"], 
 
   scalar_output_every: 10,
-  scalar_output_minmax: ["rho","press","eps","Bdiv"],
+  scalar_output_minmax: ["rho","press","eps","Bdiv","zvec[1]"],
   scalar_output_norm2: ["Bdiv"],
 
   output_use_hdf5: true,

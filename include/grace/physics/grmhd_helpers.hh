@@ -56,7 +56,8 @@ struct c2p_params_t {
   double beta_fallback ; //!< beta < fallback we use ent
   bool use_ent_backup  ; //!< Use backup c2p?
   double alp_bh_thresh ; //!< alp theshold for BH horizon
-} ; 
+  bool   always_enforce_floors ; //!< false: intermediate RK substeps clamp only to EOS absolute bounds
+} ;
 /**
  * @brief FOFC parameters
  *
@@ -217,7 +218,8 @@ c2p_params_t get_c2p_params()
   c2p_params.beta_fallback = grace::get_param<double>("grmhd","c2p","beta_fallback") ; 
   c2p_params.use_ent_backup = grace::get_param<bool>("grmhd","c2p","use_c2p_entropy_backup") ;
   c2p_params.alp_bh_thresh = grace::get_param<double>("grmhd","c2p","bh_alp_thresh") ;
-  return c2p_params ; 
+  c2p_params.always_enforce_floors = grace::get_param<bool>("grmhd","c2p","always_enforce_floors") ;
+  return c2p_params ;
 }
 
 /** @brief Get FOFC DMP parameters from the parameter store.
@@ -475,6 +477,17 @@ ct_update_Bz_face(BFaceZView const& Bz, EmfView const& emf, IdxView const& idx,
 }
 
 #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+// Three-valued sign for the GS contact-upwind selection.  Returns 0 at an
+// exact (sign-ambiguous) zero density flux, so the upwind reduces to a
+// centered average there -- the Gardiner-Stone limit at v=0.  Kokkos::copysign(
+// 1.,0.) instead returns +1, fixing a handedness at the flux zero-crossing;
+// that breaks discrete symmetry (e.g. pi_z rotation) along axes where the
+// density flux vanishes (v_x=0 on the x-axis, v_y=0 on the y-axis), because
+// a +0 and its mirror -0 must select opposite upwinds but copysign gives both
+// +1.  sign0 is mirror-antisymmetric everywhere including the zero.
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
+sign0(double const f) { return static_cast<double>((f > 0.) - (f < 0.)); }
+
 //-----------------------------------------------------------------------------
 // Gardiner-Stone edge EMF assembly at corner (i,j,k).
 //
@@ -507,12 +520,18 @@ gs_edge_emf_x(EfaceView const& Eface, EcenterView const& Ecenter,
     double const ExSE = Ecenter(VEC(i, j,   k-1), 0, q);
     double const ExSW = Ecenter(VEC(i, j-1, k-1), 0, q);
 
-    double const Eavg = 0.25 * (Exzf + Exzfm + Exyf + Exyfm);
+    // Pairwise-grouped 4-average: each inner sum is a reflection orbit
+    // (z-face pair {Exzf,Exzfm} swaps under pi_y, y-face pair {Exyf,Exyfm}
+    // under pi_z), so the association is invariant under every coordinate
+    // reflection *and* the y<->z axis swap.  A flat (a+b+c+d) left-to-right
+    // sum would seed a ~1 ulp partner asymmetry here — same failure mode as
+    // the COMPUTE_FCVAL fix in face_interp_4 above.
+    double const Eavg = 0.25 * ((Exzf + Exzfm) + (Exyf + Exyfm));
 
     // dE/dz upwinded by v^y sign (face y at index j, j-? doesn't matter; we
     // need *signs* on both sides of the edge in z).
-    double const Sy  = Kokkos::copysign(1., fluxes(i, j, k,   DENS_, 1, q));
-    double const Sym = Kokkos::copysign(1., fluxes(i, j, k-1, DENS_, 1, q));
+    double const Sy  = sign0(fluxes(i, j, k,   DENS_, 1, q));
+    double const Sym = sign0(fluxes(i, j, k-1, DENS_, 1, q));
     double const dEdzN = (1.-Sy ) * (ExNE - Exzf )
                        + (1.+Sy ) * (ExNW - Exzfm);
     double const dEdzS = (1.-Sym) * (Exzf - ExSE)
@@ -520,15 +539,19 @@ gs_edge_emf_x(EfaceView const& Eface, EcenterView const& Ecenter,
     double const dEdz  = (1./8.) * (dEdzS - dEdzN);
 
     // dE/dy upwinded by v^z sign.
-    double const Sz  = Kokkos::copysign(1., fluxes(i, j,   k, DENS_, 2, q));
-    double const Szm = Kokkos::copysign(1., fluxes(i, j-1, k, DENS_, 2, q));
+    double const Sz  = sign0(fluxes(i, j,   k, DENS_, 2, q));
+    double const Szm = sign0(fluxes(i, j-1, k, DENS_, 2, q));
     double const dEdyE = (1.-Sz ) * (ExNE - Exyf )
                        + (1.+Sz ) * (ExSE - Exyfm);
     double const dEdyW = (1.-Szm) * (Exyf  - ExNW)
                        + (1.+Szm) * (Exyfm - ExSW);
     double const dEdy  = (1./8.) * (dEdyW - dEdyE);
 
-    return Eavg + dEdz + dEdy;
+    // Group the two transverse-derivative corrections: Eavg can never be
+    // permuted into a dE term, so {dEdz,dEdy} is the only operand pair any
+    // edge-preserving cubic symmetry can swap.  Bracketing it makes the
+    // 3-term assembly invariant under that swap as well as all reflections.
+    return Eavg + (dEdz + dEdy);
 }
 
 //-----------------------------------------------------------------------------
@@ -559,25 +582,27 @@ gs_edge_emf_y(EfaceView const& Eface, EcenterView const& Ecenter,
     double const EySE = Ecenter(VEC(i,   j, k-1), 1, q);
     double const EySW = Ecenter(VEC(i-1, j, k-1), 1, q);
 
-    double const Eavg = 0.25 * (Eyzf + Eyzfm + Eyxf + Eyxfm);
+    // Pairwise-grouped: {Eyzf,Eyzfm} (z-face) and {Eyxf,Eyxfm} (x-face) are
+    // each a reflection orbit; see gs_edge_emf_x for the full rationale.
+    double const Eavg = 0.25 * ((Eyzf + Eyzfm) + (Eyxf + Eyxfm));
 
-    double const Sx  = Kokkos::copysign(1., fluxes(i, j, k,   DENS_, 0, q));
-    double const Sxm = Kokkos::copysign(1., fluxes(i, j, k-1, DENS_, 0, q));
+    double const Sx  = sign0(fluxes(i, j, k,   DENS_, 0, q));
+    double const Sxm = sign0(fluxes(i, j, k-1, DENS_, 0, q));
     double const dEdzN = (1.-Sx ) * (EyNE - Eyzf )
                        + (1.+Sx ) * (EyNW - Eyzfm);
     double const dEdzS = (1.-Sxm) * (Eyzf - EySE)
                        + (1.+Sxm) * (Eyzfm - EySW);
     double const dEdz  = (1./8.) * (dEdzS - dEdzN);
 
-    double const Sz  = Kokkos::copysign(1., fluxes(i,   j, k, DENS_, 2, q));
-    double const Szm = Kokkos::copysign(1., fluxes(i-1, j, k, DENS_, 2, q));
+    double const Sz  = sign0(fluxes(i,   j, k, DENS_, 2, q));
+    double const Szm = sign0(fluxes(i-1, j, k, DENS_, 2, q));
     double const dEdxE = (1.-Sz ) * (EyNE - Eyxf )
                        + (1.+Sz ) * (EySE - Eyxfm);
     double const dEdxW = (1.-Szm) * (Eyxf  - EyNW)
                        + (1.+Szm) * (Eyxfm - EySW);
     double const dEdx  = (1./8.) * (dEdxW - dEdxE);
 
-    return Eavg + dEdz + dEdx;
+    return Eavg + (dEdz + dEdx);
 }
 
 //-----------------------------------------------------------------------------
@@ -605,25 +630,27 @@ gs_edge_emf_z(EfaceView const& Eface, EcenterView const& Ecenter,
     double const EzSE = Ecenter(VEC(i,   j-1, k), 2, q);
     double const EzSW = Ecenter(VEC(i-1, j-1, k), 2, q);
 
-    double const Eavg = 0.25 * (Ezyf + Ezyfm + Ezxf + Ezxfm);
+    // Pairwise-grouped: {Ezyf,Ezyfm} (y-face) and {Ezxf,Ezxfm} (x-face) are
+    // each a reflection orbit; see gs_edge_emf_x for the full rationale.
+    double const Eavg = 0.25 * ((Ezyf + Ezyfm) + (Ezxf + Ezxfm));
 
-    double const Sx  = Kokkos::copysign(1., fluxes(i, j,   k, DENS_, 0, q));
-    double const Sxm = Kokkos::copysign(1., fluxes(i, j-1, k, DENS_, 0, q));
+    double const Sx  = sign0(fluxes(i, j,   k, DENS_, 0, q));
+    double const Sxm = sign0(fluxes(i, j-1, k, DENS_, 0, q));
     double const dEdyN = (1.-Sx ) * (EzNE - Ezyf )
                        + (1.+Sx ) * (EzNW - Ezyfm);
     double const dEdyS = (1.-Sxm) * (Ezyf - EzSE)
                        + (1.+Sxm) * (Ezyfm - EzSW);
     double const dEdy  = (1./8.) * (dEdyS - dEdyN);
 
-    double const Sy  = Kokkos::copysign(1., fluxes(i,   j, k, DENS_, 1, q));
-    double const Sym = Kokkos::copysign(1., fluxes(i-1, j, k, DENS_, 1, q));
+    double const Sy  = sign0(fluxes(i,   j, k, DENS_, 1, q));
+    double const Sym = sign0(fluxes(i-1, j, k, DENS_, 1, q));
     double const dEdxE = (1.-Sy ) * (EzNE - Ezxf )
                        + (1.+Sy ) * (EzSE - Ezxfm);
     double const dEdxW = (1.-Sym) * (Ezxf  - EzNW)
                        + (1.+Sym) * (Ezxfm - EzSW);
     double const dEdx  = (1./8.) * (dEdxW - dEdxE);
 
-    return Eavg + dEdy + dEdx;
+    return Eavg + (dEdy + dEdx);
 }
 #endif // GS
 

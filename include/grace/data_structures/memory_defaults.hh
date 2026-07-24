@@ -38,6 +38,7 @@
 
 #include <vector>
 #include <array>
+#include <unordered_map>
 
 namespace grace {
 //*****************************************************************************************************
@@ -68,18 +69,38 @@ using default_space = Kokkos::HostSpace   ;
 using default_execution_space = default_space::execution_space ;
 //*****************************************************************************************************
 /**
- * @brief Create a Kokkos execution space instance, optionally tied to a device stream.
+ * @brief Return the Kokkos execution space instance bound to a device stream.
  *
  * On GPU backends (CUDA/HIP/SYCL) the returned execution space is bound to the
  * underlying device stream so that kernel launches are enqueued on that stream.
  * On CPU backends (OpenMP/Serial) streams have no meaning, so the execution
  * space is simply default-constructed.
+ *
+ * @note Execution-space instances are shallow, reference-semantic handles, but
+ *       constructing one from a raw stream lazily allocates per-instance team
+ *       scratch (Kokkos::InternalScratchSpace / InternalScratchFlags) that Kokkos
+ *       only releases at finalize().  This function is called once per ghost-zone
+ *       and regrid task, so constructing a fresh instance each time accreted
+ *       ~64 KiB of never-freed device scratch per instance, unbounded across
+ *       regrids — the slow device-pool drain behind the r06 OOM.  We instead
+ *       cache one persistent instance per stream and return shallow copies: the
+ *       copies alias the cached instance's internal state and reuse its scratch,
+ *       so instances are created ~n_device_streams times for the whole run rather
+ *       than once per task.  The cache is keyed by the address of the pooled
+ *       device_stream_t, which is stable (the stream pool is sized once at startup
+ *       and never resized).  No locking is needed: like device_stream_pool::next()
+ *       (called immediately before this), the task-graph build is single-threaded
+ *       on the host.
  */
 inline default_execution_space
 make_exec_space([[maybe_unused]] device_stream_t const& stream)
 {
 #if defined(GRACE_ENABLE_CUDA) || defined(GRACE_ENABLE_HIP) || defined(GRACE_ENABLE_SYCL)
-    return default_execution_space{stream};
+    static std::unordered_map<device_stream_t const*, default_execution_space> instances ;
+    auto it = instances.find(&stream) ;
+    if ( it == instances.end() )
+        it = instances.emplace(&stream, default_execution_space{stream}).first ;
+    return it->second ;
 #else
     return default_execution_space{};
 #endif

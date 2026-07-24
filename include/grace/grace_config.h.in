@@ -117,6 +117,10 @@ namespace grace {
 //     symbols are dead-stripped by the linker.
 #cmakedefine GRACE_ENABLE_FOFC
 
+// FOFC edge-EMF recompute (legacy; breaks discrete symmetry).  When undefined
+// (default), FOFC is hydro-only: B evolves on the unmodified main-pass EMF.
+#cmakedefine GRACE_FOFC_CORRECT_EMF
+
 // 6.2 Metric evolution (GRACE_METRIC_EVOL = COWLING|Z4).
 //   COWLING — frozen background metric (no spacetime evolution).
 //   Z4      — Z4c evolution.

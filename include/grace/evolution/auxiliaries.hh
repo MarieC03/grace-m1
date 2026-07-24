@@ -50,8 +50,9 @@ template< typename eos_t >
 void compute_auxiliary_quantities(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
-    , grace::var_array_t& aux 
-) ; 
+    , grace::var_array_t& aux
+    , bool clamp_to_atmo = true
+) ;
 //*****************************************************************************************************
 // Explicit template instantiation
 #define INSTANTIATE_TEMPLATE(EOS)                                       \
@@ -59,7 +60,8 @@ extern template                                                         \
 void compute_auxiliary_quantities<EOS>(                                 \
                            grace::var_array_t&         \
                          , grace::staggered_variable_arrays_t& \
-                         , grace::var_array_t& aux )
+                         , grace::var_array_t& aux             \
+                         , bool clamp_to_atmo )
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;

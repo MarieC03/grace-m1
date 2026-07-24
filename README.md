@@ -61,9 +61,9 @@ coding standards, and review policy.
 
 ## Citing GRACE
 
-If you use GRACE in academic work, please cite the code paper (citation
-details will be added once the paper appears on arXiv). For now, please
-reference the repository URL.
+If you use GRACE in academic work, please cite the code paper,
+*GRACE: An Open-Source Framework for GPU-Accelerated Numerical Relativity*
+([arXiv:2607.09854](https://arxiv.org/abs/2607.09854)).
 
 ## License
 

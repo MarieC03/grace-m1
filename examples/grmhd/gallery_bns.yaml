@@ -1,5 +1,6 @@
 # ADM mass: 3.251
 # resolution: 0.125 
+# z-symmetry imposed
 name: "etk_gallery_bns"
 amr: {
   npoints_block_x: 32,
@@ -85,9 +86,9 @@ amr: {
 }
 
 IO: {
-  volume_output_cell_variables: ["rho","press","eps","vel[0]", "alp", "beta[0]"],
+  volume_output_cell_variables: ["hydro", "metric"],
   volume_output_base_directory: "output_volume",
-  volume_output_every: -1,
+  volume_output_every: 10000,
 
   plane_surface_output_cell_variables: ["metric", "hydro", "c2p_err"],
   plane_surface_output_every: 100,
@@ -116,7 +117,7 @@ IO: {
 
 system: {
   console_log_level: "info",
-  file_log_level: "trace",
+  file_log_level: "info",
   n_device_streams: 4
 }
 
@@ -136,8 +137,8 @@ grmhd: {
   },
 	
   atmosphere: {
-    rho_fl: 1e-14,
-    temp_fl: 1.23613314525753e-12
+    rho_fl: 1e-21,
+    temp_fl: 1.23613314525753e-19
   },
   
   excision: {
@@ -163,7 +164,7 @@ eos: {
 
 z4c: {
   eps_diss: 0.1,
-  eta: 0.3,
+  eta: 1.0,
   eta_damp_radius: 50
 }
 
@@ -184,7 +185,7 @@ spherical_surfaces: {
     },
 
     {
-      name: "mass_outflows",
+      name: "GW_3",
       radius: 750,
       resolution: 91
     }
@@ -192,11 +193,11 @@ spherical_surfaces: {
 }
 
 gw_integrals: {
-  detector_names: ["GW_1", "GW_2"]
+  detector_names: ["GW_1", "GW_2","GW_3"]
 }
 
 outflows: {
-  detector_names: ["GW_1", "GW_2","mass_outflows"]
+  detector_names: ["GW_1", "GW_2","GW_3"]
 }
 
 co_tracker: {
@@ -225,4 +226,8 @@ co_tracker: {
 mhd_diagnostics: {
   compute_energy_every: 2,
   compute_other_diagnostics_every: 2
+}
+
+adm_integrals: {
+  detector_names: ["GW_1", "GW_2", "GW_3"]
 }

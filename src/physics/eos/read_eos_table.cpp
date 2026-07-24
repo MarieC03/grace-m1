@@ -1,7 +1,7 @@
 /**
  * @file read_eos_table.cpp
  * @author Carlo Musolino (carlo.musolino@aei.mpg.de) with help from Khalil Pierre (pierre@itp.uni-frankfurt.de)
- * @brief 
+ * @brief Heavily inspired by the Margherita EOS reader, originally written by Elias R. Most and Jens Papenfort.
  * @date 2026-03-28
  * 
  * @copyright This file is part of the General Relativistic Astrophysics
@@ -537,9 +537,9 @@ grace::tabulated_eos_t read_scollapse_table(std::string const& fname, std::strin
     double temp_floor = get_param<double>("grmhd", "atmosphere", "temp_fl") ; 
     double rho_floor = get_param<double>("grmhd", "atmosphere", "rho_fl") ; 
 
-    double tmin_gracefact = std::exp(logtemp[1]) ; 
+    double tmin_gracefact = std::exp(logtemp[0]) ; 
     if( temp_floor < tmin_gracefact ) {
-        GRACE_WARN("Requested atmo temperature is below second point in the table {}, will be overridden.", tmin_gracefact) ; 
+        GRACE_WARN("Requested atmo temperature is below first point in the table {}, will be overridden.", tmin_gracefact) ; 
         temp_floor = tmin_gracefact; 
     }
     if (rho_floor < rhomin ) {
@@ -904,9 +904,9 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
     double temp_floor = get_param<double>("grmhd", "atmosphere", "temp_fl") ; 
     double rho_floor = get_param<double>("grmhd", "atmosphere", "rho_fl") ; 
 
-    double tmin_gracefact = std::exp(logtemp[1]) ; 
+    double tmin_gracefact = std::exp(logtemp[0]) ; 
     if( temp_floor < tmin_gracefact ) {
-        GRACE_WARN("Requested atmo temperature is below second point in the table {}, will be overridden.", tmin_gracefact) ; 
+        GRACE_WARN("Requested atmo temperature is below first point in the table {}, will be overridden.", tmin_gracefact) ; 
         temp_floor = tmin_gracefact; 
     }
     if (rho_floor < rhomin ) {

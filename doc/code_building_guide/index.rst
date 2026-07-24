@@ -30,11 +30,19 @@ Dependencies
 
 GRACE supports two dependency-resolution modes — bundled (Kokkos / p4est /
 Catch2 / spdlog / yaml-cpp built in-tree under ``extern/``) and system
-installs (located via ``<DEP>_ROOT`` environment variables, usually populated
-by an env file under ``env/``).  See the :doc:`quickstart <../quickstart/index>`
-for the side-by-side walkthrough of both modes.  The rest of this section
-covers the per-library build instructions you need when going the
-system-install route.
+installs (located via ``<DEP>_ROOT`` environment variables).  See the
+:doc:`quickstart <../quickstart/index>` for the side-by-side walkthrough of
+both modes.  The rest of this section covers the per-library build
+instructions you need when going the system-install route.
+
+.. note::
+
+   System installs follow the ``<DEP>_ROOT`` convention — ``KOKKOS_ROOT``,
+   ``P4EST_ROOT``, ``YAML_ROOT``, ``CATCH2_ROOT``, ``SPDLOG_ROOT``, and so on.
+   The two optional initial-data libraries are the exception: they are located
+   through the environment variables those projects set themselves —
+   **LORENE** via ``HOME_LORENE`` and **FUKA / Kadath** via ``HOME_KADATH``.
+   (``LORENE_ROOT`` still takes precedence if set, for non-standard layouts.)
 
 System dependencies (always required)
 -------------------------------------
@@ -298,7 +306,7 @@ Initial-data libraries
      - Description
    * - GRACE_ENABLE_LORENE
      - Boolean
-     - Enable LORENE support.
+     - Enable LORENE support. Requires ``HOME_LORENE`` to point at a built LORENE tree (or set ``LORENE_ROOT`` to override).
    * - GRACE_ENABLE_FUKA
      - Boolean
      - Enable FUKA / Kadath support. Requires ``HOME_KADATH`` to point at a built Kadath tree.
