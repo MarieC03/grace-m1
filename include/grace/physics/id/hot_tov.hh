@@ -52,6 +52,7 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
         , double rhoC, double press_floor, double dr, double pert_amp
         , double T_id )
         : base_t(eos, pcoords, atmo_params, rhoC, press_floor, dr, pert_amp)
+        , _rho_cut( grace::get_param<double>("grmhd","tov","rho_cut") )
         , _T_id(T_id)
     {
         GRACE_INFO("Hot-TOV: structure from the cold slice, thermal state "
@@ -84,22 +85,26 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
         double ymu_atm  = this->_atmo_params.ymu_fl ;
         double rho_atm  = this->_atmo_params.rho_fl ;
         double temp_atm = this->_atmo_params.temp_fl ;
-        double const press_atm = this->_eos.press_cold__rho(rho_atm, err) ;
 
-        if ( sol[0] > 1.001 * press_atm ) {
+        // FIL policy: write the WHOLE TOV solution to the grid -- no surface
+        // threshold.  solve_tov already integrates down to
+        // press_cold__rho(rho_fl), so the profile ends at the atmosphere
+        // density on its own; the atmosphere is then established by the
+        // evolution's own floor on the first compute_auxiliaries pass, exactly
+        // as it will be at every later step.  sol[0] is identically 0 outside
+        // R_iso (tov.hh get_solution), which is the only case the else handles.
+        if ( sol[0] > 0.0 ) {
             // ---- inside the star ----
             // STRUCTURE: density from the cold-slice pressure profile.
             id.rho  = this->_eos.rho__press_cold(sol[0], err) ;
-            // THERMAL state: T = T_id in the bulk, smoothly tapered to the
-            // atmosphere temperature over the outer (1 - taper_frac) of the
-            // stellar radius.  Rationale: at T_id the tenuous surface is
-            // radiation/pair dominated -- specific energy eps ~ 1/rho blows
-            // past the c2p eps_maximum, so the hot edge floors/atmospheres
-            // every step.  Cooling the outer envelope keeps eps bounded and
-            // the surface well-behaved, at negligible cost to the (low-mass)
-            // edge.  taper_frac = 0.98 -> the final 2% of R_iso.
-            constexpr double taper_frac = 0.95 ;
-            {
+            // THERMAL state.  Default: T_id in the bulk, tapered to temp_atm
+            // over the outer 5% of R_iso -- at T_id the tenuous surface is
+            // radiation dominated and eps ~ 1/rho overruns the c2p eps_maximum.
+            // rho_cut > 0 instead selects FIL's hard density step (fix_ID.C).
+            if ( _rho_cut > 0.0 ) {
+                id.temp = ( id.rho > _rho_cut ) ? _T_id : temp_atm ;
+            } else {
+                constexpr double taper_frac = 0.95 ;
                 double w = (rL / this->_R_iso - taper_frac) / (1.0 - taper_frac) ;
                 w = Kokkos::fmin(1.0, Kokkos::fmax(0.0, w)) ;   // 0 bulk -> 1 surface
                 id.temp = _T_id + (temp_atm - _T_id) * w ;
@@ -163,6 +168,7 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
         return std::move(id) ;
     }
 
+    double _rho_cut ; //!< FIL-style density step for T [code units]; <=0 = radius taper
     double _T_id ;   //!< Fixed thermal-state temperature [MeV]
 } ;
 

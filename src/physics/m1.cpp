@@ -358,6 +358,21 @@ void set_m1_initial_data() {
             m1_atmo_params, m1_excision_params, sph_pcoords, state
         ) ;
         set_m1_initial_data_impl(id) ;
+    } else if ( id_type == "equilibrium" ) {
+        // Radiation in equilibrium with the hydro ID (works on any matter
+        // background, e.g. a TOV star).  The kernel reads kappa/eta from aux,
+        // which the set_m1_eas call at the END of this function would fill too
+        // late — evaluate the EAS from the hydro state first.
+        set_m1_eas<eos_t>() ;
+        coord_array_t<GRACE_NSPACEDIM> sph_pcoords ;
+        grace::fill_physical_coordinates(sph_pcoords,grace::STAG_CENTER,/*spherical coords*/ true) ;
+        equil_m1_id_t id(
+            m1_atmo_params, m1_excision_params,
+            variable_list::get().getaux(),
+            variable_list::get().getspacings(),
+            sph_pcoords
+        ) ;
+        set_m1_initial_data_impl(id) ;
     }
 
     #ifdef GRACE_M1_OPTICAL_DEPTH

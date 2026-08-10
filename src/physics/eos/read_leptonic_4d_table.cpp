@@ -870,7 +870,7 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     //  8) Generate cold slice via beta equilibrium and patch in.
     // -------------------------------------------------------
     double T_cold = grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
-    if ( T_cold < 0 ) {
+    if ( T_cold < std::exp(eos.ltempmin) ) {
         T_cold = std::exp(eos.ltempmin) ;
     }
 

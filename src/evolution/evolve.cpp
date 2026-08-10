@@ -651,8 +651,14 @@ void flag_fofc_cells(
         // bit 0 = hydro (set above); bit (s+1) = M1 species s.  No edge tags --
         // M1 has no constrained transport.
         {
+            // Match compute_auxiliaries' reset thresholds exactly: it fires at
+            // (1+atmo_tol)*floor, so tagging at the bare floor leaves a blind
+            // band whose cells get reset without FOFC ever going first-order.
+            double const sg_tol = metric.sqrtg() * (1.0 + m1_atmo.atmo_tol) ;
             double const E_atmo_cons =
-                m1_atmo.E_fl * Kokkos::pow(rtp[0], m1_atmo.E_fl_scaling) * metric.sqrtg() ;
+                m1_atmo.E_fl * Kokkos::pow(rtp[0], m1_atmo.E_fl_scaling) * sg_tol ;
+            double const N_atmo_cons =
+                m1_atmo.N_fl * Kokkos::pow(rtp[0], m1_atmo.N_fl_scaling) * sg_tol ;
             for (int s = 0; s < GRACE_M1_NU_SPECIES; ++s) {
                 int const iE = ERAD1_ + s*GRACE_N_M1_VARS ;
                 int const iN = NRAD1_ + s*GRACE_N_M1_VARS ;
@@ -664,7 +670,7 @@ void flag_fofc_cells(
                     EXPR( ( fluxes(VEC(i,j,k),iN,0,q)-fluxes(VEC(i+1,j,k),iN,0,q) )*idx(0,q)
                         , + ( fluxes(VEC(i,j,k),iN,1,q)-fluxes(VEC(i,j+1,k),iN,1,q) )*idx(1,q)
                         , + ( fluxes(VEC(i,j,k),iN,2,q)-fluxes(VEC(i,j,k+1),iN,2,q) )*idx(2,q))) ;
-                if (E_tent < E_atmo_cons || N_tent < E_atmo_cons) {
+                if (E_tent < E_atmo_cons || N_tent < N_atmo_cons) {
                     int const bit = 1 << (s + 1) ;
                     Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), bit) ;
                     Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), bit) ;
@@ -1859,7 +1865,6 @@ void update_fd(
     #endif
 }
 
-
 // new_state = old_state + dt * dtfact * G(new_state)
 template< typename eos_t >
 void advance_implicit_substep( double const t, double const dt, double const dtfact
@@ -1882,14 +1887,17 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
 
     #ifdef GRACE_ENABLE_M1
 
+#ifndef GRACE_FREEZE_HYDRO
     auto backreaction_params = get_m1_backreaction_params() ;
     bool const do_backreaction = backreaction_params.do_backreaction
                               && (t >= backreaction_params.t_backreact) ;
+    double const backreact_rho_min = backreaction_params.rho_min ;
 
     // Loaded EOS (table bounds included), fetched on the host and captured
     // into the kernel for the backreaction composition limiter -- same
     // pattern as the grmhd system's _eos.
     auto const _beos = eos::get().get_eos<eos_t>() ;
+#endif
 
     auto policy =
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
@@ -1926,10 +1934,14 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             );
             #endif
 
+            // Radiation->fluid coupling is fully disabled under FREEZE_HYDRO:
+            // energy, momentum AND composition (YESTAR_/YMUSTAR_) must all stay
+            // frozen so M1 transport runs against a fixed background.
+            #ifndef GRACE_FREEZE_HYDRO
             #if GRACE_M1_NU_SPECIES >= 3 // 3- and 5-species
             if ( do_backreaction ) {
                 m1_eq_system.add_backreaction<eos_t>(
-                q, VEC(i,j,k), _idx, new_state, _beos
+                q, VEC(i,j,k), _idx, new_state, _beos, backreact_rho_min
                 );
             }
             #endif
@@ -1942,6 +1954,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 );
             }
             #endif
+            #endif // GRACE_FREEZE_HYDRO
         }
     ) ;
     #endif

@@ -166,6 +166,11 @@ void initialize_weakhub_from_params() {
     GRACE_INFO("Weakhub table loaded successfully");
     g_handle.valid = true;
     g_initialized = true;
+    // The table Views live in namespace-scope statics; their destructors run
+    // at program exit, after Kokkos::finalize, which aborts.  Release them
+    // from a finalize hook instead — safe to double-call (finalize_weakhub
+    // is guarded) if shutdown code also calls it explicitly.
+    Kokkos::push_finalize_hook(finalize_weakhub);
 }
 
 const device_handle& get_device_handle() { return g_handle; }

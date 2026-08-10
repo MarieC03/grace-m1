@@ -152,6 +152,17 @@ add_test(NAME weakhub_golden_test COMMAND
 set_tests_properties(weakhub_golden_test PROPERTIES
     LABELS "physics;m1;weakhub"
     ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+
+# Halo-state rate breakdown: evaluates the production EAS chain at the exact
+# (rho, T, Ye, Ymu) the [BR diag] instrumentation reported for the halo cells
+# and accounts for every factor between the raw table entry and the applied
+# kappa.  Needs the 2 GB SFHo npemu table AND the leptonic 4D EOS (~4.5 GB
+# resident), and a 5-species build -> manual/local, not registered with ctest
+# by default.  Run it explicitly:
+#   ./weakhub_halo_test --grace-parfile ./configs/weakhub_halo_test.yaml
+if(GRACE_M1_NU_SPECIES EQUAL 5)
+    add_grace_test(weakhub_halo_test test_weakhub_halo.cpp)
+endif()
 endif()
 
 # All four kokkos_tests_main-using binaries link MPI (via grace_parallel /
@@ -368,8 +379,16 @@ set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 # label it "leptonic" so it can be excluded by label as well as by tag.
 if(GRACE_M1_NU_SPECIES EQUAL 5)
     add_test(NAME leptonic_c2p_test COMMAND
-            mpirun -n 1 ./c2p_test "[leptonic]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
+            mpirun -n 1 ./c2p_test "[leptonic]~[halo]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
     set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+
+    # Halo-cell replay.  Excluded from the test above because it needs the
+    # PRODUCTION atmosphere (rho_fl 1e-14, entropy backup on): under the shared
+    # leptonic config's rho_fl = 1e-11 every replayed cell is atmosphere-reset
+    # before the inversion runs, and the test silently measures nothing.
+    add_test(NAME halo_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[halo]" --grace-parfile ./configs/c2p_test_halo.yaml )
+    set_tests_properties(halo_c2p_test PROPERTIES LABELS "physics;leptonic;halo")
 endif()
 
 add_test(NAME grmhd_kernels_test COMMAND

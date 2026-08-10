@@ -44,7 +44,9 @@ eos: {
   leptonic: {
     # regenerated lepton table (gen_lepton_table.py, ideal Fermi gas + photons);
     # the older Bollig-derived table carries a x1.5 (e) / x5 (mu) P/eps bug.
-    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken.h5",
+    # v2: log-log inversion + cancellation-free net density, so mu is accurate to
+    # 5e-5 instead of 1.2e-2 in dilute matter and the atmosphere no longer clamps.
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
     cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
     add_ele_contribution: true,
     cold_table_temperature: 0.100001

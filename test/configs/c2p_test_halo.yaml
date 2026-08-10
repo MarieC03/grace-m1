@@ -1,0 +1,70 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Halo-cell replay config: drives the "[c2p][leptonic][halo]" TEST_CASE.
+#
+# Mirrors the production 5-species leptonic hot-TOV run that produced
+# surface_out_plane_xy_000210.h5, because the cells replayed by that test are
+# lifted verbatim from it and the inversion outcome depends on the atmosphere
+# and c2p settings:
+#   rho_fl  1e-14   (cells sit at 1.0-1.5e-14; the shared leptonic config's
+#                    1e-11 atmosphere-resets every one of them before the
+#                    inversion is even attempted)
+#   temp_fl 0.1     (production value, and the EOS table minimum exactly --
+#                    safe now that limit_temp no longer carries a 1% margin)
+#   use_c2p_entropy_backup true  (the bit under test IS the backup)
+#   eps_maximum 1e5 (production ceiling)
+#
+# Table paths are absolute and machine-local, as in c2p_test_leptonic.yaml.
+# ---------------------------------------------------------------------------
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "leptonic",
+
+  tabulated_eos: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+
+  leptonic: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
+    add_ele_contribution: true,
+    cold_table_temperature: 0.1
+  },
+
+  eps_maximum: 1.e+05
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-14,
+    atmo_tol: 1.e-2,
+    temp_fl: 0.1,
+    ye_fl: 0.05,
+    atmosphere_is_beta_eq: true
+  },
+  c2p: {
+    tolerance: 1e-10,
+    max_lorentz: 50,
+    use_c2p_entropy_backup: true
+  }
+}
+m1: {
+  eas: {
+    kind: "neutrino_analytic"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}

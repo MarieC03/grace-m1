@@ -58,7 +58,7 @@ grmhd:
         Override ye_fl with beta equilibrium ye at atmosphere conditions
     atmo_tol:
       type: double
-      default: 1e-3
+      default: 1e-2
       range: "[0,*)"
       description: >
         When setting points to atmosphere, check if rho < rho_atm * (1+tol)
@@ -803,3 +803,19 @@ grmhd:
         set to hot beta-equilibrium at (rho, hot_temperature).  Generate the
         leptonic cold table at a COLD temperature so the structure stays
         compact (FIL-style cold .rns structure + hot slice).
+
+    rho_cut:
+      type: double
+      default: -1
+      range: "[-1,*)"
+      description: >
+        Only used by id_type = "hot_tov".  Selects how the ID temperature is
+        laid down.  Negative (default): T = hot_temperature in the bulk,
+        linearly tapered to the atmosphere temperature over the outer 5% of
+        R_iso, giving a smooth surface gradient.  Positive: FIL's prescription
+        instead (Margherita_ID/src/fix_ID.C) -- a hard density step, with
+        T = hot_temperature wherever rho > rho_cut and the atmosphere
+        temperature at or below it.  FIL uses 1e-10 [code units].  Either way
+        the chosen T feeds the beta-equilibrium solve, so Ye and Ymu follow it.
+        NB: a density step leaves no surface temperature gradient, which is
+        visible in 2D plots -- that is why the taper is the default.

@@ -100,7 +100,7 @@ eos: {
     linear_pressure: true
   },
   leptonic: {
-    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken.h5",
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
     cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
     add_ele_contribution: true,
     cold_table_temperature: 0.100001

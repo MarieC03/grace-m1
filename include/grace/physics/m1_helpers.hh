@@ -252,6 +252,12 @@ struct m1_closure_t {
             zeta = sqrt(F2/E2) ;
             if ( F2<=f2_floor ) zeta = 0 ;
             zeta = fmin(zeta,1.) ;
+        } else {
+            // update == false: freeze the closure at the caller-specified zeta.
+            // Callers passing the member back (ctor, implicit_update_*) are
+            // unaffected; callers passing 0 (the thick retry) now really get
+            // the thick closure instead of whatever zeta was left in the member.
+            zeta = zeta0 ;
         }
 
         chi = closure_func(zeta) ;
@@ -461,8 +467,10 @@ struct m1_closure_t {
 
 struct m1_atmo_params_t {
     double E_fl, eps_fl ;
+    double N_fl, N_fl_scaling ;   //!< independent number floor (FIL N_atmo)
     double E_fl_scaling, eps_fl_scaling ;
     double eps_min, eps_max ;
+    double atmo_tol ;   //!< grmhd.atmosphere.atmo_tol
 } ;
 
 struct m1_excision_params_t {
@@ -489,16 +497,20 @@ get_m1_atmo_params() {
     m1_atmo_params_t m1_atmo_params ;
     m1_atmo_params.E_fl = grace::get_param<double>("m1", "atmosphere", "E_fl") ;
     m1_atmo_params.E_fl_scaling = grace::get_param<double>("m1", "atmosphere", "E_scaling") ;
+    m1_atmo_params.N_fl = grace::get_param<double>("m1", "atmosphere", "N_fl") ;
+    m1_atmo_params.N_fl_scaling = grace::get_param<double>("m1", "atmosphere", "N_scaling") ;
     m1_atmo_params.eps_fl = grace::get_param<double>("m1", "atmosphere", "eps_fl") ;
     m1_atmo_params.eps_fl_scaling = grace::get_param<double>("m1", "atmosphere", "eps_scaling") ;
     m1_atmo_params.eps_min = grace::get_param<double>("m1", "atmosphere", "eps_min") ;
     m1_atmo_params.eps_max = grace::get_param<double>("m1", "atmosphere", "eps_max") ;
+    m1_atmo_params.atmo_tol = grace::get_param<double>("grmhd", "atmosphere", "atmo_tol") ;
     return m1_atmo_params ;
 }
 
 struct m1_backreaction_params_t {
     bool do_backreaction ;
     double t_backreact ;
+    double rho_min ;   ///< skip the radiation->fluid coupling below this rho
 };
 
 static m1_backreaction_params_t
@@ -506,6 +518,7 @@ get_m1_backreaction_params() {
     m1_backreaction_params_t m1_backreaction_params ;
     m1_backreaction_params.do_backreaction = grace::get_param<bool>("m1", "backreaction", "enabled") ;
     m1_backreaction_params.t_backreact = grace::get_param<double>("m1", "backreaction", "t_start") ;
+    m1_backreaction_params.rho_min = grace::get_param<double>("m1", "backreaction", "rho_min") ;
     return m1_backreaction_params ;
 }
 

@@ -42,6 +42,21 @@
 
 namespace grace { namespace weakhub {
 
+// Positivity floor, applied ONCE at the END of the rate computation -- the
+// analogue of FIL's std::max(., 1e-60) clamp at the tail of calc_eas.  kappa
+// and eta MUST share it: the implicit solve relaxes E -> eta/kappa_a, so a
+// split floor plants a spurious equilibrium of that ratio in every floored
+// cell.  [1/code length; the rates are converted before it is applied]
+constexpr double kappa_floor_code = 1.0e-60;
+
+// "No contribution" value for the INTERMEDIATE cgs sites -- the weakhub table
+// below its rho domain, and the muon override.  Exact zero: these are absences
+// of a contribution, not floored physical values, and the end-of-rates clamp
+// above lifts them to kappa_floor_code so nothing downstream sees a zero.
+// (The transparent atmosphere below eas_rho_min writes exact zeros too, in
+// floor_eas, matching FIL's driver-level gate.)
+constexpr double kappa_zero_cgs = 0.0;
+
 struct interp_outputs {
     std::array<double,5> kappa_a_en{{0.0,0.0,0.0,0.0,0.0}};
     std::array<double,5> kappa_a_num{{0.0,0.0,0.0,0.0,0.0}};
@@ -142,10 +157,42 @@ struct device_handle {
   interp_outputs lookup(double rho_code, double temp_mev, double yle, double ymu) const {
       interp_outputs out;
       if (!valid) return out;
-      clamp_state(rho_code, temp_mev, yle, ymu);
-      const double lrho = Kokkos::log(rho_code);
-      const double ltemp = Kokkos::log(temp_mev);
-      const double lymu = (nymu > 1 ? Kokkos::log(ymu > 1.0e-300 ? ymu : 1.0e-300) : 0.0);
+
+      // Work in log space throughout: clamp_state's log->clamp->exp followed by
+      // another log cost 6 logs + 3 exps where 3 logs do.
+      constexpr double tiny = 1.0e-300;
+      double lrho  = Kokkos::log(rho_code > tiny ? rho_code : tiny);
+      double ltemp = Kokkos::log(temp_mev > tiny ? temp_mev : tiny);
+
+      // RHO below the table domain: floor, don't clamp.  Clamping would return
+      // the opacity of matter at the table's lowest row -- ~1000x denser than
+      // the atmosphere -- and kappa ~ rho.  Table contribution only:
+      // pair/plasmon/brems still feed kappa_a downstream.
+      // TEMPERATURE is clamped instead, not floored: kappa varies far more
+      // weakly with T than with rho, so evaluating at the table's coldest row
+      // is a reasonable extrapolation where evaluating at its lightest row is
+      // not.  Both match FIL's live path (M1.hh
+      // kappa_ast_kappa_s__temp_rho_yle_ymu_M1: 1e-60 return below rho_min,
+      // std::max(logtemp_min_IV, ltemp) for T).  NB FIL floors at `<=` rho_min;
+      // we keep `<` so the table's lowest row stays usable.
+      if (lrho < logrho_min) {
+          #pragma unroll
+          for (int s = 0; s < 5; ++s) {
+              out.kappa_a_en[s]  = kappa_zero_cgs;
+              out.kappa_a_num[s] = kappa_zero_cgs;
+              out.kappa_s[s]     = kappa_zero_cgs;
+          }
+          return out;
+      }
+
+      lrho  = Kokkos::fmin(lrho,  logrho_max);
+      ltemp = Kokkos::fmax(logtemp_min, Kokkos::fmin(ltemp, logtemp_max));
+      yle   = Kokkos::fmax(ye_min, Kokkos::fmin(yle, ye_max));
+      double lymu = 0.0;
+      if (nymu > 1) {
+          lymu = Kokkos::log(ymu > tiny ? ymu : tiny);
+          lymu = Kokkos::fmax(logymu_min, Kokkos::fmin(lymu, logymu_max));
+      }
 
       if (n_species_table == 3) {
           #pragma unroll
@@ -174,15 +221,16 @@ struct device_handle {
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
 #if GRACE_M1_NU_SPECIES <= 3
-          // 3-species run (nue, anue, nux): the single nux field represents ALL
-          // four heavy-lepton species, so SUM table slots 2..5 into nux (slot 4)
-          // — we want all those neutrinos together in one field.  Slots 2,3 stay
-          // zero (g_nu = 0 there, and there are no numu/anumu M1 fields).
+          // 3-species run: the single nux field carries ALL FOUR heavy-lepton
+          // species, so E_nux already holds the multiplicity -- average slots
+          // 2..5 rather than summing.  Emission keeps the count via g_nu = 4.
+          // Slots 2,3 stay zero (no numu/anumu M1 fields exist here).
+          constexpr double w_nux = 0.25 ;
           #pragma unroll
           for (int s = 2; s < 6; ++s) {
-              out.kappa_a_en[4]  += interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[4] += interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[4]     += interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
+              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
+              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
 #else
           // 5-species run: numu, anumu map to slots 2,3; nux = nutau + anutau.
@@ -192,11 +240,16 @@ struct device_handle {
               out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
               out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
+          // E_nux = E_nutau + E_antinutau already carries the species count, so
+          // the opacity is the energy-weighted MEAN of the two slots, not their
+          // sum -- summing would apply the multiplicity twice.  Emission keeps
+          // the sum, via g_nu = 2 in the equilibrium function.
+          constexpr double w_nux = 0.5 ;
           #pragma unroll
           for (int s = 4; s < 6; ++s) {
-              out.kappa_a_en[4]  += interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[4] += interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[4]     += interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
+              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
+              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
           }
 #endif
 
@@ -205,9 +258,9 @@ struct device_handle {
       }
       #pragma unroll
       for (int s = 0; s < 5; ++s) {
-          if (!(out.kappa_a_en[s] > 0.0) || !Kokkos::isfinite(out.kappa_a_en[s])) out.kappa_a_en[s] = 1.0e-60;
-          if (!(out.kappa_a_num[s] > 0.0) || !Kokkos::isfinite(out.kappa_a_num[s])) out.kappa_a_num[s] = 1.0e-60;
-          if (!(out.kappa_s[s] > 0.0) || !Kokkos::isfinite(out.kappa_s[s])) out.kappa_s[s] = 1.0e-60;
+          if (!(out.kappa_a_en[s] > 0.0) || !Kokkos::isfinite(out.kappa_a_en[s])) out.kappa_a_en[s] = kappa_zero_cgs;
+          if (!(out.kappa_a_num[s] > 0.0) || !Kokkos::isfinite(out.kappa_a_num[s])) out.kappa_a_num[s] = kappa_zero_cgs;
+          if (!(out.kappa_s[s] > 0.0) || !Kokkos::isfinite(out.kappa_s[s])) out.kappa_s[s] = kappa_zero_cgs;
       }
       return out;
     }

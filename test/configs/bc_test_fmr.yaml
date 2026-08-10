@@ -15,42 +15,44 @@ amr: {
   regrid_every: -1,
   regrid_at_postinitial: false,
   n_fmr_boxes: 4,
-  fmr_box_0: {
-    target_level_delta: 1,
-    x_min: -256,
-    x_max: 256,
-    y_min: -256,
-    y_max: 256,
-    z_min: -256,
-    z_max: 256
-  },
-  fmr_box_1: {
-    target_level_delta: 2,
-    x_min: -128,
-    x_max: 128,
-    y_min: -128,
-    y_max: 128,
-    z_min: -128,
-    z_max: 128
-  },
-  fmr_box_2: {
-  	     target_level_delta: 3,
-    x_min: -96,
-    x_max: 96,
-    y_min: -96,
-    y_max: 96,
-    z_min: -96,
-    z_max: 96
+  fmr_boxes: [
+    {
+      target_level_delta: 1,
+      x_min: -256,
+      x_max: 256,
+      y_min: -256,
+      y_max: 256,
+      z_min: -256,
+      z_max: 256
     },
-  fmr_box_3: {
-    target_level_delta: 4,
-    x_min: -64,
-    x_max: 64,
-    y_min: -64,
-    y_max: 64,
-    z_min: -64,
-    z_max: 64
-  },
+    {
+      target_level_delta: 2,
+      x_min: -128,
+      x_max: 128,
+      y_min: -128,
+      y_max: 128,
+      z_min: -128,
+      z_max: 128
+    },
+    {
+      target_level_delta: 3,
+      x_min: -96,
+      x_max: 96,
+      y_min: -96,
+      y_max: 96,
+      z_min: -96,
+      z_max: 96
+    },
+    {
+      target_level_delta: 4,
+      x_min: -64,
+      x_max: 64,
+      y_min: -64,
+      y_max: 64,
+      z_min: -64,
+      z_max: 64
+    }
+  ],
   do_regrid_test: false
 }
 IO: {

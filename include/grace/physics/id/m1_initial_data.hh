@@ -39,24 +39,47 @@
 #include <grace/data_structures/variables.hh>
 #include <grace/data_structures/variable_properties.hh>
 #include <grace/physics/grmhd_helpers.hh>
+#include <grace/physics/m1_helpers.hh>   // m1_atmo_params_t / m1_excision_params_t
 #include <grace/amr/amr_functions.hh>
 
 namespace grace {
 
 struct m1_id_t {
-    double erad1, nrad1, fradx1, frady1, fradz1 ; //! lower indices
+    // Zero-default every moment: a kernel that misses a field must ship a
+    // harmless 0 (caught by the radiation floors), never uninitialized memory.
+    double erad1 = 0., nrad1 = 0., fradx1 = 0., frady1 = 0., fradz1 = 0. ; //! lower indices
     #if GRACE_M1_NU_SPECIES >= 3
-    double erad2, nrad2, fradx2, frady2, fradz2 ;
-    double erad3, nrad3, fradx3, frady3, fradz3 ;
+    double erad2 = 0., nrad2 = 0., fradx2 = 0., frady2 = 0., fradz2 = 0. ;
+    double erad3 = 0., nrad3 = 0., fradx3 = 0., frady3 = 0., fradz3 = 0. ;
     #endif
     #if GRACE_M1_NU_SPECIES >= 5
-    double erad4, nrad4, fradx4, frady4, fradz4 ;
-    double erad5, nrad5, fradx5, frady5, fradz5 ;
+    double erad4 = 0., nrad4 = 0., fradx4 = 0., frady4 = 0., fradz4 = 0. ;
+    double erad5 = 0., nrad5 = 0., fradx5 = 0., frady5 = 0., fradz5 = 0. ;
     #endif
     #ifdef GRACE_M1_PHOTONS
-    double eradph, nradph, fradxph, fradyph, fradzph ;
+    double eradph = 0., nradph = 0., fradxph = 0., fradyph = 0., fradzph = 0. ;
     #endif
 } ;
+
+// Causality guard for M1 initial data: the closure is singular at |F| = E
+// (pure free streaming), so IDs that sit exactly on that edge (e.g. the
+// straight beam's E = F_x = 1) start the Brent/Newton machinery at its
+// degenerate point.  Rescale the flux to CAUSAL_FRAC * E when it meets or
+// exceeds it; E is never touched.  Kernels call this on species 1 BEFORE
+// the copy blocks, so all species inherit the capped value.  Euclidean
+// norm: the test IDs using this are all Minkowski.
+constexpr double M1_ID_CAUSAL_FRAC = 0.999 ;
+
+KOKKOS_INLINE_FUNCTION void
+limit_m1_id_flux(double const erad, double& fx, double& fy, double& fz)
+{
+    double const f2   = fx*fx + fy*fy + fz*fz ;
+    double const fmax = M1_ID_CAUSAL_FRAC * erad ;
+    if ( f2 > fmax*fmax ) {
+        double const fac = fmax / Kokkos::sqrt(f2) ;
+        fx *= fac ; fy *= fac ; fz *= fac ;
+    }
+}
 
 struct zero_m1_id_t {
     zero_m1_id_t(
@@ -154,7 +177,11 @@ struct equil_m1_id_t {
     ) : atmo(_atmo), excision(_excision), aux(_aux), dx(_dx), pcoords(_pcoords)
     {}
 
-    // NB this assumes all optically thin!
+    // Radiation in equilibrium with the (already set) hydro background.
+    // NB: requires the EAS (kappa/eta in aux) to be evaluated BEFORE this
+    // kernel runs — the dispatch in set_m1_initial_data calls set_m1_eas first.
+    // Fluxes are zero: both limits (LTE equilibrium and static atmosphere)
+    // are isotropic in the fluid frame.
     m1_id_t KOKKOS_INLINE_FUNCTION
     operator() (
         VEC(int const i, int const j, int const k),
@@ -167,24 +194,75 @@ struct equil_m1_id_t {
             pcoords(VEC(i,j,k),1,q),
             pcoords(VEC(i,j,k),2,q)
         };
+
+        double const E_atmo   = atmo.E_fl   * Kokkos::pow(rtp[0], atmo.E_fl_scaling)   ;
+        double const eps_atmo = atmo.eps_fl * Kokkos::pow(rtp[0], atmo.eps_fl_scaling) ;
+        double const N_atmo   = E_atmo / eps_atmo ;
+
+        bool const excise = excision.excise_by_radius ? rtp[0] <= excision.r_ex : false ;
+
+        // Per-species blend between LTE equilibrium (optically thick) and the
+        // atmosphere floor (optically thin).  A = mfp/dx: A <= 2/3 fully
+        // thick, A >= 1 fully thin, linear in between — the original
+        // three-regime split, made continuous.  Equilibrium moments from
+        // stationary collisional balance: E_eq = eta/kappa_a,
+        // N_eq = eta_n/kappa_a_n; floored cells (kappa ~ 1e-30) blend to the
+        // atmosphere automatically since their A is 1.
+        auto eq_blend = [&] (double ka, double ks, double eta,
+                             double etan, double kan,
+                             double& E, double& N) {
+            if ( excise ) {
+                E = excision.E_ex ;
+                N = excision.E_ex / excision.eps_ex ;
+                return ;
+            }
+            double const A = Kokkos::fmin(1., 1./((ka+ks+1e-20)*dx(0,q))) ;
+            double const w = Kokkos::fmin(1., Kokkos::fmax(0., 3.*(1.-A))) ;
+            double E_eq = eta  / Kokkos::fmax(ka,  1e-40) ;
+            double N_eq = etan / Kokkos::fmax(kan, 1e-40) ;
+            if ( !Kokkos::isfinite(E_eq) || E_eq < E_atmo ) E_eq = E_atmo ;
+            if ( !Kokkos::isfinite(N_eq) || N_eq < N_atmo ) N_eq = N_atmo ;
+            E = w * E_eq + (1.-w) * E_atmo ;
+            N = w * N_eq + (1.-w) * N_atmo ;
+        } ;
+
         #if GRACE_M1_NU_SPECIES >= 1
-        /* Get eas to check regime */
-        m1_eas_array_t eas ;
-        eas[KAL] = aux(VEC(i,j,k),KAPPAA1_,q) ;
-        eas[KSL] = aux(VEC(i,j,k),KAPPAS1_,q) ;
-        eas[ETAL] = aux(VEC(i,j,k),ETA1_,q) ;
-
-        // this is l / dx --> small == thick
-        double A = fmin(1.,1./((eas[KAL]+eas[KSL]+1e-20)*dx(0,q))) ;
-
-        if ( A < 2./3. ) {
-            // here we set variables to their
-            // equilibrium value
-        } else if ( A >= 1. ) {
-
-        } else {
-
-        }
+        eq_blend(aux(VEC(i,j,k),KAPPAA1_,q), aux(VEC(i,j,k),KAPPAS1_,q),
+                 aux(VEC(i,j,k),ETA1_,q),
+                 aux(VEC(i,j,k),ETAN1_,q), aux(VEC(i,j,k),KAPPAAN1_,q),
+                 id.erad1, id.nrad1) ;
+        id.fradx1 = id.frady1 = id.fradz1 = 0. ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
+        eq_blend(aux(VEC(i,j,k),KAPPAA2_,q), aux(VEC(i,j,k),KAPPAS2_,q),
+                 aux(VEC(i,j,k),ETA2_,q),
+                 aux(VEC(i,j,k),ETAN2_,q), aux(VEC(i,j,k),KAPPAAN2_,q),
+                 id.erad2, id.nrad2) ;
+        id.fradx2 = id.frady2 = id.fradz2 = 0. ;
+        eq_blend(aux(VEC(i,j,k),KAPPAA3_,q), aux(VEC(i,j,k),KAPPAS3_,q),
+                 aux(VEC(i,j,k),ETA3_,q),
+                 aux(VEC(i,j,k),ETAN3_,q), aux(VEC(i,j,k),KAPPAAN3_,q),
+                 id.erad3, id.nrad3) ;
+        id.fradx3 = id.frady3 = id.fradz3 = 0. ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        eq_blend(aux(VEC(i,j,k),KAPPAA4_,q), aux(VEC(i,j,k),KAPPAS4_,q),
+                 aux(VEC(i,j,k),ETA4_,q),
+                 aux(VEC(i,j,k),ETAN4_,q), aux(VEC(i,j,k),KAPPAAN4_,q),
+                 id.erad4, id.nrad4) ;
+        id.fradx4 = id.frady4 = id.fradz4 = 0. ;
+        eq_blend(aux(VEC(i,j,k),KAPPAA5_,q), aux(VEC(i,j,k),KAPPAS5_,q),
+                 aux(VEC(i,j,k),ETA5_,q),
+                 aux(VEC(i,j,k),ETAN5_,q), aux(VEC(i,j,k),KAPPAAN5_,q),
+                 id.erad5, id.nrad5) ;
+        id.fradx5 = id.frady5 = id.fradz5 = 0. ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        eq_blend(aux(VEC(i,j,k),KAPPAAPH_,q), aux(VEC(i,j,k),KAPPASPH_,q),
+                 aux(VEC(i,j,k),ETAPH_,q),
+                 aux(VEC(i,j,k),ETANPH_,q), aux(VEC(i,j,k),KAPPAANPH_,q),
+                 id.eradph, id.nradph) ;
+        id.fradxph = id.fradyph = id.fradzph = 0. ;
         #endif
 
         return id ;
@@ -225,6 +303,9 @@ struct straight_beam_m1_id_t {
             xyz[2] < 0.0625 and xyz[2] > - 0.0625) {
             id.erad1 = id.fradx1 = 1.0 ;
         }
+        // Unit mean energy: N tracks E (beam and atmosphere alike).
+        id.nrad1 = id.erad1 ;
+        limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;
@@ -285,6 +366,10 @@ struct scattering_diffusion_m1_id_t {
         id.fradx1 = xyz[0]/r * Hr ;
         id.frady1 = xyz[1]/r * Hr ;
         id.fradz1 = xyz[2]/r * Hr ;
+        // Unit mean energy: N tracks E.
+        id.nrad1 = id.erad1 ;
+        // F/E = r/(2 t0) exceeds 1 beyond r = 2 t0 (diffusion profile tail)
+        // limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;
@@ -345,6 +430,9 @@ struct moving_scattering_diffusion_m1_id_t {
 
         id.fradx1 = 4./3. * J * W2 * v0 ;
         id.frady1 = id.fradz1 = 0. ;
+        // Unit mean energy: N tracks E.
+        id.nrad1 = id.erad1 ;
+        // limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;
@@ -410,6 +498,9 @@ struct emitting_sphere_m1_id_t {
             id.frady1 = 0.5/r2 * xyz[1]/r ;
             id.fradz1 = 0.5/r2 * xyz[2]/r ;
         }
+        // Unit mean energy: N tracks E.
+        id.nrad1 = id.erad1 ;
+        // limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;

@@ -363,7 +363,9 @@ lnsrch(
     for( int i=0; i<ND; ++i) sum+=SQR(p[i]) ;
     sum = sqrt(sum) ;  
     if ( sum > stpmax ) {
-        for( int i=0; i<ND; ++i) p[i] /= stpmax/sum ; 
+        // CAP the step at stpmax: p *= stpmax/|p|.  Dividing instead multiplies
+        // by |p|/stpmax > 1 and lengthens the very step being limited.
+        for( int i=0; i<ND; ++i) p[i] *= stpmax/sum ; 
     }
     double slope = 0 ; 
     for( int i=0; i<ND; ++i) slope += g[i]*p[i] ; 
@@ -377,6 +379,11 @@ lnsrch(
     }
     double alamin = TOLX/test ;
     double alam = 1.0;
+    // alam2/f2 carry the PREVIOUS trial step into the cubic branch and must
+    // outlive the backtracking loop; declared inside it they reset to 0 each
+    // pass, so SQR(alam2)=0 made the cubic inf/NaN and it silently degraded to
+    // a flat 0.1 backtrack.
+    double alam2 = 0.0, f2 = 0.0 ;
     int nfix = 0; 
     do {
         for( int i=0; i<ND; ++i) x[i] = xold[i] + alam * p[i]; 
@@ -388,7 +395,7 @@ lnsrch(
             *check = ERR_SMALLSTEP;
             return ;
         } else {
-            double tmplam{0}, alam2{0}, f2{0} ; // initialize to silence warnings
+            double tmplam{0} ;
             if ( nfix == 0 ) {
                 tmplam = - slope / (2.*(*f-fold-slope)) ; 
             } else {
@@ -487,6 +494,11 @@ rootfind_nd_newton_raphson(FT&& func, DFT&& dfunc, double (&x)[ND], unsigned lon
                 err = SUCCESS ; 
                 return ; 
             } else {
+#ifdef GRACE_M1_COUNT_IMPLICIT
+                { double fr=0.; for(int i=0;i<ND;++i) fr=fmax(fr,fabs(F[i]));
+                  double xs=0.; for(int i=0;i<ND;++i) xs=fmax(xs,fabs(x[i]));
+                  printf("[SS] %.6e %.6e %.6e\n", fr, xs, fr/fmax(xs,1e-300)) ; }
+#endif
                 err = ERR_SMALLSTEP ; 
                 return ; 
             }
@@ -501,7 +513,13 @@ rootfind_nd_newton_raphson(FT&& func, DFT&& dfunc, double (&x)[ND], unsigned lon
             ftest = fmax(ftest, fabs(F[i])) ; 
         }
         tol = 2.0 * macheps * scale + t;
-        if ( test < tol || ftest == 0.0 ) {
+        // Accept a small RESIDUAL as well as a small step, mirroring the entry
+        // test above.  `ftest == 0.0` demanded a bit-zero residual and so never
+        // fired, leaving the step test as the only reachable exit.
+        if ( test < tol || ftest < tol ) {
+#ifdef GRACE_M1_COUNT_IMPLICIT
+            printf("[IT] %d\n", iter+1) ;
+#endif
             err = SUCCESS ; 
             return ; 
         }
@@ -510,6 +528,176 @@ rootfind_nd_newton_raphson(FT&& func, DFT&& dfunc, double (&x)[ND], unsigned lon
     err = ERR_STAGNATION ; 
     return ; 
 }
+//****************************************************************************
+/** @brief MINPACK/GSL `hybridsj`-style scaled dogleg trust region, device-side.
+ *
+ * Faithful to the algorithm FIL and THC_M1 use (Powell's Hybrid, GSL
+ * gsl_multiroot_fdfsolver_hybridsj; Radice+2022 sec 3.2).  The pieces that
+ * matter and that a plain dogleg lacks:
+ *   - diagonal scaling D from the Jacobian column norms, monotonically
+ *     non-decreasing, so the trust region is |D p| <= delta rather than |p|;
+ *   - the dogleg constructed in that scaled metric;
+ *   - MINPACK's radius update (shrink to 0.5|Dp| below ratio 0.1, grow to
+ *     2|Dp| above 0.5) and its acceptance threshold 1e-4;
+ *   - delta0 = factor |D x|, factor = 100 as in GSL.
+ * On return x holds the best iterate found, whatever err reports.
+ */
+template< size_t ND, typename FT, typename DFT >
+void inline GRACE_HOST_DEVICE
+rootfind_nd_dogleg(FT&& func, DFT&& dfunc, double (&x)[ND],
+                   unsigned long maxiter, double t, int& err)
+{
+    static constexpr double macheps = std::numeric_limits<double>::epsilon() ;
+    static constexpr double FACTOR  = 100.0 ;
+    static constexpr double ACCEPT  = 1.0e-4 ;
+    double F[ND], Fn[ND], J[ND][ND], Jlu[ND][ND], g[ND], gs[ND],
+           pN[ND], p[ND], xn[ND], Jp[ND], diag[ND] ;
+    int piv[ND+1] ;
+
+    func(x, F) ;
+    double fnorm = 0., xmax = 0. ;
+    for (size_t i=0; i<ND; ++i) {
+        fnorm += SQR(F[i]) ; xmax = fmax(xmax, fabs(x[i])) ;
+    }
+    fnorm = sqrt(fnorm) ;
+    { double fm = 0. ;
+      for (size_t i=0; i<ND; ++i) fm = fmax(fm, fabs(F[i])) ;
+      if ( fm < 2.0*macheps*xmax + t ) { err = SUCCESS ; return ; } }
+
+    for (size_t i=0; i<ND; ++i) diag[i] = 1.0 ;
+    double delta = 0. ;
+    bool  have_delta = false ;
+
+    for (unsigned long iter = 0 ; iter < maxiter ; ++iter) {
+        dfunc(x, F, J) ;
+
+        // --- scaling: diag_j = max(diag_j, |column j of J|), never decreasing
+        for (size_t j=0; j<ND; ++j) {
+            double cn = 0. ;
+            for (size_t i=0; i<ND; ++i) cn += SQR(J[i][j]) ;
+            cn = sqrt(cn) ;
+            if ( cn == 0. ) cn = 1.0 ;
+            diag[j] = fmax(diag[j], cn) ;
+        }
+        if ( !have_delta ) {                      // delta0 = FACTOR |D x|
+            double dx = 0. ;
+            for (size_t i=0; i<ND; ++i) dx += SQR(diag[i]*x[i]) ;
+            dx = sqrt(dx) ;
+            delta = FACTOR * ( dx > 0. ? dx : 1.0 ) ;
+            have_delta = true ;
+        }
+
+        // --- gradient  g = J^T F  and its scaled form  gs_j = g_j/diag_j
+        for (size_t j=0; j<ND; ++j) {
+            double sum = 0. ;
+            for (size_t i=0; i<ND; ++i) sum += F[i]*J[i][j] ;
+            g[j] = sum ; gs[j] = sum/diag[j] ;
+        }
+        // --- Gauss-Newton step  pN = -J^{-1} F
+        for (size_t i=0; i<ND; ++i)
+            for (size_t j=0; j<ND; ++j) Jlu[i][j] = J[i][j] ;
+        for (size_t i=0; i<ND; ++i) pN[i] = -F[i] ;
+        int const lu_ok = LUPDecompose<ND>(Jlu, 1e-300, piv) ;
+        if ( lu_ok ) LUPSolve<ND>(Jlu, piv, pN) ;
+        else         for (size_t i=0; i<ND; ++i) pN[i] = 0. ;
+
+        double qnorm = 0. ;                       // |D pN|
+        for (size_t i=0; i<ND; ++i) qnorm += SQR(diag[i]*pN[i]) ;
+        qnorm = sqrt(qnorm) ;
+
+        // ---------------- MINPACK dogleg in the scaled metric ---------------
+        if ( lu_ok && qnorm <= delta ) {
+            for (size_t i=0; i<ND; ++i) p[i] = pN[i] ;
+        } else {
+            double gnorm = 0. ;
+            for (size_t i=0; i<ND; ++i) gnorm += SQR(gs[i]) ;
+            gnorm = sqrt(gnorm) ;
+            if ( gnorm == 0. ) {
+                double const sc = ( qnorm > 0. ) ? delta/qnorm : 0. ;
+                for (size_t i=0; i<ND; ++i) p[i] = sc*pN[i] ;
+            } else {
+                // Cauchy point along -D^{-1} gs
+                double jg2 = 0. ;
+                for (size_t i=0; i<ND; ++i) {
+                    double sum = 0. ;
+                    for (size_t j=0; j<ND; ++j) sum += J[i][j]*(gs[j]/diag[j]) ;
+                    jg2 += SQR(sum) ;
+                }
+                double const alpha  = ( jg2 > 0. ) ? (gnorm*gnorm)/jg2 : 0. ;
+                double const sgnorm = alpha*gnorm ;          // |D pC|
+                if ( sgnorm >= delta || !lu_ok ) {           // boundary, steepest descent
+                    double const sc = delta/gnorm ;
+                    for (size_t i=0; i<ND; ++i) p[i] = -sc*gs[i]/diag[i] ;
+                } else {
+                    // blend pC -> pN so that |D p| = delta
+                    double pC[ND], dvec[ND] ;
+                    for (size_t i=0; i<ND; ++i) pC[i] = -alpha*gs[i]/diag[i] ;
+                    double dd = 0., cd = 0. ;
+                    for (size_t i=0; i<ND; ++i) {
+                        dvec[i] = pN[i]-pC[i] ;
+                        dd += SQR(diag[i]*dvec[i]) ;
+                        cd += (diag[i]*pC[i])*(diag[i]*dvec[i]) ;
+                    }
+                    double tau = 0. ;
+                    if ( dd > 0. ) {
+                        double const disc = cd*cd + dd*(delta*delta - sgnorm*sgnorm) ;
+                        tau = ( disc > 0. ) ? (-cd + sqrt(disc))/dd : 0. ;
+                        tau = fmax(0., fmin(1., tau)) ;
+                    }
+                    for (size_t i=0; i<ND; ++i) p[i] = pC[i] + tau*dvec[i] ;
+                }
+            }
+        }
+
+        double pnorm = 0. ;                        // |D p|
+        for (size_t i=0; i<ND; ++i) pnorm += SQR(diag[i]*p[i]) ;
+        pnorm = sqrt(pnorm) ;
+
+        for (size_t i=0; i<ND; ++i) xn[i] = x[i] + p[i] ;
+        func(xn, Fn) ;
+        double fnnorm = 0. ;
+        for (size_t i=0; i<ND; ++i) fnnorm += SQR(Fn[i]) ;
+        fnnorm = sqrt(fnnorm) ;
+
+        // MINPACK ratios, expressed relative to |F|
+        double ared = -1.0 ;
+        if ( fnnorm < fnorm ) ared = 1.0 - SQR(fnnorm/fnorm) ;
+        for (size_t i=0; i<ND; ++i) {
+            double sum = 0. ;
+            for (size_t j=0; j<ND; ++j) sum += J[i][j]*p[j] ;
+            Jp[i] = F[i] + sum ;
+        }
+        double lnorm = 0. ;
+        for (size_t i=0; i<ND; ++i) lnorm += SQR(Jp[i]) ;
+        lnorm = sqrt(lnorm) ;
+        double const prered = ( lnorm < fnorm ) ? 1.0 - SQR(lnorm/fnorm) : 0. ;
+        double const ratio  = ( prered > 0. ) ? ared/prered : 0. ;
+
+        // --- MINPACK trust-radius update
+        if ( ratio < 0.1 ) {
+            delta = 0.5*pnorm ;
+        } else if ( ratio >= 0.5 || ared >= prered ) {
+            delta = fmax(delta, 2.0*pnorm) ;
+        }
+
+        if ( ratio >= ACCEPT ) {                   // accept the step
+            for (size_t i=0; i<ND; ++i) { x[i] = xn[i] ; F[i] = Fn[i] ; }
+            fnorm = fnnorm ;
+            double fm = 0., xm = 0., dxn = 0. ;
+            for (size_t i=0; i<ND; ++i) {
+                fm  = fmax(fm, fabs(F[i])) ; xm = fmax(xm, fabs(x[i])) ;
+                dxn += SQR(diag[i]*x[i]) ;
+            }
+            dxn = sqrt(dxn) ;
+            if ( fm < 2.0*macheps*xm + t ) { err = SUCCESS ; return ; }
+            if ( pnorm < t*fmax(dxn,1.0) ) { err = SUCCESS ; return ; }   // xtol
+        }
+        if ( delta <= macheps*1.0e3*fmax(xmax,1.0) ) { err = ERR_SMALLSTEP ; return ; }
+    }
+    err = ERR_STAGNATION ;
+    return ;
+}
+
 //****************************************************************************
 // Plain secant. Does not bracket, does not cap, does not line-search.
 // Caller is expected to apply downstream physical sanity gates on the

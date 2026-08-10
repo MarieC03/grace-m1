@@ -805,8 +805,8 @@ class leptonic_eos_4d_t
     KOKKOS_INLINE_FUNCTION void limit_temp(double& temp, err_t& err) const {
         double const tmin = Kokkos::exp(ltempmin) ;
         double const tmax = Kokkos::exp(ltempmax) ;
-        if ( temp < tmin ) { temp = (1.+1e-2)*tmin ; err.set(EOS_TEMPERATURE_TOO_LOW)  ; }
-        if ( temp > tmax ) { temp = (1.-1e-2)*tmax ; err.set(EOS_TEMPERATURE_TOO_HIGH) ; }
+        if ( temp < tmin ) { temp = tmin ; err.set(EOS_TEMPERATURE_TOO_LOW)  ; } //(1.+1e-2)*tmin
+        if ( temp > tmax ) { temp = tmax ; err.set(EOS_TEMPERATURE_TOO_HIGH) ; } //(1.-1e-2)*tmax
     }
     KOKKOS_INLINE_FUNCTION void limit_entropy_rho_ye_ymu(double& entropy,
         double& rho, double& ye, double& ymu, err_t& err) const

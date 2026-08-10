@@ -42,11 +42,12 @@ using namespace grace;
 
 constexpr double kTol = 1e-13;
 
-// lookup() floors every non-positive / non-finite opacity to 1e-60 before
-// returning (positivity guard for downstream divisions), so "empty" output
-// slots carry kFloor, never 0.0, and all synthetic table data must be
-// strictly positive for exactness checks.
-constexpr double kFloor = 1.0e-60;
+// lookup() floors every non-positive / non-finite opacity before returning
+// (guard against a negative/NaN interpolant), so "empty" output slots carry
+// exact zero; the 1e-60 positivity floor is applied later, at the end of the
+// rate computation.  Synthetic table data must be strictly positive for the
+// exactness checks.
+constexpr double kFloor = weakhub::kappa_zero_cgs;
 
 // Synthetic axis bounds (log space where the production loader logs them).
 constexpr double kLR[2] = {-4.0,  0.0};   // log(rho_code)
@@ -184,12 +185,21 @@ TEST_CASE("6-species table: heavy-lepton slots map per build, total budget "
     REQUIRE_THAT(r[1], WithinRel(2.0, kTol));
 
     // Build-independent invariant -- THE regression for the T-runaway NaN:
-    // the heavy-lepton opacity budget across output slots 2..4 must equal
-    // the sum of table slots 2..5 (tags 3+4+5+6 = 18).  The broken mapping
-    // gave 3+4 dead in slots 2,3 and only 5+6=11 in NUX.
+    // no heavy-lepton table slot may be silently dropped.  kappa is INTENSIVE,
+    // so a clumped output slot holds the MEAN of the slots it represents;
+    // weighting each by its species count recovers the table total (tags
+    // 3+4+5+6 = 18).  The broken mapping left slots 2,3 dead with only 5+6 in
+    // NUX.  NB an unweighted sum here would encode the old double-counting.
+#if GRACE_M1_NU_SPECIES <= 3
+    constexpr double g_numu = 0.0, g_anumu = 0.0, g_nux = 4.0 ;
+#else
+    constexpr double g_numu = 1.0, g_anumu = 1.0, g_nux = 2.0 ;
+#endif
     for (int t = 0; t < 3; ++t) {
         const double mult = (t == 0 ? 1.0 : (t == 1 ? 10.0 : 100.0));
-        const double heavy = r[5*t + 2] + r[5*t + 3] + r[5*t + 4];
+        const double heavy = g_numu  * r[5*t + 2]
+                           + g_anumu * r[5*t + 3]
+                           + g_nux   * r[5*t + 4];
         INFO("table " << t << " (0=ka_en, 1=ka_num, 2=ks)");
         REQUIRE_THAT(heavy, WithinRel(18.0 * mult, kTol));
     }
@@ -199,16 +209,17 @@ TEST_CASE("6-species table: heavy-lepton slots map per build, total budget "
     // species; slots 2,3 have g_nu = 0 and stay at the positivity floor.
     REQUIRE(r[2] == kFloor);
     REQUIRE(r[3] == kFloor);
-    REQUIRE_THAT(r[4], WithinRel(18.0, kTol));
-    REQUIRE_THAT(r[9],  WithinRel(180.0, kTol));
-    REQUIRE_THAT(r[14], WithinRel(1800.0, kTol));
+    // mean of tags 3,4,5,6
+    REQUIRE_THAT(r[4], WithinRel(4.5, kTol));
+    REQUIRE_THAT(r[9],  WithinRel(45.0, kTol));
+    REQUIRE_THAT(r[14], WithinRel(450.0, kTol));
 #else
-    // 5-species build: numu, anumu live in slots 2,3; NUX = nutau + anutau.
+    // 5-species build: numu, anumu live in slots 2,3; NUX = mean(nutau, anutau).
     REQUIRE_THAT(r[2], WithinRel(3.0, kTol));
     REQUIRE_THAT(r[3], WithinRel(4.0, kTol));
-    REQUIRE_THAT(r[4], WithinRel(11.0, kTol));
-    REQUIRE_THAT(r[9],  WithinRel(110.0, kTol));
-    REQUIRE_THAT(r[14], WithinRel(1100.0, kTol));
+    REQUIRE_THAT(r[4], WithinRel(5.5, kTol));
+    REQUIRE_THAT(r[9],  WithinRel(55.0, kTol));
+    REQUIRE_THAT(r[14], WithinRel(550.0, kTol));
 #endif
 }
 
@@ -297,7 +308,22 @@ TEST_CASE("Out-of-range queries clamp to the table bounds", "[weakhub][clamp]")
         REQUIRE_THAT(r[0], WithinRel(
             linear_value(kLR[1], 1.5, kYe, -5.5), 1e-12));
     }
-    // T far below the table: clamps to logtemp_min.
+    // rho below the table does NOT clamp -- it floors.  Clamping would return
+    // the opacity of the table's lowest row, which for a table whose rho floor
+    // sits above the atmosphere is matter orders of magnitude denser than the
+    // cell holds, and kappa ~ rho.  FIL's live path does the same (M1.hh
+    // kappa_ast_kappa_s__temp_rho_yle_ymu_M1 returns below rho_min).  The
+    // lookup returns exact zero; kappa_floor_code is applied at the end of the
+    // rate computation, not here.
+    {
+        const auto r = device_lookup(h, std::exp(kLR[0] - 5.0), kTemp, kYe, kYmu);
+        for (int i = 0; i < 15; ++i) REQUIRE(r[i] == 0.0);
+    }
+    // T below the table DOES clamp, unlike rho: kappa depends far more weakly
+    // on T, so the table's coldest row is a defensible evaluation point where
+    // its lightest row is not.  FIL clamps here too
+    // (ltemp = std::max(logtemp_min_IV, ltemp)); only its DEAD
+    // Weakhub_implementation.hh path floored on TEMPIV_TOO_LOW.
     {
         const auto r = device_lookup(h, kRho, std::exp(kLT[0] - 5.0), kYe, kYmu);
         REQUIRE_THAT(r[0], WithinRel(

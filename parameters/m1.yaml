@@ -12,10 +12,14 @@ m1:
 
   id_type:
     type: keyword
-    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam"]
+    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium"]
     default: "zero"
     description: >
-      Initialization prescription for radiation fields
+      Initialization prescription for radiation fields.  "equilibrium" sets
+      the radiation in LTE-blended equilibrium with the (already-set) hydro
+      background using the current EAS (kappa/eta from aux) -- works on any
+      matter ID (e.g. hot_tov), unlike the test-only beam/scattering/sphere
+      kinds which require grmhd.id_type = minkowski_vacuum.
 
   atmosphere:
     type: schema
@@ -35,6 +39,23 @@ m1:
       default: 0
       description: >
         Radial dependence of energy density floor
+
+    N_fl:
+      type: double
+      range: "(0,*)"
+      default: 1.e-14
+      description: >
+        Floor of neutrino NUMBER density, independent of E_fl (FIL parity:
+        frankfurt_m1::N_atmo).  Previously the number floor was derived as
+        E_fl/eps_fl, which made it disagree with the initial data whenever
+        eps_fl was not 1 and let a healthy N be rewritten as N*eps_fl.
+
+    N_scaling:
+      type: double
+      range: "[0,*)"
+      default: 0
+      description: >
+        Radial dependence of the number density floor, N_fl * r^x
 
     eps_fl:
       type: double
@@ -289,3 +310,19 @@ m1:
         Simulation time at which backreaction is activated.  Negative value
         (default -1) means active from the start.  Useful to let the radiation
         field build up before coupling it to the fluid.
+
+    rho_min:
+      type: double
+      default: 0.0
+      range: "[0,*)"
+      description: >
+        !!! DO NOT USE !!!
+        Density cutoff [code units] for the radiation->fluid coupling.  In
+        cells with rho < rho_min the backreaction (energy, momentum AND
+        composition) is skipped entirely, leaving the near-empty
+        halo/atmosphere fluid untouched.  Those cells hold ~zero baryons, so a
+        physically negligible collision exchange becomes huge per baryon
+        (dE/tau, dN/D) and distorts the primitives/composition -- an effect the
+        in-bounds limiters cannot catch because it lands INSIDE the table
+        bounds.  This is FIL's M1_rho_floor.  0 (default) disables the cutoff.
+        A few x the atmosphere floor grmhd.atmosphere.rho_fl is a typical value.

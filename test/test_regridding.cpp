@@ -295,7 +295,10 @@ static void check(
                 double divB = (host_data_x(VEC(i+1,j,k),0,q) - host_data_x(VEC(i,j,k),0,q)) * idx(0,q)
                             + (host_data_y(VEC(i,j+1,k),0,q) - host_data_y(VEC(i,j,k),0,q)) * idx(1,q)
                             + (host_data_z(VEC(i,j,k+1),0,q) - host_data_z(VEC(i,j,k),0,q)) * idx(2,q) ; 
-                REQUIRE( fabs(divB) < 1e-14 ) ; 
+                // 1e-13 (not 1e-14): divB sums six O(B*idx) terms, so plain
+                // round-off reaches ~1e-14 at the finest levels; matches the
+                // density tolerance above.
+                REQUIRE( fabs(divB) < 1e-13 ) ;
                 
             }
             

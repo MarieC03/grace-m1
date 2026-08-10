@@ -340,10 +340,23 @@ struct m1_equations_system_t
         bool excise = excision_params.excise_by_radius
                 ? r <= excision_params.r_ex
                 : metric.alp() <= excision_params.alp_ex ;
-        double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ;
-        double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ;
-        bool const E_bad = cl.E         < E_atmo * (1. + 1.e-3 ) ;
-        bool const N_bad = prims[NRADL] < E_atmo * (1. + 1.e-3 ) ;
+        // ---- OLD atmosphere treatment (kept for reference) ------------------
+        // The number floor was derived as E_fl/eps_fl, and N was compared
+        // against the ENERGY floor.  With eps_fl = 1 (default) the two
+        // coincide and it is invisible; otherwise the test is wrong and the
+        // keep-N branch below rewrote a healthy N as E = N*eps_atmo.
+        // double E_atmo = atmo_params.E_fl * Kokkos::pow(r,atmo_params.E_fl_scaling) ;
+        // double eps_atmo = atmo_params.eps_fl * Kokkos::pow(r,atmo_params.eps_fl_scaling) ;
+        // bool const E_bad = cl.E         < E_atmo * (1. + atmo_params.atmo_tol ) ;
+        // bool const N_bad = prims[NRADL] < E_atmo * (1. + atmo_params.atmo_tol ) ;
+        // ---- NEW: FIL parity (driver_M1_conserv_to_prims.cc) ----------------
+        // Independent E and N floors, each tested against its own threshold.
+        // cl.E and prims are already undensitised here, so no sqrtg is needed
+        // in the test -- only in the write-back below.
+        double const E_atmo = atmo_params.E_fl * Kokkos::pow(r, atmo_params.E_fl_scaling) ;
+        double const N_atmo = atmo_params.N_fl * Kokkos::pow(r, atmo_params.N_fl_scaling) ;
+        bool const E_bad = cl.E         < E_atmo * (1. + atmo_params.atmo_tol ) ;
+        bool const N_bad = prims[NRADL] < N_atmo * (1. + atmo_params.atmo_tol ) ;
         #ifdef GRACE_M1_DEBUG_EAS
         // Debug: log numu (ispec==2) floor events on IN-STAR cells (electron
         // neutrino well above the floor, so the legitimately-floored atmosphere
@@ -361,33 +374,32 @@ struct m1_equations_system_t
             }
         }
         #endif
-        if ( E_bad && !N_bad )
+        // ---- OLD keep-N / full-reset branches (kept for reference) ----------
+        // if ( E_bad && !N_bad ) {
+        //     double const E_keepN = prims[NRADL] * eps_atmo ;   // = N when eps_fl=1
+        //     this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * E_keepN ;
+        //     this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
+        //     this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
+        //     this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
+        //     epsilon = eps_atmo ;
+        // } else if ( E_bad || N_bad ) {
+        //     double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ;
+        //     ... ; cl.update_closure(atmo_state,0,true) ;
+        //     this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) = metric.sqrtg()*cl.Gamma*cl.J/eps_atmo ;
+        //     epsilon = eps_atmo ;
+        // }
+        // ---- NEW: FIL parity -- one plain reset, both floors, no keep-N ------
+        // FIL sets E and N to their own floors, zeroes the flux and sets the
+        // mean energy to 0 (not eps_fl), which keeps the T_nu correction inert.
+        if ( E_bad || N_bad )
         {
-            // Energy undershot (e.g. a residual transport artifact) but the
-            // NUMBER is healthy: restore an isotropic energy consistent with the
-            // surviving N (eps = eps_atmo) and KEEP N, instead of nuking the
-            // whole species.  The implicit source then relaxes E toward B(eta_nu).
-            // With M1-aware FOFC active this branch should rarely fire.
-            double const E_keepN = prims[NRADL] * eps_atmo ;
-            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * E_keepN ;
+            double const sg = metric.sqrtg() ;
+            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = sg * E_atmo ;
             this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
-            // N (state holds sqrtg*N) is deliberately left untouched.
-            epsilon = eps_atmo ;
-        }
-        else if ( E_bad || N_bad )
-        {
-            // Number (or both) is bad -> full atmosphere reset (original behaviour).
-            double atmo_state[4] = {E_atmo,0.0, 0.0, 0.0} ;
-            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * atmo_state[0];
-            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = atmo_state[1] ;
-            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = atmo_state[2] ;
-            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = atmo_state[3] ;
-            // We set N in order to ensure a sensible average energy
-            cl.update_closure(atmo_state,0,true) ;
-            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * cl.J / eps_atmo ;
-            epsilon = eps_atmo ;
+            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = sg * N_atmo ;
+            epsilon = 0.0 ;
         } else if ( excise ) {
             this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex ;
             this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
@@ -398,16 +410,6 @@ struct m1_equations_system_t
             this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
             epsilon = excision_params.eps_ex;
         }
-        // Finally check epsilon, if out of range
-        // we adjust **only** Nrad
-        //if ( epsilon < atmo_params.eps_min ) {
-        //    this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * cl.J / atmo_params.eps_min ;
-        //} else if ( epsilon > atmo_params.eps_max ) {
-        //    // avoid subnormal
-        //    double n = fmax(1e-200, cl.J / atmo_params.eps_max ) ;
-        //    this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * cl.Gamma * n ;
-        //}
-
     }
 
     /**
@@ -443,6 +445,17 @@ struct m1_equations_system_t
         eas[ETAL]  = this->_aux(VEC(i,j,k),m1_eta_idx<ispec>(),q) ;
         eas[ETANL] = this->_aux(VEC(i,j,k),m1_etan_idx<ispec>(),q) ;
         eas[KANL]  = this->_aux(VEC(i,j,k),m1_kappaan_idx<ispec>(),q) ;
+        /**************************************************************************************************/
+        // No collision term -> the implicit update is exactly the identity, and
+        // the caller deep-copies old->new, so returning leaves U = W and N.
+        // Threshold sits well above the rate floor and below any real rate.
+        constexpr double eas_negligible = 1.0e-30 ;
+        const bool no_collision = eas[KAL]   < eas_negligible
+                               && eas[KSL]   < eas_negligible
+                               && eas[ETAL]  < eas_negligible
+                               && eas[ETANL] < eas_negligible
+                               && eas[KANL]  < eas_negligible ;
+        if ( no_collision ) return ;
         /**************************************************************************************************/
         // construct closure and update
         m1_prims_array_t prims ;
@@ -482,12 +495,21 @@ struct m1_equations_system_t
         } ;
         /**************************************************************************************************/
         // call rootfinder
-        // TODO change back to 200
-        unsigned long maxiter = 250 ;
+        unsigned long maxiter = 100 ;
         int err = 0;
+#ifdef GRACE_M1_DOGLEG
+        utils::rootfind_nd_dogleg<4>(
+            func, dfunc, U, maxiter, 1e-15, err
+        ) ;
+#else
         utils::rootfind_nd_newton_raphson<4>(
             func, dfunc, U, maxiter, 1e-15, err
         ) ;
+#endif
+#ifdef GRACE_M1_COUNT_IMPLICIT
+        printf("[IMP1] %d %.6e %.6e %.6e\n", err, cl.zeta,
+               eas[KAL]*dt*dtfact, eas[KSL]*dt*dtfact) ;
+#endif
         /**************************************************************************************************/
         if ( err != utils::nr_err_t::SUCCESS ) {
             // assume optically thick closure and
@@ -502,10 +524,23 @@ struct m1_equations_system_t
             auto const fixed_closure_dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
                 pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
             } ;
+#ifdef GRACE_M1_DOGLEG
+            utils::rootfind_nd_dogleg<4>(
+                fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
+            ) ;
+#else
             utils::rootfind_nd_newton_raphson<4>(
                 fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
             ) ;
+#endif
+#ifdef GRACE_M1_COUNT_IMPLICIT
+            printf("[IMP2] %d\n", err) ;
+#endif
             // if we failed again we just take a linear step and call it
+            // (Radice+2022 sec 3.2: on non-convergence they likewise linearise
+            // by fixing chi = 1/3).  Measured: the solver reports failure on
+            // ~26% of solves here, so declining to deposit -- FIL's policy --
+            // starves the collision term and lets Ymu run away.
             if ( err != utils::nr_err_t::SUCCESS ) {
                 cl.update_closure(prims,0,true) ;
                 cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
@@ -519,27 +554,11 @@ struct m1_equations_system_t
         volatile double U3 = U[3];
         /**************************************************************************************************/
         // write back to the new state
-        #define VOLATILE_WRITE(ivar,val) \
-        state_new(i,j,k,ivar,q) = val
-        //VOLATILE_WRITE(ERAD_ , metric.sqrtg() * U0) ;
-        //VOLATILE_WRITE(FRADX_, metric.sqrtg() * U1) ;
-        //VOLATILE_WRITE(FRADY_, metric.sqrtg() * U2) ;
-        //VOLATILE_WRITE(FRADZ_, metric.sqrtg() * U3) ;
         state_new(i,j,k,m1_erad_idx<ispec>(),q)  = metric.sqrtg() * U[0] ;
         state_new(i,j,k,m1_fradx_idx<ispec>(),q) = metric.sqrtg() * U[1] ;
         state_new(i,j,k,m1_frady_idx<ispec>(),q) = metric.sqrtg() * U[2] ;
         state_new(i,j,k,m1_fradz_idx<ispec>(),q) = metric.sqrtg() * U[3] ;
         /**************************************************************************************************/
-        //#ifndef GRACE_FREEZE_HYDRO
-        //double const dE = this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_erad_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),TAU_,q) += dE ;
-        //double const dSx = this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradx_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),SX_,q) += dSx ;
-        //double const dSy = this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),SY_,q) += dSy ;
-        //double const dSz = this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),SZ_,q) += dSz ;
-        //#endif
         /**************************************************************************************************/
         // Number source is linear
         // we need to update the closure on the starred state
@@ -550,7 +569,6 @@ struct m1_equations_system_t
         cl.get_N_implicit_update(
             prims, eas, dt, dtfact, &N, &dN
         ) ;
-        //VOLATILE_WRITE(NRAD_,metric.sqrtg()*N) ;
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
         #ifdef GRACE_M1_DEBUG_EAS
         // Debug: for numu (ispec==2), log the implicit solve's in/out E and N and
@@ -571,27 +589,20 @@ struct m1_equations_system_t
             }
         }
         #endif
-        /**************************************************************************************************/
-        // if needed add dN to ye here!
-        //#if GRACE_M1_NU_SPECIES >= 3
-        //if constexpr ( ispec == 0 || ispec == 1) {
-        //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),YESTAR_,q) += ye_coupling_sign[ispec] * dN ;
-        //}
-        //#endif
-        ////KEN may have done a mistake, or at least not nice code
-        //#if GRACE_M1_NU_SPECIES >= 5
-        //if constexpr ( ispec == 2 || ispec == 3) {
-        //dN = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
-        //state_new(VEC(i,j,k),YMUSTAR_,q) += ye_coupling_sign[ispec] * dN ;
-        //}
-        //#endif
-        //#if 0
-        //if ( i == 4 and j == 4 and k == 4 ) {
-        //    printf("E_old %.16g E_new %.16g eta %.16g kappa %.16g \n", prims[ERADL], U[0], eas[ETAL], eas[KAL]) ;
-        //}
-        //#endif
     }
+
+    // ----------------------------------------------------------------------
+    // Backreaction limiter policy  (TESTING toggle)
+    //   1 = FIL-style HARD STOP: an exchange that would drive tau < 0 or push
+    //       Ye/Ymu out of the table bounds is REVERTED entirely for that
+    //       species / lepton channel (fluid untouched, radiation restored).
+    //       In a near-atmosphere cell it therefore does NOTHING rather than
+    //       draining the fluid onto its floors -- preserves the halo.
+    //   0 = conservative SCALED limiter: throttle both sides by a shared factor
+    //       so the fluid absorbs what it can and the radiation keeps the rest
+    //       (energy/lepton conserved, but pins the low-density fluid to floor).
+    // ----------------------------------------------------------------------
+    #define GRACE_M1_BACKREACT_HARDSTOP 1
 
     template< typename eos_t >
     void KOKKOS_INLINE_FUNCTION
@@ -607,12 +618,26 @@ struct m1_equations_system_t
                          // uninitialized Ye/Ymu bounds (eos_base_t() = default,
                          // bare double members), so the composition limiter
                          // below compared against indeterminate values.
-                         , eos_t const& eos ) const
+                         , eos_t const& eos
+                         // Density cutoff (FIL M1_rho_floor): skip the WHOLE
+                         // coupling below this rho.  The halo/atmosphere-adjacent
+                         // cells hold ~zero baryons, so the collision's dE/dN --
+                         // however small in absolute terms -- become huge per
+                         // baryon (dE/tau, dN/D) and drive the fluid primitives
+                         // and composition regardless of the in-bounds limiters.
+                         // The limiters (scaled OR hard-stop) only act at the
+                         // TABLE EDGES; an in-bounds drift (e.g. Ymu -> 0.02) is
+                         // applied in full by both.  Only skipping the coupling
+                         // in these cells preserves the halo.  <= 0 disables.
+                         , double const rho_min ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
-        // NB: no metric needed here -- the backreaction works purely on
-        // differences of densitized fields, so the sqrtg factors cancel.
+        // NB: the exchanges are differences of densitized fields (sqrtg
+        // cancels), so no metric is needed anywhere in this routine.
+
+        // Per-cell density cutoff: leave near-empty cells untouched.
+        if ( rho_min > 0.0 && this->_aux(VEC(i,j,k),RHO_,q) < rho_min ) return ;
 
         #if GRACE_M1_NU_SPECIES >= 1
         #if (GRACE_M1_NU_SPECIES >= 5)
@@ -623,7 +648,52 @@ struct m1_equations_system_t
         constexpr int n_species = 1;
         #endif
 
+        // Whole-cell gate on kappa_a: if NO species has absorption opacity there
+        // was no exchange at all and the deposit is a no-op.  Once any species
+        // is live every species is treated identically below.
+        constexpr double eas_negligible = 1.0e-30 ;
+        bool any_active = false ;
+        #pragma unroll
+        for( int ispec = 0; ispec < n_species; ++ispec ) {
+            any_active = any_active
+                || ( this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q)
+                     > eas_negligible ) ;
+        }
+        if ( !any_active ) return ;
+
         #ifndef GRACE_FREEZE_HYDRO
+        #if GRACE_M1_BACKREACT_HARDSTOP
+            // ── FIL-style hard stop, PER SPECIES ─────────────────────────────────
+            // Draw each species' energy from the running fluid state; accept the
+            // exchange only while the fluid stays PHYSICAL (tau > 0), otherwise
+            // revert that species entirely (fluid untouched, radiation restored).
+            // No draining: a cell that cannot afford the exchange keeps its
+            // state.  Momentum rides the energy decision, as in FIL.
+            double tau_run = state_new(VEC(i,j,k),TAU_,q) ;
+            #pragma unroll
+            for( int ispec = 0; ispec < n_species; ++ispec ) {
+                const int off = ispec*GRACE_N_M1_VARS ;
+                const double dE_s  = this->_state(VEC(i,j,k),ERAD1_ +off,q) - state_new(VEC(i,j,k),ERAD1_ +off,q) ;
+                const double dSx_s = this->_state(VEC(i,j,k),FRADX1_+off,q) - state_new(VEC(i,j,k),FRADX1_+off,q) ;
+                const double dSy_s = this->_state(VEC(i,j,k),FRADY1_+off,q) - state_new(VEC(i,j,k),FRADY1_+off,q) ;
+                const double dSz_s = this->_state(VEC(i,j,k),FRADZ1_+off,q) - state_new(VEC(i,j,k),FRADZ1_+off,q) ;
+                const double tau_new = tau_run + dE_s ;
+                if ( tau_new > 0.0 ) {
+                    tau_run = tau_new ;
+                    state_new(VEC(i,j,k),TAU_,q) += dE_s  ;
+                    state_new(VEC(i,j,k),SX_,q)  += dSx_s ;
+                    state_new(VEC(i,j,k),SY_,q)  += dSy_s ;
+                    state_new(VEC(i,j,k),SZ_,q)  += dSz_s ;
+                    // radiation kept at its post-collision value (accepted)
+                } else {
+                    // hard stop this species: revert its radiation, no deposit
+                    state_new(VEC(i,j,k),ERAD1_ +off,q) = this->_state(VEC(i,j,k),ERAD1_ +off,q) ;
+                    state_new(VEC(i,j,k),FRADX1_+off,q) = this->_state(VEC(i,j,k),FRADX1_+off,q) ;
+                    state_new(VEC(i,j,k),FRADY1_+off,q) = this->_state(VEC(i,j,k),FRADY1_+off,q) ;
+                    state_new(VEC(i,j,k),FRADZ1_+off,q) = this->_state(VEC(i,j,k),FRADZ1_+off,q) ;
+                }
+            }
+        #else
             // ── Accumulate dE and dS over all species ────────────────────────────
             double dE = 0., dSx = 0., dSy = 0., dSz = 0. ;
             #pragma unroll
@@ -649,18 +719,30 @@ struct m1_equations_system_t
             state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
             state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
 
-            if ( !energy_good ) {
-                // revert all radiation species to old state
-                #pragma unroll
-                for( int ispec = 0; ispec < n_species; ++ispec ) {
-                    state_new(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),ERAD1_+ispec*GRACE_N_M1_VARS,q) ;
-                    state_new(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADX1_+ispec*GRACE_N_M1_VARS,q) ;
-                    state_new(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADY1_+ispec*GRACE_N_M1_VARS,q) ;
-                    state_new(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) = this->_state(VEC(i,j,k),FRADZ1_+ispec*GRACE_N_M1_VARS,q) ;
-                }
+            // The fluid absorbed limiting_factor_E of the exchange; the
+            // radiation keeps the complementary fraction so energy AND momentum
+            // are conserved (mirror of the Ye/Ymu number limiter below).
+            // Branchless convex blend of the post-collision (new) and
+            // pre-collision (old) states: bounded, causality-preserving, and a
+            // no-op when energy_good (keep == 0).  Reverting to old while the
+            // fluid keeps a partial deposit would DESTROY energy.
+            const double keep = 1.0 - limiting_factor_E ;
+            #pragma unroll
+            for( int ispec = 0; ispec < n_species; ++ispec ) {
+                const int off = ispec*GRACE_N_M1_VARS ;
+                state_new(VEC(i,j,k),ERAD1_ +off,q) = limiting_factor_E * state_new(VEC(i,j,k),ERAD1_ +off,q) + keep * this->_state(VEC(i,j,k),ERAD1_ +off,q) ;
+                state_new(VEC(i,j,k),FRADX1_+off,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADX1_+off,q) + keep * this->_state(VEC(i,j,k),FRADX1_+off,q) ;
+                state_new(VEC(i,j,k),FRADY1_+off,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADY1_+off,q) + keep * this->_state(VEC(i,j,k),FRADY1_+off,q) ;
+                state_new(VEC(i,j,k),FRADZ1_+off,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADZ1_+off,q) + keep * this->_state(VEC(i,j,k),FRADZ1_+off,q) ;
             }
-        #endif
+        #endif // GRACE_M1_BACKREACT_HARDSTOP
+        #endif // GRACE_FREEZE_HYDRO
         #endif // GRACE_M1_NU_SPECIES >= 1
+
+        #if GRACE_M1_NU_SPECIES >= 3
+        // Baryon density (densitized): shared by the Ye and Ymu channels.
+        double const D = state_new(VEC(i,j,k),DENS_,q) ;
+        #endif
 
         // We define dN in sense Ye. Old - New. Less nrad_e more ye.
         #if GRACE_M1_NU_SPECIES >= 3
@@ -672,15 +754,25 @@ struct m1_equations_system_t
         // Ye bounds check
         double yemax = eos.get_c2p_ye_max();
         double yemin = eos.get_c2p_ye_min();
-        double const D        = state_new(VEC(i,j,k),DENS_,q) ;
         double const dye_old  = state_new(VEC(i,j,k),YESTAR_,q) ;
         double const ye_old   = dye_old / D ;
         double const dye_new  = dye_old + dN1 - dN2 ;
         double const ye_new   = dye_new / D ;
         bool const number_e_good = ( ye_new >= yemin && ye_new <= yemax ) ;
 
-        double const factor_max = (yemax - ye_old) * D / (dye_new - dye_old) ;
-        double const factor_min = (yemin - ye_old) * D / (dye_new - dye_old) ;
+        #if GRACE_M1_BACKREACT_HARDSTOP
+        if ( number_e_good ) {
+            state_new(VEC(i,j,k),YESTAR_,q) = dye_new ;
+        }
+        else {
+            // hard stop: revert nue/anue number, leave Ye at its old value
+            state_new(VEC(i,j,k),NRAD1_,q)  = this->_state(VEC(i,j,k),NRAD1_,q) ;
+            state_new(VEC(i,j,k),NRAD2_,q)  = this->_state(VEC(i,j,k),NRAD2_,q) ;
+            state_new(VEC(i,j,k),YESTAR_,q) = dye_old ;
+        }
+        #else
+        double const factor_max = (yemax - ye_old) * D / (dN1 - dN2) ;
+        double const factor_min = (yemin - ye_old) * D / (dN1 - dN2) ;
 
         // Pick the tightest limiting factor, defaulting to 1 if in bounds
         double const limiting_factor = (factor_max >= 0.0 && factor_max <= 1.0) ? factor_max * (1.0 - 1e-10) :
@@ -696,9 +788,10 @@ struct m1_equations_system_t
                                                 - limiting_factor * dN1 ;
             state_new(VEC(i,j,k),NRAD2_,q) = this->_state(VEC(i,j,k),NRAD2_,q)
                                                 - limiting_factor * dN2 ;
-            state_new(VEC(i,j,k),YESTAR_,q) = dye_old + limiting_factor * (dye_new - dye_old) ;
+            state_new(VEC(i,j,k),YESTAR_,q) = dye_old + limiting_factor * (dN1 - dN2) ;
         }
-        #endif
+        #endif // GRACE_M1_BACKREACT_HARDSTOP
+        #endif // GRACE_M1_NU_SPECIES >= 3
 
         #if GRACE_M1_NU_SPECIES >= 5
         const double dN3 = this->_state(VEC(i,j,k),NRAD3_,q)
@@ -714,8 +807,18 @@ struct m1_equations_system_t
         double const ymu_new    = dymu_new / D ;
         bool const number_mu_good = ( ymu_new >= ymumin && ymu_new <= ymumax ) ;
 
-        double const fac_max_mu = (ymumax - ymu_old) * D / (dymu_new - dymu_old) ;
-        double const fac_min_mu = (ymumin - ymu_old) * D / (dymu_new - dymu_old) ;
+        #if GRACE_M1_BACKREACT_HARDSTOP
+        if ( number_mu_good ) {
+            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_new ;
+        } else {
+            // hard stop: revert numu/anumu number, leave Ymu at its old value
+            state_new(VEC(i,j,k),NRAD3_,q)   = this->_state(VEC(i,j,k),NRAD3_,q) ;
+            state_new(VEC(i,j,k),NRAD4_,q)   = this->_state(VEC(i,j,k),NRAD4_,q) ;
+            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old ;
+        }
+        #else
+        double const fac_max_mu = (ymumax - ymu_old) * D / (dN3 - dN4) ;
+        double const fac_min_mu = (ymumin - ymu_old) * D / (dN3 - dN4) ;
 
         double const limiting_factor_mu = (fac_max_mu >= 0.0 && fac_max_mu <= 1.0) ? fac_max_mu * (1.0 - 1e-10) :
                                            (fac_min_mu >= 0.0 && fac_min_mu <= 1.0) ? fac_min_mu * (1.0 - 1e-10) :
@@ -728,9 +831,10 @@ struct m1_equations_system_t
                                               - limiting_factor_mu * dN3 ;
             state_new(VEC(i,j,k),NRAD4_,q)   = this->_state(VEC(i,j,k),NRAD4_,q)
                                               - limiting_factor_mu * dN4 ;
-            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old + limiting_factor_mu * (dymu_new - dymu_old) ;
+            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old + limiting_factor_mu * (dN3 - dN4) ;
         }
-        #endif
+        #endif // GRACE_M1_BACKREACT_HARDSTOP
+        #endif // GRACE_M1_NU_SPECIES >= 5
     }
 
     #ifdef GRACE_M1_PHOTONS
@@ -768,19 +872,38 @@ struct m1_equations_system_t
                                          ( factor_tau >= 0.0 && factor_tau <= 1.0 ) ? factor_tau * (1.0 - 1e-10) :
                                          1.0 ;
 
-        state_new(VEC(i,j,k),TAU_,q) += limiting_factor_E * dE  ;
-        state_new(VEC(i,j,k),SX_,q)  += limiting_factor_E * dSx ;
-        state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
-        state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
-
-        if ( !energy_good ) {
-            // revert the photon block to the pre-collision state
+        #if GRACE_M1_BACKREACT_HARDSTOP
+        if ( energy_good ) {
+            // accept: full deposit to the fluid, photon block kept at new
+            state_new(VEC(i,j,k),TAU_,q) += dE  ;
+            state_new(VEC(i,j,k),SX_,q)  += dSx ;
+            state_new(VEC(i,j,k),SY_,q)  += dSy ;
+            state_new(VEC(i,j,k),SZ_,q)  += dSz ;
+        } else {
+            // hard stop: revert the photon block, fluid untouched (no deposit)
             state_new(VEC(i,j,k),ERADPH_,q)  = this->_state(VEC(i,j,k),ERADPH_,q)  ;
             state_new(VEC(i,j,k),NRADPH_,q)  = this->_state(VEC(i,j,k),NRADPH_,q)  ;
             state_new(VEC(i,j,k),FRADXPH_,q) = this->_state(VEC(i,j,k),FRADXPH_,q) ;
             state_new(VEC(i,j,k),FRADYPH_,q) = this->_state(VEC(i,j,k),FRADYPH_,q) ;
             state_new(VEC(i,j,k),FRADZPH_,q) = this->_state(VEC(i,j,k),FRADZPH_,q) ;
         }
+        #else
+        state_new(VEC(i,j,k),TAU_,q) += limiting_factor_E * dE  ;
+        state_new(VEC(i,j,k),SX_,q)  += limiting_factor_E * dSx ;
+        state_new(VEC(i,j,k),SY_,q)  += limiting_factor_E * dSy ;
+        state_new(VEC(i,j,k),SZ_,q)  += limiting_factor_E * dSz ;
+        // Radiation keeps the fraction the fluid did not absorb — branchless
+        // convex blend of post-collision (new) and pre-collision (old); a no-op
+        // when energy_good (keep == 0).  Conserves energy/momentum; reverting
+        // to old while the fluid keeps a partial deposit would destroy it.  N
+        // rides the same factor so the photon number stays consistent with E.
+        const double keep = 1.0 - limiting_factor_E ;
+        state_new(VEC(i,j,k),ERADPH_,q)  = limiting_factor_E * state_new(VEC(i,j,k),ERADPH_,q)  + keep * this->_state(VEC(i,j,k),ERADPH_,q)  ;
+        state_new(VEC(i,j,k),NRADPH_,q)  = limiting_factor_E * state_new(VEC(i,j,k),NRADPH_,q)  + keep * this->_state(VEC(i,j,k),NRADPH_,q)  ;
+        state_new(VEC(i,j,k),FRADXPH_,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADXPH_,q) + keep * this->_state(VEC(i,j,k),FRADXPH_,q) ;
+        state_new(VEC(i,j,k),FRADYPH_,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADYPH_,q) + keep * this->_state(VEC(i,j,k),FRADYPH_,q) ;
+        state_new(VEC(i,j,k),FRADZPH_,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADZPH_,q) + keep * this->_state(VEC(i,j,k),FRADZPH_,q) ;
+        #endif // GRACE_M1_BACKREACT_HARDSTOP
         #endif
     }
     #endif /* GRACE_M1_PHOTONS */

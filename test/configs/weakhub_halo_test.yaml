@@ -1,0 +1,68 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Config for the Weakhub halo-state probe (test_weakhub_halo.cpp).
+#
+# Reproduces the PRODUCTION 5-species muonic setup as closely as a unit test
+# can, so the EAS rates can be evaluated at the exact (rho, T, Ye, Ymu) the
+# [BR diag] instrumentation reported for the halo cells on Hunter, and the
+# result compared against the numbers that run printed.
+#
+# Needs BOTH the 2 GB SFHo npemu weakhub table AND the leptonic 4D EOS
+# (the fugacity state -- chemical potentials, eta_nu -- comes from the EOS).
+# ~4.5 GB resident.  Machine-local paths: local/manual check, not CI-portable.
+# ---------------------------------------------------------------------------
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "leptonic",
+  tabulated_eos: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+  leptonic: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
+    add_ele_contribution: true,
+    cold_table_temperature: 0.100001
+  },
+  eps_maximum: 1.e+07
+}
+grmhd: {
+  atmosphere: {
+    # Production values -- eas_rho_min is derived from these, and the whole
+    # point of the probe is where that sits relative to the table's own floor.
+    temp_fl: 9.9e-2,
+    rho_fl: 1.e-12,
+    ye_fl: 0.05,
+    atmosphere_is_beta_eq: true
+  }
+}
+m1: {
+  eas: {
+    kinds: ["neutrino_weakhub"],
+    # 6-species SFHo npemu grey table (2 GB).  Its rho axis starts at 1e-9
+    # code units -- three decades ABOVE grmhd.atmosphere.rho_fl above.
+    weakhub_table: "/Users/miler/Codes/Weakhub/SFHocompose_grey_npemu_Bollig_suppress_noPP_advopac_20240818_Weakhub_grey.h5",
+    beta_decay: true,
+    plasmon_decay: true,
+    bremsstrahlung: true,
+    pair_annihilation: true,
+    temperature_correction: true,
+    tau_policy: "none",
+    betaeq_policy: "off"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}

@@ -36,6 +36,8 @@
 #include <grace_config.h>
 #include <grace/config/config_parser.hh>
 #include <grace/physics/grace_weakhub_table.hh>
+#include <grace/physics/eos/eos_storage.hh>
+#include <grace/physics/eos/leptonic_eos_4d.hh>
 
 #include <array>
 #include <cmath>
@@ -48,8 +50,9 @@ namespace {
 
 using namespace grace;
 
-// lookup() floors non-positive opacities to this value before returning.
-constexpr double kFloor = 1.0e-60;
+// lookup() maps non-positive / non-finite opacities to this value before
+// returning; the 1e-60 positivity floor is applied at the end of the rates.
+constexpr double kFloor = weakhub::kappa_zero_cgs;
 
 // Independent image of the file: raw arrays in the HDF5 dataset's own
 // C-order {species, ymu, ye, temp, rho}.
@@ -244,4 +247,125 @@ TEST_CASE("Weakhub production lookup reproduces the raw HDF5 table at grid "
     }
     INFO("nodes checked: " << n_checked);
     REQUIRE(n_checked > 0);
+}
+
+
+// ---------------------------------------------------------------------------
+//  Table-agnostic bounds check.
+//
+//  The round-trip test above is bound to the 3-species DD2 table (it asserts
+//  g.nspec == 3 for the slot mapping), so a 5/6-species production table never
+//  reaches its logrho_min assertion.  This case makes the same comparison for
+//  WHATEVER table the parfile selects, and prints the domain next to the
+//  atmosphere floor -- lookup() now floors rather than clamps below the table's
+//  rho/T range, so where that boundary sits relative to rho_fl decides how much
+//  of the star loses its table opacities.
+//
+//  Run against a production parfile:
+//    ./weakhub_golden_test "[bounds]" --grace-parfile <your parfile>
+// ---------------------------------------------------------------------------
+TEST_CASE("Weakhub domain is read exactly from the file", "[weakhub][bounds]")
+{
+    REQUIRE(weakhub::is_initialized());
+    auto const& h = weakhub::get_device_handle();
+    std::string const path =
+        grace::get_param<std::string>("m1", "eas", "weakhub_table");
+    auto const g = read_golden(path);
+
+    printf("\n=============== Weakhub domain as loaded ===============\n");
+    printf("file: %s\n", path.c_str());
+    printf("shape (from the kappa dataspace): nspec=%d nymu=%d nye=%d ntemp=%d nrho=%d\n",
+           g.nspec, g.nymu, g.nye, g.ntemp, g.nrho);
+    printf("               %-22s %-22s\n", "file", "device_handle");
+    printf("  logrho_min   %-22.15g %-22.15g\n", g.logrho.front(),  h.logrho_min);
+    printf("  logrho_max   %-22.15g %-22.15g\n", g.logrho.back(),   h.logrho_max);
+    printf("  logtemp_min  %-22.15g %-22.15g\n", g.logtemp.front(), h.logtemp_min);
+    printf("  logtemp_max  %-22.15g %-22.15g\n", g.logtemp.back(),  h.logtemp_max);
+    printf("  ye_min       %-22.15g %-22.15g\n", g.ye.front(),      h.ye_min);
+    printf("  ye_max       %-22.15g %-22.15g\n", g.ye.back(),       h.ye_max);
+    if (g.nymu > 1) {
+        printf("  logymu_min   %-22.15g %-22.15g\n", g.logymu.front(), h.logymu_min);
+        printf("  logymu_max   %-22.15g %-22.15g\n", g.logymu.back(),  h.logymu_max);
+    }
+    printf("\nlinear domain (axes are natural log; rho in CODE units, T in MeV):\n");
+    printf("  rho  [%.6e, %.6e]\n", std::exp(h.logrho_min),  std::exp(h.logrho_max));
+    printf("  T    [%.6e, %.6e]\n", std::exp(h.logtemp_min), std::exp(h.logtemp_max));
+    printf("  ye   [%.6f, %.6f]\n", h.ye_min, h.ye_max);
+    if (h.nymu > 1)
+        printf("  ymu  [%.6e, %.6e]\n", std::exp(h.logymu_min), std::exp(h.logymu_max));
+
+    // Where the table floor sits relative to the fluid atmosphere.  Below the
+    // table's rho the opacities are floored, so a table floor well above rho_fl
+    // means a shell of the star gets no table contribution at all.
+    double const rho_fl   = grace::get_param<double>("grmhd","atmosphere","rho_fl");
+    double const rho_tmin = std::exp(h.logrho_min);
+    double const rho_tmax = std::exp(h.logrho_max);
+
+    // The EOS and the weakhub table are independent files with independent
+    // domains.  Nothing forces them to agree, and for SFHo they do not: the
+    // EOS runs several decades further down.  Fluid can therefore exist at
+    // densities where no opacity data exists at all.
+    printf("\ndomain comparison (code units):\n");
+    printf("  %-26s [%.6e, %.6e]\n", "weakhub table rho", rho_tmin, rho_tmax);
+    if (grace::get_param<std::string>("eos","eos_type") == "leptonic") {
+        auto const eos = grace::eos::get().get_eos<grace::leptonic_eos_4d_t>();
+        double const rho_emin = eos.density_minimum();
+        double const rho_emax = eos.density_maximum();
+        printf("  %-26s [%.6e, %.6e]\n", "EOS rho", rho_emin, rho_emax);
+        printf("  %-26s [%.6e, %.6e]  (%.4f MeV)\n", "EOS T",
+               eos.temperature_minimum(), eos.temperature_maximum(),
+               eos.temperature_minimum());
+        printf("  %-26s [%.6f, %.6f]\n", "EOS ye",
+               eos.get_c2p_ye_min(), eos.get_c2p_ye_max());
+        if (rho_emin < rho_tmin)
+            printf("  ==> the EOS reaches %.1fx lower in rho than the weakhub table:\n"
+                   "      rho in [%.3e, %.3e] is valid fluid with NO opacity data.\n",
+                   rho_tmin / rho_emin, rho_emin, rho_tmin);
+    }
+    printf("  %-26s %.6e\n", "atmosphere rho_fl", rho_fl);
+    if (rho_fl < rho_tmin)
+        printf("  ==> rho_fl sits BELOW the weakhub floor by %.1fx: every cell in\n"
+               "      [%.3e, %.3e] is outside the table and gets floored rates.\n",
+               rho_tmin / rho_fl, rho_fl, rho_tmin);
+    else
+        printf("  ==> the evolved density range starts inside the weakhub table.\n");
+    printf("=======================================================\n");
+
+    // The actual assertions: every bound and every axis node, exactly.
+    REQUIRE(h.n_species_table == g.nspec);
+    REQUIRE(h.nrho  == g.nrho);
+    REQUIRE(h.ntemp == g.ntemp);
+    REQUIRE(h.nye   == g.nye);
+    REQUIRE(h.nymu  == std::max(g.nymu, 1));
+    REQUIRE_THAT(h.logrho_min,  WithinRel(g.logrho.front(),  1e-14));
+    REQUIRE_THAT(h.logrho_max,  WithinRel(g.logrho.back(),   1e-14));
+    REQUIRE_THAT(h.logtemp_min, WithinRel(g.logtemp.front(), 1e-14));
+    REQUIRE_THAT(h.logtemp_max, WithinRel(g.logtemp.back(),  1e-14));
+    REQUIRE_THAT(h.ye_min,      WithinRel(g.ye.front(),      1e-14));
+    REQUIRE_THAT(h.ye_max,      WithinRel(g.ye.back(),       1e-14));
+    if (g.nymu > 1) {
+        REQUIRE_THAT(h.logymu_min, WithinRel(g.logymu.front(), 1e-14));
+        REQUIRE_THAT(h.logymu_max, WithinRel(g.logymu.back(),  1e-14));
+    }
+
+    // The bounds are only meaningful if the axis VIEWS agree too -- find_bracket
+    // reads those, not the scalars.
+    auto ax = [](Kokkos::View<double*> const& v) {
+        auto m = Kokkos::create_mirror_view(v);
+        Kokkos::deep_copy(m, v);
+        std::vector<double> o(v.extent(0));
+        for (size_t i = 0; i < o.size(); ++i) o[i] = m(i);
+        return o;
+    };
+    auto const a_lr = ax(h.logrho_axis);
+    auto const a_lt = ax(h.logtemp_axis);
+    auto const a_ye = ax(h.ye_axis);
+    for (int i = 0; i < g.nrho;  ++i) REQUIRE_THAT(a_lr[i], WithinRel(g.logrho[i],  1e-14));
+    for (int j = 0; j < g.ntemp; ++j) REQUIRE_THAT(a_lt[j], WithinRel(g.logtemp[j], 1e-14));
+    for (int k = 0; k < g.nye;   ++k) REQUIRE_THAT(a_ye[k], WithinRel(g.ye[k],      1e-14));
+    if (g.nymu > 1) {
+        auto const a_lm = ax(h.logymu_axis);
+        for (int l = 0; l < g.nymu; ++l)
+            REQUIRE_THAT(a_lm[l], WithinRel(g.logymu[l], 1e-14));
+    }
 }

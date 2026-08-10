@@ -16,6 +16,17 @@ evolution:
     description: >
       CFL factor
 
+  force_unit_wavespeed:
+    type: bool
+    default: false
+    description: >
+      Use c_max = 1 in the timestep estimate instead of the computed
+      characteristic speed, giving dt = cfl_factor * dx exactly.  Z4 builds
+      already hardcode c_max = 1, so this only affects Cowling runs; set it
+      there to get the same dt a Z4 run would take (FIL parity, and it makes
+      Cowling/Z4c comparisons share a timestep).  Affects the dt estimate
+      ONLY -- no flux, eigenvalue or Riemann solver is touched.
+
   timestep_selection_mode:
     type: keyword 
     allowed: ["automatic", "manual"]

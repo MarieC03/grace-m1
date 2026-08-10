@@ -90,6 +90,8 @@ void find_stable_timestep_impl() {
 
     auto& params = config_parser::get() ;
     double const CFL = params["evolution"]["cfl_factor"].as<double>() ;
+    bool const unit_cmax =
+        grace::get_param<bool>("evolution","force_unit_wavespeed") ;
 
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t>
@@ -109,8 +111,9 @@ void find_stable_timestep_impl() {
                    , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k), int const& q, double& dtmax)
     {
         #if (GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4)
-        double cmax = GET_CMAX;
+        double cmax = unit_cmax ? 1.0 : GET_CMAX;
         #ifdef GRACE_ENABLE_M1
+        if ( !unit_cmax ) {
         #if GRACE_M1_NU_SPECIES >= 1
         double m1_cmax = m1_eq_system.template compute_max_eigenspeed<0>(VEC(i,j,k), q);
         #else
@@ -128,6 +131,7 @@ void find_stable_timestep_impl() {
         m1_cmax = Kokkos::fmax(m1_cmax, m1_eq_system.template compute_max_eigenspeed<M1_PHOTON_SPECIES>(VEC(i,j,k), q));
         #endif
         cmax = Kokkos::fmax(cmax, m1_cmax);
+        }
         #endif
         #else
         double cmax = 1 ;

@@ -197,8 +197,8 @@ eos:
       default: -1
       range: "[-1,*)"
       description: >
-        If larger than temp_min, Grace will generate its own hot table.
-        If smaller Grace will keep using provided table
+        Temperature [MeV] of the cold slice GRACE generates; values below the
+        EOS table minimum are raised to it. Always replaces cold_table_filename.
 
     cold_table_output_filename:
       type: string

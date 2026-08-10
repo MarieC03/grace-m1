@@ -70,7 +70,8 @@ struct test_eas_op {
             "m1", "id_type"
         ) ;
         if (_which_test == "straight_beam" or
-            _which_test == "curved_beam" )
+            _which_test == "curved_beam" or
+            _which_test == "zero" )              // schema default; rates stay floored
         {
             which_test = ZERO_EAS ;
         } else if (
@@ -92,7 +93,7 @@ struct test_eas_op {
         } else if ( _which_test == "coupling_test") {
             which_test = COUPLING_TEST ;
         } else {
-            ERROR("Unknown m1 test") ;
+            ERROR("Unknown m1 test '" << _which_test << "' for m1.eas kind 'test'") ;
         }
     }
 
@@ -681,21 +682,21 @@ struct neutrinos_eas_op
         return;
     }
 
-    // Transparent low-density cell: zero every EAS rate output (emission +
-    // opacity, all species) without touching the EOS.  Mirrors the per-species
-    // write block at the end of operator().
+    // Transparent low-density cell: floor every EAS rate output without touching
+    // the EOS.  1e-60 not 0 so log-scale plots of kappa work; this path returns
+    // before the temperature correction, so the value cannot be amplified.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     void floor_eas(VEC(const int i, const int j, const int k), int64_t q) const {
         #if (GRACE_M1_NU_SPECIES >= 1)
-        aux(i,j,k,ETA1_,q)=1.e-30; aux(i,j,k,KAPPAA1_,q)=1.e-30; aux(i,j,k,KAPPAS1_,q)=1.e-30; aux(i,j,k,ETAN1_,q)=1.e-30; aux(i,j,k,KAPPAAN1_,q)=1.e-30;
+        aux(i,j,k,ETA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS1_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN1_,q)=weakhub::kappa_floor_code;
         #endif
         #if (GRACE_M1_NU_SPECIES >= 3)
-        aux(i,j,k,ETA2_,q)=1.e-30; aux(i,j,k,KAPPAA2_,q)=1.e-30; aux(i,j,k,KAPPAS2_,q)=1.e-30; aux(i,j,k,ETAN2_,q)=1.e-30; aux(i,j,k,KAPPAAN2_,q)=1.e-30;
-        aux(i,j,k,ETA3_,q)=1.e-30; aux(i,j,k,KAPPAA3_,q)=1.e-30; aux(i,j,k,KAPPAS3_,q)=1.e-30; aux(i,j,k,ETAN3_,q)=1.e-30; aux(i,j,k,KAPPAAN3_,q)=1.e-30;
+        aux(i,j,k,ETA2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS2_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN2_,q)=weakhub::kappa_floor_code;
+        aux(i,j,k,ETA3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS3_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN3_,q)=weakhub::kappa_floor_code;
         #endif
         #if (GRACE_M1_NU_SPECIES >= 5)
-        aux(i,j,k,ETA4_,q)=1.e-30; aux(i,j,k,KAPPAA4_,q)=1.e-30; aux(i,j,k,KAPPAS4_,q)=1.e-30; aux(i,j,k,ETAN4_,q)=1.e-30; aux(i,j,k,KAPPAAN4_,q)=1.e-30;
-        aux(i,j,k,ETA5_,q)=1.e-30; aux(i,j,k,KAPPAA5_,q)=1.e-30; aux(i,j,k,KAPPAS5_,q)=1.e-30; aux(i,j,k,ETAN5_,q)=1.e-30; aux(i,j,k,KAPPAAN5_,q)=1.e-30;
+        aux(i,j,k,ETA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS4_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN4_,q)=weakhub::kappa_floor_code;
+        aux(i,j,k,ETA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS5_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN5_,q)=weakhub::kappa_floor_code;
         #endif
         #ifdef GRACE_M1_DEBUG_EAS
         // Keep the debug fugacity / chemical-potential fields consistent with a

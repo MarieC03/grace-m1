@@ -1461,3 +1461,430 @@ TEST_CASE("c2p round-trip / Schwarzschild-CKS, no B", "[c2p][hydro][curved]")
         REQUIRE(max_res < 1e-10) ;
     }
 }
+
+
+// ---------------------------------------------------------------------------
+//  PROBE: does the entropy backup leave the conserved state inconsistent?
+//
+//  Mimics the M1 momentum backreaction at the stellar surface: take a cold,
+//  low-density fluid at rest, then add a pure momentum kick dS to S~_i while
+//  leaving tau untouched (exactly what add_backreaction does when only the
+//  MOMENTUM channel is coupled).  Invert with the entropy backup OFF and ON
+//  and report, for each, which RESET_* bits come back -- i.e. whether the
+//  caller (grmhd.hh) will re-synchronise tau / S~ with the accepted prims.
+// ---------------------------------------------------------------------------
+TEST_CASE("PROBE: entropy backup vs momentum kick", "[c2p][probe]")
+{
+    auto eos       = eos::get().get_hybrid_pwpoly() ;
+    auto atmo      = get_atmo_params() ;
+    auto excision  = get_excision_params() ;
+    auto c2p_pars  = get_c2p_params() ;
+
+    metric_array_t metric({1.0, 0.0, 0.0, 1.0, 0.0, 1.0},
+                          {0.0, 0.0, 0.0}, 1.0) ;
+
+    double const rho0 = 1e-8 ;
+
+    grmhd_prims_array_t p0{} ;
+    p0[RHOL]  = rho0 ;
+    p0[TEMPL] = 0.0 ;
+    p0[YEL]   = 0.0 ;
+    p0[ZXL]   = p0[ZYL] = p0[ZZL] = 0.0 ;
+    p0[BXL]   = p0[BYL] = p0[BZL] = 0.0 ;
+    double csnd2 ; double ymu = 0.0 ; grace::eos_err_t eerr{} ;
+    p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                    p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], ymu, eerr) ;
+
+    grmhd_cons_array_t cons0{} ;
+    prims_to_conservs(p0, cons0, metric) ;
+
+    double const D0   = cons0[DENSL] ;
+    double const tau0 = cons0[TAUL]  ;
+    double const q0   = tau0/D0 ;
+    // eps>=0 boundary: (S/D)^2 = q(q+2)
+    double const r_crit = std::sqrt(q0*(q0+2.0)) ;
+
+    printf("\n[probe] rho=%.3e D=%.6e tau=%.6e q=tau/D=%.6e eps0=%.6e s0=%.6e r_crit=%.6e\n",
+           rho0, D0, tau0, q0, p0[EPSL], p0[ENTL], r_crit) ;
+
+    double const FRACS[6] = {0.1, 0.5, 0.9, 1.5, 3.0, 10.0} ;
+    for (int ib = 0 ; ib < 2 ; ++ib) {
+      c2p_pars.use_ent_backup = (ib == 1) ;
+      printf("[probe] --- use_ent_backup = %d ---\n", int(c2p_pars.use_ent_backup)) ;
+      for (int i = 0 ; i < 6 ; ++i) {
+        grmhd_cons_array_t cons = cons0 ;
+        double const dS = FRACS[i] * r_crit * D0 ;   // pure momentum deposit
+        cons[STXL] += dS ;
+        double const tau_in = cons[TAUL] ;
+
+        grmhd_prims_array_t p1 = p0 ;
+        c2p_err_t err ;
+        double rtp[3] = {1.0, 1.0, 1.0} ;
+        bool const floored = conservs_to_prims(cons, p1, metric, eos, atmo,
+                                               excision, c2p_pars, rtp, err) ;
+        // Emulate the caller's selective write-back (grmhd.hh:401-421).
+        double const tau_kept = err.test(c2p_err_enum_t::C2P_RESET_TAU)
+                              ? cons[TAUL] : tau_in ;
+        double const tau_consistent = cons[TAUL] ; // recomputed from accepted prims
+        double const mismatch = std::fabs(tau_kept - tau_consistent)
+                              / std::fmax(std::fabs(tau_consistent), 1e-300) ;
+        printf("  |S|/D=%.3e (%.1f x r_crit): rho=%.4e eps=%.4e T=%.4e "
+               "| BACKUP=%d ATMO=%d RST_TAU=%d RST_S=%d EPS_LO=%d floored=%d "
+               "| tau_kept=%.6e tau_cons=%.6e  mismatch=%.3e\n",
+               (cons0[STXL]+dS)/D0, FRACS[i],
+               p1[RHOL], p1[EPSL], p1[TEMPL],
+               int(err.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)),
+               int(err.test(c2p_err_enum_t::C2P_ATMO_RESET)),
+               int(err.test(c2p_err_enum_t::C2P_RESET_TAU)),
+               int(err.test(c2p_err_enum_t::C2P_RESET_STILDE)),
+               int(err.test(c2p_err_enum_t::C2P_SIG_EPS_TOO_LOW)),
+               int(floored), tau_kept, tau_consistent, mismatch) ;
+      }
+    }
+    REQUIRE(true) ;
+}
+
+
+#if GRACE_M1_NU_SPECIES >= 5
+// ---------------------------------------------------------------------------
+//  PROBE A: is eps ~ 1/rho at the stellar surface in the ACTUAL 4D table?
+//
+//  Hypothesis under test: the e+/e- pair + photon term is ~T^4 and (nearly)
+//  rho-independent, so eps = energy/rho picks up a 1/rho divergence at low
+//  density -> the surface becomes stiff in eps and any perturbation of the
+//  recovered energy shows up as a huge eps/T excursion.
+//  Reports total eps and its baryon / muon / electron split, plus the local
+//  log-slope d ln(eps) / d ln(rho).  Slope -> -1 confirms eps ~ 1/rho.
+// ---------------------------------------------------------------------------
+TEST_CASE("PROBE A: leptonic eps vs rho at fixed T", "[c2p][leptonic][probe]")
+{
+    auto eos = eos::get().get_eos<leptonic_eos_4d_t>() ;
+
+    double const ye0  = 0.05 ;
+    double const ymu0 = std::fmax(eos.get_c2p_ymu_min()*1.01, 1e-6) ;
+
+    printf("\n[probeA] table bounds: rho=[%.3e,%.3e] T=[%.3e,%.3e] "
+           "ye=[%.3f,%.3f] ymu=[%.3e,%.3e] energy_shift=%.6e\n",
+           eos.density_minimum(), eos.density_maximum(),
+           eos.temperature_minimum(), eos.temperature_maximum(),
+           eos.get_c2p_ye_min(), eos.get_c2p_ye_max(),
+           eos.get_c2p_ymu_min(), eos.get_c2p_ymu_max(),
+           eos.energy_shift) ;
+    printf("[probeA] ye=%.3f ymu=%.3e  add_ele_contribution=%d\n",
+           ye0, ymu0, int(eos.add_ele_contribution)) ;
+
+    double const TS[3] = {1.0, 5.0, 10.0} ;   // MeV
+    for (int it = 0 ; it < 3 ; ++it) {
+        double const T = TS[it] ;
+        if (T <= eos.temperature_minimum() || T >= eos.temperature_maximum()) continue ;
+        double const ltemp = std::log(T) ;
+        printf("[probeA] --- T = %.2f MeV ---\n", T) ;
+        printf("            rho        eps_tot      eps_bar      eps_mu       eps_ele"
+               "     ele/tot   dln(eps)/dln(rho)\n") ;
+        double prev_leps = 0.0, prev_lrho = 0.0 ; bool have_prev = false ;
+        for (int i = 0 ; i <= 8 ; ++i) {
+            double const rho = std::pow(10.0, -12.0 + 0.5*i) ;   // 1e-12 .. 1e-8
+            if (rho <= eos.density_minimum() || rho >= eos.density_maximum()) continue ;
+            double const lrho = std::log(rho) ;
+            double const lymu = std::log(ymu0) ;
+            double const yp   = ye0 + ymu0 ;
+            double const eb   = std::exp(eos.baryon_table.interp(lrho,ltemp,yp,
+                                    leptonic_eos_4d_t::TABEPS)) - eos.energy_shift ;
+            double const emu  = eos.muon_table.interp(lrho,ltemp,lymu,
+                                    leptonic_eos_4d_t::TABEPS_MU_MINUS)
+                              + eos.muon_table.interp(lrho,ltemp,lymu,
+                                    leptonic_eos_4d_t::TABEPS_MU_PLUS) ;
+            double const ee   = eos.add_ele_contribution
+                              ? eos.ele_table.interp(lrho,ltemp,ye0,
+                                    leptonic_eos_4d_t::TABEPS_E_MINUS)
+                              + eos.ele_table.interp(lrho,ltemp,ye0,
+                                    leptonic_eos_4d_t::TABEPS_E_PLUS)
+                              : 0.0 ;
+            // = total_eps(); reproduced here because that member is private.
+            // yp = ye+ymu is well inside [yemin,yemax] so no clamp applies.
+            double const etot = eb + emu + ee ;
+            double slope = std::nan("") ;
+            if (have_prev && etot > 0.0) slope = (std::log(etot)-prev_leps)/(lrho-prev_lrho) ;
+            double const mue  = eos.ele_table .interp(lrho,ltemp,ye0,
+                                    leptonic_eos_4d_t::TABMUELE) ;
+            double const mumu = eos.muon_table.interp(lrho,ltemp,lymu,
+                                    leptonic_eos_4d_t::TABMUMU) ;
+            double const ylem = eos.ele_table .interp(lrho,ltemp,ye0,
+                                    leptonic_eos_4d_t::TABYLE_MINUS) ;
+            double const ylep = eos.ele_table .interp(lrho,ltemp,ye0,
+                                    leptonic_eos_4d_t::TABYLE_PLUS) ;
+            double const ymum = eos.muon_table.interp(lrho,ltemp,lymu,
+                                    leptonic_eos_4d_t::TABYMU_MINUS) ;
+            double const ymup = eos.muon_table.interp(lrho,ltemp,lymu,
+                                    leptonic_eos_4d_t::TABYMU_PLUS) ;
+            printf("     %.4e  %+.5e  %+.5e  %+.5e  %+.5e   %7.4f   %+8.4f"
+                   "  | mu_e=%+.6e mu_mu=%+.6e  net_e=%+.6e net_mu=%+.6e\n",
+                   rho, etot, eb, emu, ee,
+                   (etot != 0.0 ? ee/etot : 0.0), slope,
+                   mue, mumu, ylem-ylep, ymum-ymup) ;
+            if (etot > 0.0) { prev_leps = std::log(etot) ; prev_lrho = lrho ; have_prev = true ; }
+        }
+    }
+    REQUIRE(true) ;
+}
+
+
+// ---------------------------------------------------------------------------
+//  PROBE B: same momentum-kick experiment as the hybrid probe, but with the
+//  production 4D leptonic EOS at realistic halo conditions.
+// ---------------------------------------------------------------------------
+TEST_CASE("PROBE B: leptonic entropy backup vs momentum kick",
+          "[c2p][leptonic][probe]")
+{
+    auto eos       = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    auto atmo      = get_atmo_params() ;
+    auto excision  = get_excision_params() ;
+    auto c2p_pars  = get_c2p_params() ;
+
+    metric_array_t metric({1.0, 0.0, 0.0, 1.0, 0.0, 1.0},
+                          {0.0, 0.0, 0.0}, 1.0) ;
+
+    double const RHOS[2] = {1e-8, 1e-9} ;
+    double const TEMPS[2] = {1.0, 5.0} ;
+
+    for (int ir = 0 ; ir < 2 ; ++ir) {
+    for (int it = 0 ; it < 2 ; ++it) {
+        grmhd_prims_array_t p0{} ;
+        p0[RHOL]  = RHOS[ir] ;
+        p0[TEMPL] = TEMPS[it] ;
+        p0[YEL]   = 0.05 ;
+        p0[YMUL]  = std::fmax(eos.get_c2p_ymu_min()*1.01, 1e-6) ;
+        p0[ZXL]   = p0[ZYL] = p0[ZZL] = 0.0 ;
+        p0[BXL]   = p0[BYL] = p0[BZL] = 0.0 ;
+        double csnd2 ; grace::eos_err_t eerr{} ;
+        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL],
+                        p0[RHOL], p0[YEL], p0[YMUL], eerr) ;
+
+        grmhd_cons_array_t cons0{} ;
+        prims_to_conservs(p0, cons0, metric) ;
+        double const D0 = cons0[DENSL], tau0 = cons0[TAUL] ;
+        double const q0 = tau0/D0 ;
+        double const r_crit = std::sqrt(std::fmax(q0*(q0+2.0), 0.0)) ;
+
+        printf("\n[probeB] rho=%.3e T=%.2f : D=%.6e tau=%.6e q=%.6e eps0=%.6e "
+               "s0=%.6e r_crit=%.6e\n",
+               RHOS[ir], TEMPS[it], D0, tau0, q0, p0[EPSL], p0[ENTL], r_crit) ;
+
+        double const FRACS[5] = {0.1, 0.5, 0.9, 1.5, 3.0} ;
+        for (int ib = 0 ; ib < 2 ; ++ib) {
+          c2p_pars.use_ent_backup = (ib == 1) ;
+          printf("[probeB]  use_ent_backup = %d\n", int(c2p_pars.use_ent_backup)) ;
+          for (int i = 0 ; i < 5 ; ++i) {
+            grmhd_cons_array_t cons = cons0 ;
+            cons[STXL] += FRACS[i] * r_crit * D0 ;
+            double const tau_in = cons[TAUL] ;
+
+            grmhd_prims_array_t p1 = p0 ;
+            c2p_err_t err ;
+            double rtp[3] = {1.0, 1.0, 1.0} ;
+            bool const floored = conservs_to_prims(cons, p1, metric, eos, atmo,
+                                                   excision, c2p_pars, rtp, err) ;
+            double const tau_kept = err.test(c2p_err_enum_t::C2P_RESET_TAU)
+                                  ? cons[TAUL] : tau_in ;
+            double const tau_cons = cons[TAUL] ;
+            double const mismatch = std::fabs(tau_kept - tau_cons)
+                                  / std::fmax(std::fabs(tau_cons), 1e-300) ;
+            printf("   %.1f x r_crit: rho=%.4e eps=%.4e T=%.4e "
+                   "| BACKUP=%d ATMO=%d RST_TAU=%d RST_S=%d EPS_LO=%d floored=%d "
+                   "| mismatch=%.3e\n",
+                   FRACS[i], p1[RHOL], p1[EPSL], p1[TEMPL],
+                   int(err.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)),
+                   int(err.test(c2p_err_enum_t::C2P_ATMO_RESET)),
+                   int(err.test(c2p_err_enum_t::C2P_RESET_TAU)),
+                   int(err.test(c2p_err_enum_t::C2P_RESET_STILDE)),
+                   int(err.test(c2p_err_enum_t::C2P_SIG_EPS_TOO_LOW)),
+                   int(floored), mismatch) ;
+          }
+        }
+    }}
+    REQUIRE(true) ;
+}
+#endif // GRACE_M1_NU_SPECIES >= 5
+
+
+#if GRACE_M1_NU_SPECIES >= 5
+// ---------------------------------------------------------------------------
+//  PROBE C: is eps (hence tau) negative at the observed halo conditions?
+//  The [BR diag] halo cells sit at rho ~ 1.07e-12, T ~ 0.21 MeV, Ye = 0.5,
+//  Ymu = 5e-4.  tau = D*eps for a fluid at rest, so eps < 0 there would mean
+//  tau < 0 is the NORMAL state of those cells, not a sign of corruption.
+// ---------------------------------------------------------------------------
+TEST_CASE("PROBE C: eps sign at halo conditions", "[c2p][leptonic][probe]")
+{
+    auto eos = eos::get().get_eos<leptonic_eos_4d_t>() ;
+
+    double const ye0  = 0.5 ;
+    double const ymu0 = 5.0e-4 ;
+    printf("\n[probeC] ye=%.4f ymu=%.4e  (table ye_max=%.4f ymu_min=%.4e)\n",
+           ye0, ymu0, eos.get_c2p_ye_max(), eos.get_c2p_ymu_min()) ;
+    printf("      rho          T         eps_tot       eps_min(table)   tau/D=eps  sign\n") ;
+    double const RHOS[3] = {1.0e-12, 1.08e-12, 1.2e-12} ;
+    double const TS[5]   = {0.0999, 0.15, 0.2094, 0.25, 0.5} ;
+    for (int ir = 0 ; ir < 3 ; ++ir) {
+      for (int it = 0 ; it < 5 ; ++it) {
+        double rho = RHOS[ir], T = TS[it] ;
+        if (T <= eos.temperature_minimum()) T = eos.temperature_minimum()*1.0001 ;
+        double eps, csnd2, ent, press ;
+        grace::eos_err_t err{} ;
+        double ymul = ymu0, yel = ye0, Tl = T, rhol = rho ;
+        press = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                    eps, csnd2, ent, Tl, rhol, yel, ymul, err) ;
+        double epsmin, epsmax ; grace::eos_err_t e2{} ;
+        double r2 = rho, y2 = ye0, ym2 = ymu0 ;
+        eos.eps_range__rho_ye_ymu(epsmin, epsmax, r2, y2, ym2, e2) ;
+        printf("   %.4e  %.4f  %+.6e  %+.6e   %+.6e   %s\n",
+               rho, T, eps, epsmin, eps, (eps < 0.0 ? "NEGATIVE" : "positive")) ;
+        (void)press ;
+      }
+    }
+    REQUIRE(true) ;
+}
+#endif
+
+
+#if GRACE_M1_NU_SPECIES >= 5
+// ---------------------------------------------------------------------------
+//  PROBE D: what does the EOS look like at rho_atm = 1e-14 vs 1e-12?
+//  eps ~ 1/rho at the radiation-dominated surface (probe A), so dropping the
+//  atmosphere floor by 100x raises eps there by ~100x.  Report eps, h and the
+//  c2p ceiling so the failure mode of rho_fl = 1e-14 is explicit.
+// ---------------------------------------------------------------------------
+TEST_CASE("PROBE D: EOS at candidate atmosphere floors", "[c2p][leptonic][probe]")
+{
+    auto eos = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    double const ye0 = 0.5, ymu0 = 5.0e-4 ;
+    printf("\n[probeD] table rho_min=%.4e  c2p_eps_max=%.3e  h_min=%.6e\n",
+           eos.density_minimum(), eos.get_c2p_eps_max(), eos.enthalpy_minimum()) ;
+    printf("      rho          T        eps           press         h=1+eps+p/rho   eps/eps_max\n") ;
+    double const RHOS[4] = {2.7e-15, 1.0e-14, 1.0e-13, 1.0e-12} ;
+    double const TS[5]   = {0.0999, 1.0, 5.0, 10.0, 20.0} ;
+    for (int ir = 0 ; ir < 4 ; ++ir) {
+      for (int it = 0 ; it < 5 ; ++it) {
+        double rhol = RHOS[ir], Tl = TS[it], yel = ye0, ymul = ymu0 ;
+        if (Tl <= eos.temperature_minimum()) Tl = eos.temperature_minimum()*1.0001 ;
+        if (rhol <= eos.density_minimum())   rhol = eos.density_minimum()*1.0001 ;
+        double eps, csnd2, ent ; grace::eos_err_t err{} ;
+        double press = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                          eps, csnd2, ent, Tl, rhol, yel, ymul, err) ;
+        double const h = 1.0 + eps + press/rhol ;
+        printf("   %.4e  %6.3f  %+.6e  %+.6e  %+.6e   %.3e\n",
+               rhol, Tl, eps, press, h, eps/eos.get_c2p_eps_max()) ;
+      }
+    }
+    REQUIRE(true) ;
+}
+#endif
+
+#if GRACE_M1_NU_SPECIES >= 5
+// ===========================================================================
+// Halo cells captured from a production run
+// ===========================================================================
+// Real conserved states lifted out of surface_out_plane_xy_000210.h5 and fed
+// straight into the production c2p with their own metric.  Eight cells took the
+// entropy backup in the run, eight neighbours at the same density did not.  The
+// discriminator measured in the data is |S|^2/(2 D tau) -- the kinetic energy
+// implied by the momentum, as a fraction of the total conserved energy.
+#include "halo_cells.inc"
+
+TEST_CASE("c2p leptonic: halo cells from a hot-TOV run at it=210",
+          "[c2p][leptonic][halo]")
+{
+    auto eos      = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    auto atmo     = get_atmo_params() ;
+    auto excision = get_excision_params() ;
+    auto c2p_pars = get_c2p_params() ;
+
+    constexpr int NC = int(sizeof(kHaloCells) / sizeof(kHaloCells[0])) ;
+    enum { O_RHO = 0, O_EPS, O_TEMP, O_FLOORED, O_BACKUP, O_ATMO, O_EPSLO, O_N } ;
+
+    Kokkos::View<halo_cell_t*> cells("halo_cells", NC) ;
+    auto hc = Kokkos::create_mirror_view(cells) ;
+    for (int i = 0 ; i < NC ; ++i) hc(i) = kHaloCells[i] ;
+    Kokkos::deep_copy(cells, hc) ;
+
+    Kokkos::View<double*[O_N]> out("halo_out", NC) ;
+
+    Kokkos::parallel_for("halo_c2p", NC, KOKKOS_LAMBDA(int idx) {
+        halo_cell_t const c = cells(idx) ;
+        metric_array_t metric(
+            {c.gamma[0], c.gamma[1], c.gamma[2], c.gamma[3], c.gamma[4], c.gamma[5]},
+            {c.beta[0],  c.beta[1],  c.beta[2]}, c.alp) ;
+
+        grmhd_cons_array_t cons{} ;
+        cons[DENSL] = c.dens ;
+        cons[STXL]  = c.stx ;  cons[STYL] = c.sty ;  cons[STZL] = c.stz ;
+        cons[TAUL]  = c.tau ;
+        cons[YESL]  = c.ye_star ;
+        cons[YMUSL] = c.ymu_star ;
+        cons[ENTSL] = c.s_star ;
+        cons[BSXL]  = cons[BSYL] = cons[BSZL] = 0.0 ;
+
+        grmhd_prims_array_t p{} ;
+        p[RHOL]  = c.ref_rho ;  p[TEMPL] = c.ref_temp ;
+        p[YEL]   = c.ref_ye  ;  p[YMUL]  = c.ref_ymu ;
+        p[ZXL]   = p[ZYL] = p[ZZL] = 0.0 ;
+        p[BXL]   = p[BYL] = p[BZL] = 0.0 ;
+
+        c2p_err_t cerr ;
+        double rtp[3] = {c.radius, 1.0, 1.0} ;
+        bool const fl = conservs_to_prims(cons, p, metric, eos, atmo,
+                                          excision, c2p_pars, rtp, cerr) ;
+
+        out(idx, O_RHO)     = p[RHOL] ;
+        out(idx, O_EPS)     = p[EPSL] ;
+        out(idx, O_TEMP)    = p[TEMPL] ;
+        out(idx, O_FLOORED) = fl ? 1.0 : 0.0 ;
+        out(idx, O_BACKUP)  = cerr.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED) ? 1.0 : 0.0 ;
+        out(idx, O_ATMO)    = cerr.test(c2p_err_enum_t::C2P_ATMO_RESET)      ? 1.0 : 0.0 ;
+        out(idx, O_EPSLO)   = cerr.test(c2p_err_enum_t::C2P_SIG_EPS_TOO_LOW) ? 1.0 : 0.0 ;
+    }) ;
+    Kokkos::fence() ;
+
+    auto h = Kokkos::create_mirror_view(out) ;
+    Kokkos::deep_copy(h, out) ;
+
+    printf("\n   #  Ekin/tau   in-run   backup  atmo  epslo    rho_in       rho_out      eps_out\n") ;
+    int hit = 0, miss = 0, false_pos = 0 ;
+    for (int i = 0 ; i < NC ; ++i) {
+        bool const backup = h(i, O_BACKUP) > 0.5 ;
+        bool const want   = kHaloCells[i].expect_backup ;
+        printf("  %2d  %8.3f   %6s   %5s  %4s  %5s   %.4e  %.4e  %+.4e\n",
+               i, kHaloCells[i].e_kin_over_tau, want ? "BACKUP" : "clean",
+               backup ? "yes" : "no",
+               h(i, O_ATMO)  > 0.5 ? "yes" : "no",
+               h(i, O_EPSLO) > 0.5 ? "yes" : "no",
+               kHaloCells[i].ref_rho, h(i, O_RHO), h(i, O_EPS)) ;
+        if ( want &&  backup) ++hit ;
+        if ( want && !backup) ++miss ;
+        if (!want &&  backup) ++false_pos ;
+    }
+    printf("   reproduced %d/8 backups, %d missed, %d false positives\n",
+           hit, miss, false_pos) ;
+    printf("   (a DROP in the reproduced count is the intended effect of a halo\n"
+           "    fix -- it is reported, not asserted, so a fix does not fail here)\n") ;
+
+    // A control cell is one that inverted cleanly in production at the same
+    // density.  If one of those starts needing the backup, the inversion got
+    // worse -- that is a regression regardless of what the failing cells do.
+    INFO("control cells that newly need the entropy backup: " << false_pos) ;
+    REQUIRE(false_pos == 0) ;
+
+    // Invariants that must hold whatever the inversion path: the c2p may floor
+    // or reset a cell, but it must never hand back a non-finite or negative
+    // state.
+    for (int i = 0 ; i < NC ; ++i) {
+        INFO("cell " << i << "  Ekin/tau=" << kHaloCells[i].e_kin_over_tau) ;
+        REQUIRE(std::isfinite(h(i, O_RHO))) ;
+        REQUIRE(std::isfinite(h(i, O_EPS))) ;
+        REQUIRE(std::isfinite(h(i, O_TEMP))) ;
+        REQUIRE(h(i, O_RHO) > 0.0) ;
+        REQUIRE(h(i, O_EPS) >= 0.0) ;
+    }
+}
+#endif

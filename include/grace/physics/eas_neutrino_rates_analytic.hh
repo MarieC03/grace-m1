@@ -925,7 +925,15 @@ nu_rates_all_out compute_all_species_weakhub(
 
     rates_accum extra{};
     if (pair_annihilation) add_pair_process_emission(F, extra);
-    if (plasmon_decay) add_plasmon_decay_emission(F, extra, /*include_electron_flavour=*/true);
+    // FIL parity: the analytic nue/nuebar plasmon (and pair) expressions omit
+    // the neutrino final-state blocking factor and overproduce, so the
+    // reference disables them outright (M1.hh add_plasmon_decay_emission /
+    // add_pair_process_emission have those lines commented out; brems is
+    // heavy-lepton only, and add_Kirchoff_absorption_opacity writes only
+    // NUX/NUMU/NUMU_BAR).  Electron-flavour rates therefore come from the
+    // weakhub table alone -- which is why FIL's kappa_a(nue) sits at the floor
+    // below the table's rho_min.  compute_all_species below already passes false.
+    if (plasmon_decay) add_plasmon_decay_emission(F, extra, /*include_electron_flavour=*/false);
     if (bremsstrahlung) add_brems_emission(F, extra);
 
     std::array<double, NUMSPECIES> kappa_a_add{{0,0,0,0,0}}, kappa_n_add{{0,0,0,0,0}};
@@ -938,8 +946,13 @@ nu_rates_all_out compute_all_species_weakhub(
     }
     #if GRACE_M1_NU_SPECIES >= 5
     if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
-        rates.Q[NUMU] = rates.R[NUMU] = rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = 1.0e-30;
-        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 1.0e-30;
+        // Emissivity and opacity MUST be floored with the same constant: the
+        // implicit solve relaxes E -> eta/kappa_a, so a split floor plants a
+        // spurious equilibrium of that ratio in every floored cell.
+        rates.Q[NUMU] = rates.R[NUMU] = weakhub::kappa_zero_cgs;
+        rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = weakhub::kappa_zero_cgs;
+        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = weakhub::kappa_zero_cgs;
+        rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = weakhub::kappa_zero_cgs;
     }
     #endif
 
@@ -985,6 +998,15 @@ nu_rates_all_out compute_all_species_weakhub(
         }
     }
 
+    // Positivity + NaN clamp on the finished rates, as in FIL's calc_eas tail
+    // (std::max(., 1e-60) on kappa_a/n/s and Q/R, plus x != x NaN catches).
+    // All five share kappa_floor_code: eta and kappa must be floored with the
+    // same constant or E_eq = eta/kappa_a is a spurious equilibrium.  One test
+    // covers both cases -- a NaN fails `>= floor` just as a negative does.
+    auto const clamp_rate = [](double& x) {
+        if (!(x >= weakhub::kappa_floor_code)) x = weakhub::kappa_floor_code;
+    };
+
     nu_rates_all_out all{};
     for (int s = NUE; s <= NUX; ++s) {
         nu_rates_out out{};
@@ -993,11 +1015,8 @@ nu_rates_all_out compute_all_species_weakhub(
         out.kappa_a = kappa_to_code(rates.kappa_a[s], F.mass_scale);
         out.kappa_n = kappa_to_code(rates.kappa_n[s], F.mass_scale);
         out.kappa_s = kappa_to_code(rates.kappa_s[s], F.mass_scale);
-        if (!Kokkos::isfinite(out.eta_E)) out.eta_E = 0.0;
-        if (!Kokkos::isfinite(out.eta_N)) out.eta_N = 0.0;
-        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 1.0e-30;
-        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 1.0e-30;
-        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 1.0e-30;
+        clamp_rate(out.eta_E)  ; clamp_rate(out.eta_N)  ;
+        clamp_rate(out.kappa_a); clamp_rate(out.kappa_n); clamp_rate(out.kappa_s);
         all.out[s] = out;
     }
     return all;
@@ -1162,9 +1181,9 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
         out.kappa_s = kappa_to_code(rates.kappa_s[s],  F.mass_scale);
         if (!Kokkos::isfinite(out.eta_E))   out.eta_E   = 0.0;
         if (!Kokkos::isfinite(out.eta_N))   out.eta_N   = 0.0;
-        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = 1.0e-30;
-        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = 1.0e-30;
-        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = 1.0e-30;
+        if (!Kokkos::isfinite(out.kappa_a)) out.kappa_a = weakhub::kappa_floor_code;
+        if (!Kokkos::isfinite(out.kappa_n)) out.kappa_n = weakhub::kappa_floor_code;
+        if (!Kokkos::isfinite(out.kappa_s)) out.kappa_s = weakhub::kappa_floor_code;
         all.out[s] = out;
     }
     return all;
