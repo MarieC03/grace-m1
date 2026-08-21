@@ -44,6 +44,7 @@
 #include <grace/data_structures/grace_data_structures.hh>
 #include <grace/profiling/profiling.hh>
 #include <grace/utils/grace_utils.hh>
+#include <grace/parallel/mpi_wrappers.hh>
 #include <grace/utils/reconstruction.hh>
 #include <grace/utils/weno_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
@@ -188,7 +189,7 @@ void evolve_impl() {
         advance_substep<eos_t>(t,dt,0.5,state_p,state,sstate_p,sstate) ;
         amr::apply_boundary_conditions(state_p,sstate_p,state,sstate,dt,0.5) ;
         enforce_algebraic_constraints_after_bc(state_p) ;
-        compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
+        compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux, /*clamp_to_atmo=*/false) ;
         advance_substep<eos_t>(t,dt,1.0,state,state_p,sstate,sstate_p) ;
         amr::apply_boundary_conditions(state,sstate,state_p,sstate_p,dt,1.0) ;
         enforce_algebraic_constraints_after_bc(state) ;
@@ -201,7 +202,7 @@ void evolve_impl() {
             sstate_p,sstate) ;
         amr::apply_boundary_conditions(state_p,sstate_p,state,sstate,dt,1.0) ;
         enforce_algebraic_constraints_after_bc(state_p) ;
-        compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux) ;
+        compute_auxiliary_quantities<eos_t>(state_p, sstate_p, aux, /*clamp_to_atmo=*/false) ;
         // Allocate state_pp and sstate_pp
         auto state_pp  = grace::variable_list::get().getstagingbuffer()[0] ;
         auto sstate_pp = grace::variable_list::get().getstagstagingbuffer()[0];
@@ -216,7 +217,7 @@ void evolve_impl() {
             sstate_pp,sstate_p) ;
         amr::apply_boundary_conditions(state_pp,sstate_pp,state_p,sstate_p,dt,0.25) ;
         enforce_algebraic_constraints_after_bc(state_pp) ;
-        compute_auxiliary_quantities<eos_t>(state_pp, sstate_pp, aux) ;
+        compute_auxiliary_quantities<eos_t>(state_pp, sstate_pp, aux, /*clamp_to_atmo=*/false) ;
         // step 4: state = 1/3 u^n + 2/3 u^2
         linop_apply(state,state,state_pp,
                     sstate,sstate,sstate_pp, 1./3, 2./3.) ;
@@ -261,7 +262,7 @@ void evolve_impl() {
         // apply bc
         amr::apply_boundary_conditions(s3,ss3,s1,ss1,dt,beta) ;
         enforce_algebraic_constraints_after_bc(s3) ;
-        compute_auxiliary_quantities<eos_t>(s3, ss3, aux) ;
+        compute_auxiliary_quantities<eos_t>(s3, ss3, aux, /*clamp_to_atmo=*/false) ;
         // stage 2
         delta  = 0.217683334308543;
         gamma1 = 0.121098479554482 ; gamma2 = 0.721781678111411;
@@ -287,7 +288,7 @@ void evolve_impl() {
         // apply bc
         amr::apply_boundary_conditions(s1,ss1,s3,ss3,dt,beta) ;
         enforce_algebraic_constraints_after_bc(s1) ;
-        compute_auxiliary_quantities<eos_t>(s1, ss1, aux) ;
+        compute_auxiliary_quantities<eos_t>(s1, ss1, aux, /*clamp_to_atmo=*/false) ;
         // stage 3
         delta  = 1.065841341361089;
         gamma1 = -3.843833699660025 ; gamma2 = 2.121209265338722;
@@ -313,7 +314,7 @@ void evolve_impl() {
         // apply bc
         amr::apply_boundary_conditions(s3,ss3,s1,ss1,dt,beta) ;
         enforce_algebraic_constraints_after_bc(s3) ;
-        compute_auxiliary_quantities<eos_t>(s3, ss3, aux) ;
+        compute_auxiliary_quantities<eos_t>(s3, ss3, aux, /*clamp_to_atmo=*/false) ;
         // stage 4
         delta  = 0.000000000000000;
         gamma1 = 0.546370891121863 ; gamma2 = 0.198653035682705;
@@ -459,6 +460,7 @@ void evolve_impl() {
  * from old_stag_state (CT hasn't run yet); metric from old_state, matching
  * the geometry compute_fluxes used.
  */
+#ifdef GRACE_ENABLE_FOFC
 template< typename eos_t >
 void flag_fofc_cells(
     double const t, double const dt, double const dtfact
@@ -493,6 +495,10 @@ void flag_fofc_cells(
     auto& fofc_edges    = grace::variable_list::get().getfofcedgetags() ;
     auto& fofc_face_cnt = grace::variable_list::get().getfofcfcnt() ;
     auto& fofc_edge_cnt = grace::variable_list::get().getfofcecnt() ;
+    // Diagnostic: record the FOFC trigger per cell into the sticky-OR
+    // aux(C2P_ERR_) field (bits C2P_FOFC_FLOORED / C2P_FOFC_DMP), so the
+    // FOFC flag — and which path triggered it — is visible in c2p_err output.
+    auto& aux           = grace::variable_list::get().getaux() ;
 
     auto eos      = eos::get().get_eos<eos_t>() ;
     auto atmo     = get_atmo_params() ;
@@ -567,29 +573,41 @@ void flag_fofc_cells(
 
         /************************************************************************************/
         // Discrete maximum principle (Jacobs+2025, Zanotti+2015).
-        // Flag the cell when the tentative D or tau lies outside the 27-cell neighborhood
-        // [min/dmp_M, max*dmp_M] window of the base state. Catches "thin
-        // air" extrema (e.g. dissipative LLF leakage into atmospheric
-        // cells) that satisfy a lenient c2p but are clearly unphysical.
+        // Flag the cell when the tentative D or E lies outside the 27-cell
+        // neighborhood [min/dmp_M, max*dmp_M] window of the base state.
+        // Catches "thin air" extrema (e.g. dissipative LLF leakage into
+        // atmospheric cells) that satisfy a lenient c2p but are clearly
+        // unphysical.
+        //
+        // The energy variable is the SIGN-DEFINITE total energy E = tau + D,
+        // NOT tau. tau = sqrt(g)(rho h W^2 - p) - D is energy-minus-rest-mass
+        // and goes NEGATIVE wherever eps < 0 (the entire cold atmosphere). The
+        // multiplicative window [min/M, max*M] only widens for positive
+        // quantities: for negative tau, M*vmax sits BELOW vmax, inverting the
+        // window so every cold-atmosphere cell trivially trips it (blanket
+        // false-positive). E = tau + D > 0 always, so the principle is
+        // well-posed and reduces to the intended 20% band. D and E share the
+        // cons/new_state index order with DENS_/TAU_.
         bool dmp_violated = false ;
         if (fofc_pars.dmp_enable) {
             double const inv_M = 1.0 / fofc_pars.dmp_M ;
-            constexpr int loc_idx[2] = { DENS_, TAU_ } ;
-            for (int n = 0; n < 2; ++n) {
-                int const ivar = loc_idx[n] ;
+            for (int n = 0; n < 2; ++n) {  // n=0: D ; n=1: E = tau + D
                 double vmax = -std::numeric_limits<double>::max() ;
                 double vmin =  std::numeric_limits<double>::max() ;
                 for (int kt = -1; kt <= 1; ++kt) {
                     for (int jt = -1; jt <= 1; ++jt) {
                         for (int it = -1; it <= 1; ++it) {
-                            double const v =
-                                new_state(VEC(i+it, j+jt, k+kt), ivar, q) ;
+                            double const Dn =
+                                new_state(VEC(i+it, j+jt, k+kt), DENS_, q) ;
+                            double const v = (n == 0) ? Dn
+                                : Dn + new_state(VEC(i+it, j+jt, k+kt), TAU_, q) ;
                             vmax = Kokkos::fmax(vmax, v) ;
                             vmin = Kokkos::fmin(vmin, v) ;
                         }
                     }
                 }
-                double const test = cons[ivar] ;
+                double const test = (n == 0) ? cons[DENS_]
+                                             : cons[DENS_] + cons[TAU_] ;
                 if (test > fofc_pars.dmp_M * vmax || test < vmin * inv_M) {
                     dmp_violated = true ;
                     break ;
@@ -612,9 +630,18 @@ void flag_fofc_cells(
             atmo, excision, c2p_pars, rtp,
             c2p_errors, true /* dry run */) ;
         /************************************************************************************/
-
-        /************************************************************************************/
         if (floored || dmp_violated) {
+            // Diagnostic: stamp the FOFC trigger into the sticky-OR c2p_err
+            // field for this cell.  One thread per (i,j,k,q) here, so a plain
+            // read-modify-write is race-free (unlike the shared face/edge tags
+            // below, which need atomics).  Bits survive to output because the
+            // production c2p only OR-accumulates into aux(C2P_ERR_).
+            uint64_t fofc_bits =
+                  (floored      ? (uint64_t{1} << c2p_err_enum_t::C2P_FOFC_FLOORED) : uint64_t{0})
+                | (dmp_violated ? (uint64_t{1} << c2p_err_enum_t::C2P_FOFC_DMP)     : uint64_t{0}) ;
+            uint64_t prev_err = static_cast<uint64_t>(aux(VEC(i,j,k), C2P_ERR_, q)) ;
+            aux(VEC(i,j,k), C2P_ERR_, q) = static_cast<double>(prev_err | fofc_bits) ;
+
             // 6 faces touching cell (i,j,k):
             Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), int8_t{1});  // -x face
             Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), int8_t{1});  // +x face
@@ -623,7 +650,9 @@ void flag_fofc_cells(
             Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 2, q), int8_t{1});  // -z
             Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k+1), 2, q), int8_t{1});  // +z
 
-            // 12 edges touching cell (i,j,k):
+#ifdef GRACE_FOFC_CORRECT_EMF
+            // 12 edges touching cell (i,j,k):  only flagged when the CT edge-EMF
+            // recompute is compiled in (legacy; breaks discrete symmetry).
             // E^x parallel to x-axis at the 4 (j,k) corners of the cell
             Kokkos::atomic_or(&fofc_edges(VEC(i,j,  k  ), 0, q), int8_t{1});
             Kokkos::atomic_or(&fofc_edges(VEC(i,j+1,k  ), 0, q), int8_t{1});
@@ -639,6 +668,7 @@ void flag_fofc_cells(
             Kokkos::atomic_or(&fofc_edges(VEC(i+1,j,  k), 2, q), int8_t{1});
             Kokkos::atomic_or(&fofc_edges(VEC(i,  j+1,k), 2, q), int8_t{1});
             Kokkos::atomic_or(&fofc_edges(VEC(i+1,j+1,k), 2, q), int8_t{1});
+#endif
         }
         /************************************************************************************/
 
@@ -689,9 +719,11 @@ void flag_fofc_cells(
     auto& fofc_fx  = grace::variable_list::get().getfofcfx() ;
     auto& fofc_fy  = grace::variable_list::get().getfofcfy() ;
     auto& fofc_fz  = grace::variable_list::get().getfofcfz() ;
+#ifdef GRACE_FOFC_CORRECT_EMF
     auto& fofc_eyz = grace::variable_list::get().getfofceyz() ;
     auto& fofc_exz = grace::variable_list::get().getfofcexz() ;
     auto& fofc_exy = grace::variable_list::get().getfofcexy() ;
+#endif
     // fofc_face_cnt / fofc_edge_cnt are already bound at the top of the function.
 
     auto fofc_compact_policy = MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
@@ -727,6 +759,8 @@ void flag_fofc_cells(
             tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
             fofc_fz(slot) = tag ;
         }
+#ifdef GRACE_FOFC_CORRECT_EMF
+        // Edge compaction only when the CT edge-EMF recompute is compiled in.
         // YZ EDGE (E^x, parallel to x-axis, staggered in y and z)
         // needed range: i \in [ngz, nx+ngz-1] for CT update
         //               j \in [ngz, ny+ngz],   k \in [ngz, nz+ngz] for CT update
@@ -754,6 +788,7 @@ void flag_fofc_cells(
             tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
             fofc_exy(slot) = tag ;
         }
+#endif
     });
 }
 
@@ -789,19 +824,25 @@ void apply_fofc_correction(
     auto& fofc_fx = grace::variable_list::get().getfofcfx() ;
     auto& fofc_fy = grace::variable_list::get().getfofcfy() ;
     auto& fofc_fz = grace::variable_list::get().getfofcfz() ;
+#ifdef GRACE_FOFC_CORRECT_EMF
     auto& fofc_eyz = grace::variable_list::get().getfofceyz() ;
     auto& fofc_exz = grace::variable_list::get().getfofcexz() ;
     auto& fofc_exy = grace::variable_list::get().getfofcexy() ;
+#endif
 
     auto& fofc_face_cnt = grace::variable_list::get().getfofcfcnt() ;
+#ifdef GRACE_FOFC_CORRECT_EMF
     auto& fofc_edge_cnt = grace::variable_list::get().getfofcecnt() ;
+#endif
     // Stage through a HostSpace mirror of the same View<int[1]> shape rather
     // than deep_copy-ing into a bare int (which isn't portable across Kokkos
     // backends for rank-0/rank-1 sources).
     Kokkos::View<int[3], Kokkos::HostSpace> host_face_cnt("fofc_face_count_host") ;
     Kokkos::deep_copy(host_face_cnt, fofc_face_cnt) ;
+#ifdef GRACE_FOFC_CORRECT_EMF
     Kokkos::View<int[3], Kokkos::HostSpace> host_edge_cnt("fofc_edge_count_host") ;
     Kokkos::deep_copy(host_edge_cnt, fofc_edge_cnt) ;
+#endif
     //**************************************************************************************************/
     using recon_t   = donor_cell_reconstructor_t ;
     using riemann_t = llf_riemann_tag_t ;
@@ -907,10 +948,12 @@ void apply_fofc_correction(
     }) ;
     #endif
 
-    #ifndef GRACE_FREEZE_HYDRO
+#ifdef GRACE_FOFC_CORRECT_EMF
     // Recompute the GS edge EMF on every flagged edge using the (partly
     // updated) Eface / Ecenter / fluxes.  Same arithmetic as compute_emfs
     // — see gs_edge_emf_{x,y,z} in grmhd_helpers.hh for the discretization.
+    // LEGACY: this partial (flagged-only) recompute breaks bit-exact discrete
+    // symmetry; compiled out by default (hydro-only FOFC keeps the main-pass EMF).
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_yz_edge_fofc")
                 , host_edge_cnt(0)
                 , KOKKOS_LAMBDA (int idx_) {
@@ -937,8 +980,9 @@ void apply_fofc_correction(
             gs_edge_emf_z(Eface, Ecenter, fluxes,
                           VEC(qijk.i, qijk.j, qijk.k), qijk.q) ;
     }) ;
-    #endif
+#endif // GRACE_FOFC_CORRECT_EMF
 }
+#endif // GRACE_ENABLE_FOFC
 
 template< typename eos_t >
 void compute_fluxes(
@@ -1961,6 +2005,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     Kokkos::fence() ;
 }
 
+
 template< typename eos_t >
 void advance_substep( double const t, double const dt, double const dtfact
                     , var_array_t& new_state
@@ -2137,20 +2182,6 @@ void compute_fluxes<EOS>( double const , double const , double const \
                         , grace::staggered_variable_arrays_t &       \
                         ) ;                                          \
 template                                                             \
-void flag_fofc_cells<EOS>( double const , double const , double const \
-                         , grace::var_array_t&                        \
-                         , grace::var_array_t&                        \
-                         , grace::staggered_variable_arrays_t &       \
-                         , grace::staggered_variable_arrays_t &       \
-                         ) ;                                          \
-template                                                             \
-void apply_fofc_correction<EOS>( double const , double const , double const \
-                         , grace::var_array_t&                        \
-                         , grace::var_array_t&                        \
-                         , grace::staggered_variable_arrays_t &       \
-                         , grace::staggered_variable_arrays_t &       \
-                         ) ;                                          \
-template                                                             \
 void add_fluxes_and_source_terms<EOS>( double const , double const , double const \
                         , grace::var_array_t&                        \
                         , grace::var_array_t&                        \
@@ -2166,4 +2197,31 @@ INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;
 INSTANTIATE_TEMPLATE(grace::leptonic_eos_4d_t) ;
 INSTANTIATE_TEMPLATE(grace::ideal_gas_eos_t) ;
 #undef INSTANTIATE_TEMPLATE
+
+
+// flag_fofc_cells / apply_fofc_correction exist only under the FOFC gate, so
+// their explicit instantiations are gated too (moved out of INSTANTIATE_TEMPLATE).
+#ifdef GRACE_ENABLE_FOFC
+#define INSTANTIATE_FOFC_TEMPLATE(EOS)                                       \
+template                                                                     \
+void flag_fofc_cells<EOS>( double const , double const , double const        \
+                         , grace::var_array_t&                               \
+                         , grace::var_array_t&                               \
+                         , grace::staggered_variable_arrays_t &              \
+                         , grace::staggered_variable_arrays_t &              \
+                         ) ;                                                  \
+template                                                                     \
+void apply_fofc_correction<EOS>( double const , double const , double const  \
+                         , grace::var_array_t&                               \
+                         , grace::var_array_t&                               \
+                         , grace::staggered_variable_arrays_t &              \
+                         , grace::staggered_variable_arrays_t &              \
+                         )
+INSTANTIATE_FOFC_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::tabulated_eos_t) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::leptonic_eos_4d_t) ;
+INSTANTIATE_FOFC_TEMPLATE(grace::ideal_gas_eos_t) ;
+#undef INSTANTIATE_FOFC_TEMPLATE
+#endif
 }

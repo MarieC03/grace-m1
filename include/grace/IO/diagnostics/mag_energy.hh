@@ -80,7 +80,7 @@ struct em_energy_diagnostic {
         int proc = parallel::mpi_comm_rank() ; 
         if ( !std::filesystem::exists(fpath) and (proc == 0) and (out_every > 0)) {
             std::ofstream outfile(fpath.string());
-            outfile << std::fixed << std::setprecision(15) ; 
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left << std::setw(width) << "Iteration" 
                     << std::left << std::setw(width) << "Time" 
                     << std::left << std::setw(width) << "E_tot" 
@@ -213,7 +213,7 @@ struct em_energy_diagnostic {
             size_t const iter = grace_runtime.iteration() ; 
             double const time = grace_runtime.time()      ;
             std::ofstream outfile(fpath.string(), std::ios::app) ;
-            outfile << std::fixed << std::setprecision(15) ; 
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left << iter << '\t'
                 << std::left << time << '\t' 
                 << std::left << E << '\t'

@@ -93,6 +93,11 @@ struct grmhd_equations_system_t
         dcoords = grace::coordinate_system::get().get_device_coord_system();
     } ;
 
+    //! Per-RK-stage c2p flooring policy, set by compute_auxiliary_quantities.
+    //! true  -> full atmosphere reset (final stage / default).
+    //! false -> intermediate substep: clamp only to EOS absolute bounds.
+    bool clamp_to_atmo = true ;
+
     /**
      * @brief Compute GRMHD fluxes in direction \f$x^1\f$
      *
@@ -381,7 +386,7 @@ struct grmhd_equations_system_t
         conservs_to_prims<eos_t>(
             cons, prims, metric, this->_eos,
             this->atmo_params, this->excision_params, this->c2p_params, rtp,
-            c2p_errors ) ;
+            c2p_errors, /*dry_run=*/false, this->clamp_to_atmo ) ;
 
 
         /* Write new prims */
@@ -426,12 +431,16 @@ struct grmhd_equations_system_t
         // here on every RK substep so the value at step end is the union
         // of failure modes seen across all substages.
         //
-        // Storage: c2p_err_t is a bitset_t<C2P_N_ERR=21>, kWords=1, so the
-        // full bit pattern lives in words[0]. Reinterpret existing aux
-        // value as uint64_t (it was either 0 from the per-step reset or a
-        // previously-stored bit pattern from an earlier substep), OR with
-        // the new bits, cast back to double. All values stay integer-valued
-        // and ≤ 2^21, so the double<->uint64 round-trip is exact.
+        // Storage: c2p_err_t is a bitset_t<C2P_N_ERR>. C2P_N_ERR varies with
+        // GRACE_M1_NU_SPECIES/GRACE_ENABLE_FOFC (currently up to 25; see
+        // c2p_err_enum_t in c2p.hh) but stays well under 64, so kWords=1 and
+        // the full bit pattern lives in words[0] -- do NOT read/write only
+        // words[0] here if C2P_N_ERR ever grows past 64 (kWords>1) without
+        // updating this. Reinterpret existing aux value as uint64_t (it was
+        // either 0 from the per-step reset or a previously-stored bit pattern
+        // from an earlier substep), OR with the new bits, cast back to double.
+        // All values stay integer-valued and well under 2^53, so the
+        // double<->uint64 round-trip is exact (IEEE-754 double mantissa).
         {
             uint64_t const prev = static_cast<uint64_t>(aux(C2P_ERR_)) ;
             uint64_t const curr = c2p_errors.words[0] ;

@@ -99,7 +99,7 @@ class co_tracker_t {
             size_t const iter = grace_runtime.iteration() ; 
             double const time = grace_runtime.time()      ;
             std::ofstream outfile(outfilepath.string(), std::ios::app) ;
-            outfile << std::fixed << std::setprecision(15) ; 
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left << iter << '\t'
                     << std::left << time << '\t' 
                     << std::left << location[0] << '\t'
@@ -121,7 +121,7 @@ class co_tracker_t {
         outfilepath = bdir / pfname ;  
         if ( (!std::filesystem::exists(outfilepath)) && (proc==0) ) {
             std::ofstream outfile(outfilepath.string());
-            outfile << std::fixed << std::setprecision(15) ; 
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left << std::setw(width) << "Iteration" 
                     << std::left << std::setw(width) << "Time" 
                     << std::left << std::setw(width) << "X [M]" 

@@ -64,10 +64,6 @@
 
 #include <Kokkos_Core.hpp>
 
-#include <array>
-#include <cmath>
-#include <limits>
-
 namespace grace {
 
 class leptonic_eos_4d_t

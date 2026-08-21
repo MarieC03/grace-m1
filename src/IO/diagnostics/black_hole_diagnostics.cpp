@@ -31,6 +31,7 @@
 #include <grace/utils/inline.h>
 
 #include <grace/utils/metric_utils.hh>
+#include <grace/utils/reductions.hh>   // scalar_symmetry_multiplier()
 
 #include <grace/IO/spherical_surfaces.hh>
 
@@ -251,7 +252,7 @@ bh_diagnostics::compute_local_fluxes(
 
             u_phi = (-r*sph)*sth*uD[1] + (r*cph)*sth*uD[2] ; 
             b_phi = (-r*sph)*sth*bD[1] + (r*cph)*sth*bD[2] ;
-            sqrtmdet = metric.sqrtg() ; 
+            sqrtmdet = r * r * metric.sqrtg() ; 
         }
         double rhoh = rho + rho * eps + press ; 
 
@@ -265,15 +266,24 @@ bh_diagnostics::compute_local_fluxes(
         report_nan("domega",domega) ; 
         report_nan("sqrtmdet",sqrtmdet) ; 
         // accretion rate
-        flux_loc[0] += - r * r * domega * sqrtmdet * rho * ur ; 
+        flux_loc[0] += - domega * sqrtmdet * rho * ur ; 
         // energy flux 
-        flux_loc[1] += - r * r * domega * sqrtmdet * tr_0 ; 
+        flux_loc[1] += - domega * sqrtmdet * tr_0 ; 
         // angular momentum flux 
-        flux_loc[2] += r * r * domega * sqrtmdet * tr_3 ; 
+        flux_loc[2] += domega * sqrtmdet * tr_3 ; 
         // magnetic flux 
-        flux_loc[3] += r * r * domega * sqrtmdet * phi_l ; 
+        flux_loc[3] += domega * sqrtmdet * phi_l ; 
 
     }
+
+    // The sphere quadrature only spans the active subdomain when reflection
+    // symmetries are on (e.g. an octant covers 1/8 of the sphere), so scale the
+    // surface integrals up to the full sphere. Mdot/Edot/Phi are parity-even.
+    // NB: Ldot (L_z) is parity-ODD under an x- or y-reflection -- there the
+    // full-sphere value is zero and this factor over-counts a partial sum, so
+    // only trust Ldot for z-only (or no) reflection symmetry.
+    int const sym_mult = scalar_symmetry_multiplier() ;
+    for ( auto& f : flux_loc ) f *= sym_mult ;
 
     return flux_loc; 
 }

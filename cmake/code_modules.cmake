@@ -91,6 +91,21 @@ option(GRACE_FREEZE_HYDRO "Freeze hydrodynamics evolution" OFF)
 # bisecting a flux-related bug.
 option(GRACE_ENABLE_FOFC "Enable First-Order Flux Correction" ON)
 
+# Recompute the CT edge EMF at FOFC-flagged edges (donor+LLF faces, then GS
+# edge reassembly).  This is the original (pre-2026-06) behaviour, but the
+# partial flagged-only EMF recompute breaks bit-exact discrete symmetry (the
+# flux correction itself does not).  OFF => hydro-only FOFC: the flux
+# correction still applies, but B evolves on the unmodified main-pass EMF —
+# conservative, div-B-preserving, and symmetry-preserving.  Enable only to
+# reproduce legacy results.  No effect unless GRACE_ENABLE_FOFC is also ON.
+option(GRACE_FOFC_CORRECT_EMF "Recompute CT edge EMF at FOFC-flagged edges (legacy; breaks discrete symmetry)" OFF)
+
+# Diagnostic: after each full step, dump conserved + face fluxes + fofc flags
+# for cells with tau/D > 1 or eps > 0.5 to hot_flux_dump.<rank>.dat.  Used to
+# pin the superheated-atmosphere-cell mechanism (does the cell drain?).  OFF by
+# default; adds a full-grid scan + per-step host copy when ON.
+option(GRACE_DUMP_HOT_CELLS "Dump fluxes at hot (high tau/D or eps) cells" OFF)
+
 # GRMHD Riemann solver selection (compile-time).
 #   HLL — 2-wave HLLE (default).
 #   ADV — "advanced": HLLD for MHD, HLLC for pure-hydro states; HLLE fallback.

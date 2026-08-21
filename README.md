@@ -42,6 +42,20 @@ cmake --build build -j
 ./build/grace --grace-parfile examples/cowling_grmhd/shocktubes/balsara1.yaml
 ```
 
+For a GRACE M1 build (5-species neutrino transport, eikonal optical-depth
+solver, no photon block):
+
+```bash
+cmake -B build-m1 -S . -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DGRACE_USE_BUNDLED_DEPS=ON \
+      -DGRACE_ENABLE_OMP=ON \
+      -DGRACE_M1_NU_SPECIES=5 \
+      -DGRACE_M1_OPTICAL_DEPTH=ON \
+      -DGRACE_M1_PHOTONS=OFF
+cmake --build build-m1 -j
+```
+
 For GPU builds, see the
 [building guide](https://grace-astro.github.io/grace/code_building_guide/).
 
@@ -61,9 +75,9 @@ coding standards, and review policy.
 
 ## Citing GRACE
 
-If you use GRACE in academic work, please cite the code paper (citation
-details will be added once the paper appears on arXiv). For now, please
-reference the repository URL.
+If you use GRACE in academic work, please cite the code paper,
+*GRACE: An Open-Source Framework for GPU-Accelerated Numerical Relativity*
+([arXiv:2607.09854](https://arxiv.org/abs/2607.09854)).
 
 ## License
 

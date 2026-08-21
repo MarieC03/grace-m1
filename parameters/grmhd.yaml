@@ -125,6 +125,11 @@ grmhd:
       default: 0.2
       description: >
         If alp <= thresh we are inside a BH and c2p errors become lenient
+    always_enforce_floors:
+      type: bool
+      default: true
+      description: >
+        If false, allow rho, T to fall below the atmo (always checks EOS absolute bounds) in intermediate substeps.
 
   riemann:
     type: schema
@@ -333,12 +338,14 @@ grmhd:
       default: false
       description: >
         Add a radial monopole B field?
-    beta_c:
+    B0:
       type: double
-      default: 0.246
-      range: "(0,*)"
+      default: 0.889
+      range: "(*,*)"
       description: >
-        Plasma beta at rc for B field normalization
+        Amplitude of the radial split-monopole magnetic field:
+        sqrt(gamma) B^r = B0 / r^2 (divergence-free). The default B0 = 0.889
+        corresponds to plasma beta ~ 0.25 at the sonic radius for the default flow.
 
   vacuum:
     type: schema

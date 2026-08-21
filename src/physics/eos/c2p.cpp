@@ -146,7 +146,7 @@ limit_conservatives(
     // This is Etienne+2008 (A46) (https://arxiv.org/pdf/1112.0568)
     if ( cons[TAUL]/cons[DENSL] - 0.5 * B2L/cons[DENSL] < Kokkos::fmin(0.0, epsmin))
     {
-        cons[TAUL] = epsmin * cons[DENSL] + 0.5 * B2L ;
+        cons[TAUL] = Kokkos::fmin(0.0, epsmin) * cons[DENSL] + 0.5 * B2L ;
         err.set(c2p_err_enum_t::C2P_RESET_TAU) ;
         any_applied = true ;
     }
@@ -208,12 +208,13 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
                   , grace::grmhd_prims_array_t& prims
                   , grace::metric_array_t const& metric
                   , eos_t const& eos
-                  , atmo_params_t const& atmo
+                  , atmo_params_t atmo
                   , excision_params_t const& excision
                   , c2p_params_t const& c2p_pars
                   , double * rtp
                   , c2p_err_t& c2p_err
-                  , bool dry_run )
+                  , bool dry_run
+                  , bool clamp_to_atmo )
 {
 
     using c2p_mhd_t    = kastaun_c2p_t<eos_t>     ;
@@ -228,6 +229,18 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
 
     // initialize ret code
     c2p_sig_t c2p_ret ;
+
+    // if clamp_to_atmo is false
+    // we only clamp at the absolute
+    // minima / maxima allowed by the EOS
+    if ( ! clamp_to_atmo ) {
+        atmo.rho_fl   = eos.density_minimum() ;
+        atmo.atmo_tol = 0.0 ;
+        atmo.temp_fl  = eos.temperature_minimum() ;
+        // Y_e is left at the atmosphere value: beta-equilibrium Y_e is essentially
+        // flat across rho ~ 1e-14..rho_tab_min, so the inconsistency is negligible.
+        // (Strictly correct: store ye_beta_eq at the table's low-density bound.)
+    }
 
     // by default we overwrite S_star
     c2p_err.reset() ;
@@ -536,12 +549,13 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
                       , grace::grmhd_prims_array_t&  \
                       , grace::metric_array_t const&  \
                       , EOS const& eos \
-                      , atmo_params_t const& atmo \
+                      , atmo_params_t atmo \
                       , excision_params_t const& excision \
                       , c2p_params_t const& c2p_pars \
                       , double * rtp \
                       , c2p_err_t& c2p_err \
-                      , bool dry_run )
+                      , bool dry_run \
+                      , bool clamp_to_atmo )
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;

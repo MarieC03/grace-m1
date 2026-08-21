@@ -36,6 +36,8 @@
 
 #include <grace/IO/diagnostics/outflow_diagnostics.hh>
 
+#include <grace/physics/eos/eos_storage.hh>
+
 #include <grace/utils/reductions.hh>
 
 
@@ -85,6 +87,12 @@ outflows::compute_local_fluxes(
 
     // if no local points return
     if (npoints == 0 ) return flux_loc ;
+
+    // h_infinity for the Bernoulli criterion: the minimum specific enthalpy the
+    // active EOS can reach (1 for ideal-gas / piecewise-polytrope; >1 at the cold
+    // table's low-density bound for a tabulated backbone). Material is unbound when
+    // -h u_t > h_min, i.e. it carries enough energy to escape after cooling to h_min.
+    double const h_min = grace::eos::get().enthalpy_minimum() ;
 
 
     // copy to host
@@ -182,7 +190,7 @@ outflows::compute_local_fluxes(
             flux_loc[diag_var_idx_t::GEO_UNBOUND] += r * r * domega * mass_flux ;
         }
 
-        if ( h*u_t < -1.0 ) {
+        if ( h*u_t < -h_min ) {
             flux_loc[diag_var_idx_t::BERN_UNBOUND] += r * r * domega * mass_flux ;
         }
 

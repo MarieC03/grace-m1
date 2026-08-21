@@ -1,7 +1,7 @@
 /**
  * @file read_eos_table.cpp
  * @author Carlo Musolino (carlo.musolino@aei.mpg.de) with help from Khalil Pierre (pierre@itp.uni-frankfurt.de)
- * @brief 
+ * @brief Heavily inspired by the Margherita EOS reader, originally written by Elias R. Most and Jens Papenfort.
  * @date 2026-03-28
  * 
  * @copyright This file is part of the General Relativistic Astrophysics

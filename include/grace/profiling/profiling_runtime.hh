@@ -253,7 +253,7 @@ class profiling_runtime_impl_t
                         << std::left  << std::setw(20) << "Time [mus]\n" ;
             }
             std::ofstream outfile { outf.string(), std::ios::app} ; 
-            outfile << std::fixed << std::setprecision(15) ; 
+            outfile << std::scientific << std::setprecision(16) ;
             outfile << std::left  << std::setw(20) << iter 
                     << std::left  << std::setw(20) << time << '\n'; 
         }

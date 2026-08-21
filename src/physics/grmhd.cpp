@@ -781,6 +781,52 @@ void set_conservs_from_prims() {
         //    metric_evol_eq_system(auxiliaries_computation_kernel_t{}, VEC(i,j,k), q, idx,dev_coords);
         #endif
     }) ;
+
+    #if GRACE_EMF_SCHEME == GRACE_EMF_SCHEME_GS
+    // Fresh-start fix: the cell-centered EMF Ec (= -vtilde x B) is written ONLY
+    // inside compute_auxiliary_quantities (auxiliaries.cpp compute_E_center),
+    // which the fresh-start path never calls before evolution, and evolve()'s
+    // step-start aux pass is commented out.  Without this, the very first RK
+    // substep of a fresh run reads Ec = 0 instead of -vtilde x B, biting MHD
+    // data with v x B != 0 at t=0 (e.g. the magnetic rotor).  Compute Ec here
+    // directly from the pristine ID primitives (NOT via compute_auxiliary_-
+    // quantities(), which would re-run c2p and perturb the prescribed prims).
+    // Full block incl ghosts, mirroring the compute_E_center kernel.  Runs after
+    // set_conservs_from_prims' conserved loop, hence after the staggered B is
+    // assembled by whichever B-init path (direct or from_Avec) was selected.
+    {
+        auto Ec = grace::variable_list::get().getecarray() ;
+        parallel_for( GRACE_EXECUTION_TAG("ID","set_Ec_from_prims")
+                    , MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq})
+                    , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
+        {
+            metric_array_t metric ;
+            FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
+            auto Bxv = Kokkos::subview(sstate.face_staggered_fields_x,
+                                     VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSX_), q) ;
+            auto Byv = Kokkos::subview(sstate.face_staggered_fields_y,
+                                     VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSY_), q) ;
+            auto Bzv = Kokkos::subview(sstate.face_staggered_fields_z,
+                                     VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()), static_cast<size_t>(BSZ_), q) ;
+            auto Bx = 0.5 * ( Bxv(VEC(i,j,k)) + Bxv(VEC(i+1,j,k)) ) ;
+            auto By = 0.5 * ( Byv(VEC(i,j,k)) + Byv(VEC(i,j+1,k)) ) ;
+            auto Bz = 0.5 * ( Bzv(VEC(i,j,k)) + Bzv(VEC(i,j,k+1)) ) ;
+            std::array<double,3> zvec = {
+                aux(VEC(i,j,k),ZVECX_,q), aux(VEC(i,j,k),ZVECY_,q), aux(VEC(i,j,k),ZVECZ_,q)
+            } ;
+            auto const W = Kokkos::sqrt(1. + metric.square_vec(zvec)) ;
+            std::array<double,3> vtilde = {
+                metric.alp() * zvec[0]/W - metric.beta(0),
+                metric.alp() * zvec[1]/W - metric.beta(1),
+                metric.alp() * zvec[2]/W - metric.beta(2)
+            } ;
+            // NB sqrtg is contained in B
+            Ec(VEC(i,j,k),0,q) =   By * vtilde[2] - Bz * vtilde[1] ;
+            Ec(VEC(i,j,k),1,q) = - Bx * vtilde[2] + Bz * vtilde[0] ;
+            Ec(VEC(i,j,k),2,q) =   Bx * vtilde[1] - By * vtilde[0] ;
+        }) ;
+    }
+    #endif
 }
 // Explicit template instantiation
 #define INSTANTIATE_TEMPLATE(EOS)                                       \

@@ -16,6 +16,8 @@
 #include <iostream>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <numeric>
+#include <cmath>
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <string>
@@ -78,4 +80,45 @@ TEST_CASE("Spherical-surface 4πr² integration", "[spherical_surface]")
     // is O(1e-13) — give it 1e-12.
     REQUIRE( fabs(res - 4*M_PI*r*r) < 1e-12) ;
 
+}
+
+// A quadrature point on a reflection plane is shared with its mirror image, so
+// it must be half-weighted per plane for the x2-per-reflection sym-multiplier to
+// reconstruct the full sphere.  Without that, a constant integrated over an
+// octant overshoots 4*pi by ~4%.  This locks the normalization for every
+// symmetry fold (no-sym / z-only / quadrant / octant).
+TEST_CASE("Spherical-surface quadrature normalization under reflection symmetry",
+          "[spherical_surface]")
+{
+    using namespace grace ;
+    size_t const res    = 33 ;
+    size_t const ntheta = res, nphi = 2*res ;
+
+    // Full-sphere integral of unity = sum over the SAMPLED (owned) sub-domain,
+    // scaled by the reflection multiplier.  Ownership mirrors the grid: a cell
+    // exists where the reflected coordinate is >= 0.
+    auto integral_of_unity = [&](bool xs, bool ys, bool zs) {
+        auto w = uniform_sampler_t::get_quadrature_weights(1.0, res, xs, ys, zs) ;
+        double const mu_min = zs ? 0.0 : -1.0, mu_max = 1.0 ;
+        int const sym = (xs?2:1)*(ys?2:1)*(zs?2:1) ;
+        double sum = 0.0 ;
+        for (size_t iphi = 0; iphi < nphi; ++iphi) {
+            double const phi = 2*M_PI/nphi * iphi ;
+            for (size_t it = 0; it < ntheta; ++it) {
+                double const mu  = mu_max - (mu_max-mu_min)/(ntheta-1)*it ;
+                double const sth = std::sqrt(std::max(0.0, 1.0 - mu*mu)) ;
+                double const x = sth*std::cos(phi), y = sth*std::sin(phi), z = mu ;
+                bool const owned = (!xs || x >= -1e-12)
+                                && (!ys || y >= -1e-12)
+                                && (!zs || z >= -1e-12) ;
+                if (owned) sum += w[iphi*ntheta + it] ;
+            }
+        }
+        return sum * sym ;
+    };
+
+    REQUIRE( fabs(integral_of_unity(false,false,false) - 4*M_PI) < 1e-11 ); // full sphere
+    REQUIRE( fabs(integral_of_unity(false,false,true ) - 4*M_PI) < 1e-11 ); // z-only (BNS/GW)
+    REQUIRE( fabs(integral_of_unity(true ,true ,false) - 4*M_PI) < 1e-11 ); // quadrant (x,y)
+    REQUIRE( fabs(integral_of_unity(true ,true ,true ) - 4*M_PI) < 1e-11 ); // octant
 }

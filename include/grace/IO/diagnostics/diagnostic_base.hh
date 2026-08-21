@@ -88,7 +88,7 @@ struct diagnostic_base_t {
                 std::string pfname = grace_runtime.scalar_io_basename() + flname + "_" + dname + ".dat" ;
                 std::filesystem::path fname = bdir / pfname ;
                 std::ofstream outfile(fname.string(),std::ios::app) ;
-                outfile << std::fixed << std::setprecision(15) ;
+                outfile << std::scientific << std::setprecision(16) ;
                 outfile << std::left << std::setw(width) << "Iteration" << std::left << std::setw(width) << "Time" << std::left << std::setw(width) << "Value" << '\n' ;
             }
         }
@@ -110,7 +110,7 @@ struct diagnostic_base_t {
                 std::string pfname = grace_runtime.scalar_io_basename() + flname + "_" + dname + ".dat" ;
                 std::filesystem::path fname = bdir / pfname ;
                 std::ofstream outfile(fname.string(),std::ios::app) ;
-                outfile << std::fixed << std::setprecision(15) ;
+                outfile << std::scientific << std::setprecision(16) ;
                 outfile << std::left << iter << '\t'
                         << std::left << time << '\t'
                         << std::left << fluxes[i][j] << '\n' ;

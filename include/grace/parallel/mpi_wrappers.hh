@@ -334,14 +334,15 @@ void mpi_allreduce(T const* send_buffer,
                 "Trying to store allreduce result from "
                 "more than zero data elements on dangling pointer.") ;
 
+#ifdef GRACE_ENABLE_DETERMINISTIC_MPI_REDUCTIONS
     // MPI_IN_PLACE handling: the caller indicates "input is in recv_buffer,
-    // recv_buffer also receives the result".  Both the standard path and the
-    // deterministic path treat the recv_buffer as the source in that case.
+    // recv_buffer also receives the result".  Resolve the alias to the actual
+    // buffer pointer for the Allgather below.  (The standard path passes the
+    // MPI_IN_PLACE sentinel straight through instead, so it needs no resolution.)
     void* const send_ptr = (send_buffer == reinterpret_cast<T const*>(MPI_IN_PLACE))
                            ? static_cast<void*>(recv_buffer)
                            : static_cast<void*>(const_cast<T*>(send_buffer)) ;
 
-#ifdef GRACE_ENABLE_DETERMINISTIC_MPI_REDUCTIONS
     // Intercept SUM, MAX, MIN.  For SUM the issue is FP non-associativity:
     // different tree topologies → different bit pattern.  For MAX/MIN with
     // pure-IEEE inputs (no NaN) the result is mathematically unique, but we

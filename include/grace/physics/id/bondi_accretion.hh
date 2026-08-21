@@ -59,13 +59,12 @@ struct bondi_params_t {
     double bh_spin; //!< Spin of black hole
     double t_min  ; //!< Lower bound of temp
     double t_max  ; //!< Upper bound of temp
-    double beta_c ; //!< Plasma beta at rc
     bool magnetized; //!< Include magnetic field?
+    double B0; //!< Split-monopole amplitude: sqrt(gamma) B^r = B0/r^2 (input)
     //! derived qtities
     double n;
     double uc;
     double Tc;
-    double B0;
 } ;
 
 //! Find temperature where residual sign changes.
@@ -171,35 +170,20 @@ struct bondi_id_t {
         par.t_max = get_param<double>("grmhd","bondi_flow","temp_max")   ;
 
         par.magnetized = get_param<bool>("grmhd","bondi_flow","is_magnetized")   ;
-        par.beta_c     = get_param<double>("grmhd","bondi_flow","beta_c")   ;
 
         par.n = 1./(par.gamma-1.) ;
 
-        // Compute temperature and radial 4 velocity at the sonic
-        // point
+        // Compute temperature and radial 4 velocity at the sonic point
         bondi_uc_Tc(par.M, par.rc, par.n, &par.uc, &par.Tc) ;
-        // NB: We assume:
-        // 1) Schwarzschild
-        // 2) That u // rhat and B // rhat
-        if ( par.magnetized ) {
-            double Pc = par.Tc * Kokkos::pow(par.Tc/par.K,par.n) ; // pressure at rc
-            double smallb2_c = 2. * Pc / par.beta_c ;
-            // compute W at r_c
-            // Schwarszschild metric, BL coords
-            double rho2 = par.rc * par.rc ;
-            double Delta = rho2 - 2 * par.M * par.rc ;
-            double grr = rho2 / Delta ;
-            double gtt = - ( 1. - 2 * par.M / par.rc ) ;
-            // find u^t
-            double utc = Kokkos::sqrt((grr * SQR( par.uc)+1)/(-gtt) ) ;
-            // get Lorentz factor
-            double Wc = Kokkos::sqrt(1-2*par.M/par.rc) * utc ;
-            // find B^r (r=r_c)
-            double Brc = Wc * Kokkos::sqrt( smallb2_c / (grr * (1+grr*SQR(par.uc)))) ;
-            par.B0 = Brc * SQR(par.rc) ; // B^r = B^0/r^2
-        } else {
-            par.B0 = 0.0 ;
-        }
+
+        // Magnetic field: divergence-free radial split monopole
+        //     sqrt(gamma) B^i = B0 x^i / r^3   <=>   B^r = B0 / (sqrt(gamma) r^2)
+        // laid down in operator(). B0 is the free amplitude parameter. For the
+        // default flow (M=1, r_c=8, gamma=4/3, K=1), B0 = 0.889 corresponds to
+        // plasma beta ~ 0.25 at the sonic radius.
+        par.B0 = par.magnetized
+            ? get_param<double>("grmhd","bondi_flow","B0")
+            : 0.0 ;
 
         GRACE_INFO("Into Bondi initial data, solving on radial grid.") ;
         GRACE_INFO("Setup: r_c: {} T_c: {} u_c: {} B0: {}", par.rc, par.Tc, par.uc, par.B0) ;
@@ -235,36 +219,18 @@ struct bondi_id_t {
             par.rc,par.n,par.K,T,r,par.Tc,par.uc,&(uR),&id.rho,&id.press
         ) ;
 
-        // four metric
-        double g4dd[4][4], g4uu[4][4] ;
-        kerr_schild_four_metric(xyz,0.0,r_exc,&g4dd,&g4uu) ;
-
-        // now get u^\phi
-        // we know j = - u_\phi / u_t
-        double jloc = Kokkos::pow(
-            par.j * Kokkos::sin(theta), par.j_pow
-        ) ;
-        // u_r ** lower component **
-        double u_r = g4dd[1][1] * uR ;
-        // u_t **lower component**
-        double u_t = - Kokkos::sqrt(
-            (-1 - g4uu[1][1] * SQR(u_r)) / ( g4uu[0][0] - 2 * g4uu[0][3] * jloc + g4uu[3][3] * SQR(jloc) )
-        ) ;
-        // u_\phi lower component
-        double u_phi = - jloc * u_t ;
-
-        // finally raise the index
-        double uBL_low[4] = {u_t, u_r, 0, u_phi} ;
-        double uBL[4] = {0,0,0,0};
-        for( int ii=0; ii<4; ++ii ) {
-            for( int jj=0; jj<4; ++jj) {
-                uBL[ii] += g4uu[ii][jj] * uBL_low[jj] ;
-            }
-        }
-
-        // radial vector
-        double uKS[4] ;
-        transform_vector_bl2ks(xyz,0.0,r_exc,uBL,&uKS) ;
+        // Pure radial infall in Kerr-Schild: u^i = uR x^i/r; u^t is set by
+        // the ADM normalization below. Replaces the Boyer-Lindquist build,
+        // which mixed BL/KS frames and gave a NaN u_t (sqrt of a negative)
+        // for r < 2M, singular inside the horizon.
+        double const rcart = Kokkos::sqrt(
+            SQR(xyz[0]) + SQR(xyz[1]) + SQR(xyz[2]) ) ;
+        double uKS[4] = {
+            0.0,
+            uR*xyz[0]/rcart,
+            uR*xyz[1]/rcart,
+            uR*xyz[2]/rcart
+        } ;
 
         // get metric
         double guu[6] ;

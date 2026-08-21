@@ -100,8 +100,19 @@ struct  uniform_sampler_t {
 
   static std::vector<double> get_quadrature_weights(double radius, size_t const& res)
   {
-      bool equatorial_symm{grace::get_param<bool>("amr","reflection_symmetries","z")} ; 
-      ASSERT(res%2, "Simpson rule requires odd npoints") ; 
+      // Reflection symmetries come from the grid; the explicit-flag overload
+      // below carries the actual quadrature so it can be unit-tested in isolation.
+      return get_quadrature_weights(
+          radius, res,
+          grace::get_param<bool>("amr","reflection_symmetries","x"),
+          grace::get_param<bool>("amr","reflection_symmetries","y"),
+          grace::get_param<bool>("amr","reflection_symmetries","z")) ;
+  }
+
+  static std::vector<double> get_quadrature_weights(
+      double radius, size_t const& res, bool x_symm, bool y_symm, bool equatorial_symm)
+  {
+      ASSERT(res%2, "Simpson rule requires odd npoints") ;
       double mu_min = equatorial_symm ? 0.0 : -1.0;
       double mu_max = 1.0;
 
@@ -115,6 +126,16 @@ struct  uniform_sampler_t {
       double htheta = (mu_max-mu_min) / (ntheta - 1);
       double hphi = 2*M_PI / (nphi);
 
+      // A quadrature point that lies on a reflection plane is shared with its
+      // mirror image, so it must carry half weight per plane it lies on for the
+      // symmetry multiplier (x2 per reflection) to reconstruct the full-sphere
+      // integral exactly.  The mu integral already half-weights its mu=+/-1
+      // endpoints via Simpson, so the z=0 equatorial plane needs no correction;
+      // only the uniformly-sampled azimuth (points on the x=0 / y=0 meridians,
+      // and the poles which sit on both) does.  Without this, a full-sphere
+      // integral of a constant over an octant overshoots 4*pi by a few percent.
+      constexpr double plane_tol = 1e-12 ;
+
       for (size_t itheta = 0; itheta < ntheta; ++itheta)
       {
           double wmu;
@@ -127,8 +148,18 @@ struct  uniform_sampler_t {
               wmu = 2.0;
 
           wmu *= htheta / 3.0;
-          for (size_t iphi = 0; iphi < nphi; ++iphi) 
-            weights[iphi*ntheta + itheta] = wmu * hphi;          
+
+          double mu  = mu_max - (mu_max - mu_min)/(ntheta - 1) * itheta ;
+          double sth = sqrt(fmax(0.0, 1.0 - mu*mu)) ;   // sin(theta)
+
+          for (size_t iphi = 0; iphi < nphi; ++iphi)
+          {
+              double phi = 2*M_PI / nphi * iphi ;
+              double w   = wmu * hphi ;
+              if (x_symm && fabs(sth * cos(phi)) < plane_tol) w *= 0.5 ;   // on x=0
+              if (y_symm && fabs(sth * sin(phi)) < plane_tol) w *= 0.5 ;   // on y=0
+              weights[iphi*ntheta + itheta] = w ;
+          }
       }
 
       return weights;

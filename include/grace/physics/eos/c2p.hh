@@ -59,74 +59,106 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_NSIG
 } ;
 
-// c2p_err bit layout:
-//   bits 0-4:  reset-which-conserved flags. These drive the conservative
-//              rewrite logic in compute_auxiliaries — DO NOT renumber.
-//   bits 5-18: raw-signal mirror bits. Set whenever the corresponding
+// c2p_err bit layout. Bit INDICES are not fixed across builds: C2P_RESET_YMU
+// only exists when GRACE_M1_NU_SPECIES >= 5, and C2P_FOFC_FLOORED/
+// C2P_FOFC_DMP only exist when GRACE_ENABLE_FOFC is defined. Each present
+// bit shifts every later enumerator up by one — decode against the enum
+// ordinal for your build, never a hardcoded bit number.
+//   reset-which-conserved flags (C2P_RESET_DENS..C2P_RESET_YE, +YMU in
+//              5-species builds): drive the conservative rewrite logic in
+//              compute_auxiliaries — DO NOT renumber their relative order.
+//   raw-signal mirror bits (C2P_SIG_*): set whenever the corresponding
 //              c2p_sig or eos_err fired during a c2p call. Pure diagnostic
 //              — they do not affect the reset logic. Sticky-OR'd over the
 //              full timestep into aux(C2P_ERR_) so downstream analysis
 //              tools can decode WHICH failure modes triggered the resets.
-//   bit 19:    entropy-backup-used. Set when the primary energy-based c2p
+//   C2P_ENT_BACKUP_USED: set when the primary energy-based c2p
 //              inversion was distrusted and the entropy-backup path
 //              successfully recovered the primitives.
-//   bit 20:    atmosphere-reset. Set when the cell fell all the way through
+//   C2P_ATMO_RESET:      set when the cell fell all the way through
 //              to reset_to_atmosphere — primary c2p failed AND backup didn't
 //              save it, OR rho landed in the atmosphere range, OR excised.
-//   bit 21:    T-floored. Set when the cell entered the T < temp_fl branch:
+//   C2P_T_FLOORED:       set when the cell entered the T < temp_fl branch:
 //              rho was fine but T fell below the atmosphere temperature, so
 //              T (and derived eps, press, entropy) were reset while velocity
 //              was preserved. Disjoint from C2P_ATMO_RESET — that branch is
 //              the full atmosphere reset which also zeros velocity.
+//   C2P_FOFC_FLOORED (GRACE_ENABLE_FOFC only): set in flag_fofc_cells
+//              when this cell's tentative post-substep c2p dry-run would
+//              floor/reset — i.e. the cell triggered FOFC via the
+//              c2p-failure path. (Diagnostic only; written directly into
+//              aux(C2P_ERR_), see flag_fofc_cells.)
+//   C2P_FOFC_DMP (GRACE_ENABLE_FOFC only): set in flag_fofc_cells when this
+//              cell's tentative D or E=tau+D violated the
+//              discrete-maximum-principle window (thin-air extremum the
+//              lenient c2p would NOT have flagged). Disjoint diagnostic from
+//              C2P_FOFC_FLOORED.
 //
-// Together bits 19-21 distinguish four diagnostic outcomes per cell:
-//   - all clear:                       clean c2p (any SIG_* bits = quiet clamp)
-//   - bit 21 set (only):               T-only floor (velocity preserved)
-//   - bit 19 set, bits 20-21 clear:    backup saved a distrusted inversion
-//   - bit 20 set:                      hard atmosphere reset (most severe)
+// Together C2P_ENT_BACKUP_USED/C2P_ATMO_RESET/C2P_T_FLOORED distinguish four
+// diagnostic outcomes per cell:
+//   - all clear:                          clean c2p (any SIG_* bits = quiet clamp)
+//   - T_FLOORED set (only):               T-only floor (velocity preserved)
+//   - ENT_BACKUP_USED set, ATMO/T clear:  backup saved a distrusted inversion
+//   - ATMO_RESET set:                     hard atmosphere reset (most severe)
 // And the reset/sig bits explain WHY in each case.
 //
-// To decode aux(C2P_ERR_) in Python:
+// To decode aux(C2P_ERR_) in Python, use the enum ordinal for your build
+// (bit numbers below are for a 5-species build with GRACE_ENABLE_FOFC on —
+// drop 1 from everything at/after entropy_backup_used if YMU is absent, and
+// drop the fofc_* lines entirely if FOFC is off):
 //   v = int(aux[..., C2P_ERR_, ...])
 //   reset_dens          = bool(v & (1<<0))
-//   sig_eps_too_low     = bool(v & (1<<7))
-//   entropy_backup_used = bool(v & (1<<19))
-//   atmosphere_reset    = bool(v & (1<<20))
-//   t_floored           = bool(v & (1<<21))
+//   reset_ymu           = bool(v & (1<<5))
+//   sig_eps_too_low     = bool(v & (1<<8))
+//   entropy_backup_used = bool(v & (1<<20))
+//   atmosphere_reset    = bool(v & (1<<21))
+//   t_floored           = bool(v & (1<<22))
+//   fofc_floored        = bool(v & (1<<23))
+//   fofc_dmp            = bool(v & (1<<24))
 //   ...
 //
-// Total bits used: 22 — comfortably below double mantissa (2^53).
+// Total bits used: up to 25 (5-species + FOFC build) — comfortably below
+// double mantissa (2^53).
 enum c2p_err_enum_t : uint8_t {
     C2P_RESET_DENS=0,
-        C2P_RESET_TAU,
-        C2P_RESET_STILDE,
-        C2P_RESET_ENTROPY,
-        C2P_RESET_YE,
-        #if GRACE_M1_NU_SPECIES >= 5
-        C2P_RESET_YMU,
-        #endif
-        // Signal-mirror bits begin. Pure diagnostic; not consumed by the
-        // conservative-reset dispatch in compute_auxiliaries.
-        C2P_SIG_RHO_TOO_LOW,
-        C2P_SIG_RHO_TOO_HIGH,
-        C2P_SIG_EPS_TOO_LOW,
-        C2P_SIG_EPS_TOO_HIGH,
-        C2P_SIG_YE_TOO_LOW,
-        C2P_SIG_YE_TOO_HIGH,
-        C2P_SIG_ENT_TOO_LOW,
-        C2P_SIG_ENT_TOO_HIGH,
-        C2P_SIG_TEMP_TOO_LOW,
-        C2P_SIG_TEMP_TOO_HIGH,
-        C2P_SIG_PRESS_TOO_LOW,
-        C2P_SIG_PRESS_TOO_HIGH,
-        C2P_SIG_VEL_TOO_HIGH,
-        C2P_SIG_SIGMA_TOO_HIGH,
-        // c2p outcome bits — set by the dispatch logic in conservs_to_prims,
-        // not the per-signal handlers.
-        C2P_ENT_BACKUP_USED,
-        C2P_ATMO_RESET,
-        C2P_T_FLOORED,
-        C2P_N_ERR
+    C2P_RESET_TAU,
+    C2P_RESET_STILDE,
+    C2P_RESET_ENTROPY,
+    C2P_RESET_YE,
+    #if GRACE_M1_NU_SPECIES >= 5
+    C2P_RESET_YMU,
+    #endif
+    // Signal-mirror bits begin. Pure diagnostic; not consumed by the
+    // conservative-reset dispatch in compute_auxiliaries.
+    C2P_SIG_RHO_TOO_LOW,
+    C2P_SIG_RHO_TOO_HIGH,
+    C2P_SIG_EPS_TOO_LOW,
+    C2P_SIG_EPS_TOO_HIGH,
+    C2P_SIG_YE_TOO_LOW,
+    C2P_SIG_YE_TOO_HIGH,
+    C2P_SIG_ENT_TOO_LOW,
+    C2P_SIG_ENT_TOO_HIGH,
+    C2P_SIG_TEMP_TOO_LOW,
+    C2P_SIG_TEMP_TOO_HIGH,
+    C2P_SIG_PRESS_TOO_LOW,
+    C2P_SIG_PRESS_TOO_HIGH,
+    C2P_SIG_VEL_TOO_HIGH,
+    C2P_SIG_SIGMA_TOO_HIGH,
+    // c2p outcome bits — set by the dispatch logic in conservs_to_prims,
+    // not the per-signal handlers. Use these to distinguish "primary c2p
+    // succeeded with quiet flooring" from "primary c2p failed and the
+    // entropy backup recovered the cell" from "atmosphere reset fired".
+    C2P_ENT_BACKUP_USED,
+    C2P_ATMO_RESET,
+    C2P_T_FLOORED,
+#ifdef GRACE_ENABLE_FOFC
+    // FOFC diagnostic bits — NOT set by conservs_to_prims; written directly
+    // into aux(C2P_ERR_) by flag_fofc_cells so the FOFC trigger (and which
+    // path: c2p-floor vs DMP) is visible in the c2p_err output field.
+    C2P_FOFC_FLOORED,
+    C2P_FOFC_DMP,
+#endif
+    C2P_N_ERR
 } ;
 
 using c2p_sig_t = bitset_t<C2P_NSIG> ;
@@ -374,12 +406,13 @@ conservs_to_prims( grace::grmhd_cons_array_t&
                       , grace::grmhd_prims_array_t&
                       , grace::metric_array_t const&
                       , eos_t const& eos
-                      , atmo_params_t const& atmo
+                      , atmo_params_t atmo
                       , excision_params_t const& excision
                       , c2p_params_t const& c2p_pars
                       , double * rtp
                       , c2p_err_t& c2p_err
-                      , bool dry_run = false ) ;
+                      , bool dry_run = false
+                      , bool clamp_to_atmo = true ) ;
 
 void GRACE_HOST_DEVICE GRACE_DEVICE_EXTERNAL_LINKAGE
 prims_to_conservs( grace::grmhd_prims_array_t& prims
@@ -393,12 +426,13 @@ conservs_to_prims<EOS>( grace::grmhd_cons_array_t&  \
                       , grace::grmhd_prims_array_t&  \
                       , grace::metric_array_t const&  \
                       , EOS const& eos \
-                      , atmo_params_t const& atmo \
+                      , atmo_params_t atmo \
                       , excision_params_t const& excision \
                       , c2p_params_t const& c2p_pars \
                       , double * rtp \
                       , c2p_err_t& c2p_err \
-                      , bool dry_run )
+                      , bool dry_run \
+                      , bool clamp_to_atmo )
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::tabulated_eos_t) ;

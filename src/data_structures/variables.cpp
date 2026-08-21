@@ -149,7 +149,7 @@ variable_list_impl_t::variable_list_impl_t()
                    , 2 // E^i E^j
                    , GRACE_NSPACEDIM
                    , nq 
-                   ) ; 
+                   ) ;
     #else 
     Kokkos::realloc( _vbar
                    , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
@@ -172,18 +172,22 @@ variable_list_impl_t::variable_list_impl_t()
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
                         , nq ) ; 
-        Kokkos::realloc( _fofc_edge_tags 
+#ifdef GRACE_FOFC_CORRECT_EMF   // edge tags/lists only for the CT edge-EMF recompute
+        Kokkos::realloc( _fofc_edge_tags
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
-                        , nq ) ; 
-        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq ; 
+                        , nq ) ;
+#endif
+        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq ;
         Kokkos::realloc( _fofc_fx, nflag_max_face ) ;
         Kokkos::realloc( _fofc_fy, nflag_max_face ) ;
         Kokkos::realloc( _fofc_fz, nflag_max_face ) ;
-        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq ; 
+#ifdef GRACE_FOFC_CORRECT_EMF
+        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq ;
         Kokkos::realloc( _fofc_eyz, nflag_max_edge ) ;
         Kokkos::realloc( _fofc_exz, nflag_max_edge ) ;
         Kokkos::realloc( _fofc_exy, nflag_max_edge ) ;
+#endif
     }
     #endif 
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
@@ -273,18 +277,22 @@ void variable_list_impl_t::resize_aux_staging_and_flux_buffers(int nq_new)
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
                         , nq_new ) ; 
-        Kokkos::realloc( _fofc_edge_tags 
+#ifdef GRACE_FOFC_CORRECT_EMF   // edge tags/lists only for the CT edge-EMF recompute
+        Kokkos::realloc( _fofc_edge_tags
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
-                        , nq_new ) ; 
-        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq_new ; 
+                        , nq_new ) ;
+#endif
+        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq_new ;
         Kokkos::realloc( _fofc_fx, nflag_max_face ) ;
         Kokkos::realloc( _fofc_fy, nflag_max_face ) ;
         Kokkos::realloc( _fofc_fz, nflag_max_face ) ;
-        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq_new ; 
+#ifdef GRACE_FOFC_CORRECT_EMF
+        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq_new ;
         Kokkos::realloc( _fofc_eyz, nflag_max_edge ) ;
         Kokkos::realloc( _fofc_exz, nflag_max_edge ) ;
         Kokkos::realloc( _fofc_exy, nflag_max_edge ) ;
+#endif
     }
     #endif
 

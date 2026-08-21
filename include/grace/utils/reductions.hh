@@ -72,11 +72,13 @@ struct block_dist_t {
     double min_d0, min_d1 ;  // closest cell to each CO
 
     KOKKOS_INLINE_FUNCTION
-    block_dist_t() : 
+    block_dist_t() :
         min_d0(DBL_MAX), min_d1(DBL_MAX) {}
 
-    KOKKOS_INLINE_FUNCTION
-    block_dist_t( block_dist_t const& other) = default ; 
+    // Copy ctor intentionally left implicit: the compiler-generated one for a
+    // struct of two doubles is trivial and host+device callable. Annotating an
+    // explicitly-defaulted copy ctor with KOKKOS_INLINE_FUNCTION only triggers
+    // nvcc warning #20012-D (the __host__ annotation is ignored there).
 
     KOKKOS_INLINE_FUNCTION
     block_dist_t& operator+=(const block_dist_t& other) {

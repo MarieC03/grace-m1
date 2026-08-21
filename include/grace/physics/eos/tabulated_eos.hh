@@ -39,6 +39,21 @@
 
 namespace grace {
 
+// Map a continuous fractional grid index to the lower node of its bracketing
+// cell, clamped to [0, npoints-2] so that node+1 is always in range.
+//
+// The clamp MUST be done in floating point, *before* the integer cast.
+// Casting a negative double to size_t is undefined behaviour: in practice a
+// below-edge input (fidx < 0) wraps to a huge unsigned value, which then
+// clamps to the TOP of the table (npoints-2) instead of the bottom (0).
+// Clamping the double first pins below-edge inputs to row 0 as intended.
+KOKKOS_INLINE_FUNCTION int
+clamp_table_index(double fidx, size_t npoints) {
+    fidx = Kokkos::fmin( Kokkos::fmax(fidx, 0.0),
+                         static_cast<double>(npoints - 2) ) ;
+    return static_cast<int>(fidx) ;
+}
+
 // interpolator for tabeos
 // spacing assumed constant
 struct tabeos_linterp_t {
@@ -104,28 +119,9 @@ struct tabeos_linterp_t {
 
     void KOKKOS_INLINE_FUNCTION
     getidx(double x, double y, double z, int& i, int& j, int& k) const {
-        i = Kokkos::max(
-            0UL,
-            Kokkos::min(
-                static_cast<size_t>((x - _logrho(0)) * idr),
-                _logrho.extent(0)-2
-            )
-        ) ;
-        j = Kokkos::max(
-            0UL,
-            Kokkos::min(
-                static_cast<size_t>((y - _logT(0))   * idt),
-                _logT.extent(0)-2
-            )
-        ) ;
-
-        k = Kokkos::max(
-            0UL,
-            Kokkos::min(
-                static_cast<size_t>((z - _ye(0))     * idy),
-                _ye.extent(0)-2
-            )
-        );
+        i = clamp_table_index( (x - _logrho(0)) * idr, _logrho.extent(0) ) ;
+        j = clamp_table_index( (y - _logT(0))   * idt, _logT.extent(0)   ) ;
+        k = clamp_table_index( (z - _ye(0))     * idy, _ye.extent(0)     ) ;
     }
 
     void KOKKOS_INLINE_FUNCTION
@@ -189,13 +185,7 @@ struct cold_eos_linterp_t {
 
     void KOKKOS_INLINE_FUNCTION
     getidx(double x, int& i) const {
-        i = Kokkos::max(
-            0UL,
-            Kokkos::min(
-                static_cast<size_t>((x - _logrho(0)) * idr),
-                _logrho.extent(0)-2
-            )
-        ) ;
+        i = clamp_table_index( (x - _logrho(0)) * idr, _logrho.extent(0) ) ;
     }
 
     void KOKKOS_INLINE_FUNCTION

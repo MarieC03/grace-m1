@@ -195,19 +195,25 @@ void set_A(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                 {
                     auto varv = Kokkos::subview(aux, Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL(), varidx, q ) ;
-                    double val = 0. ;
-                    int cnt = 0 ;
+                    // Pairwise-grouped cell->edge average.  Inner sum is over
+                    // the z-pair (jj) -> commutes under z-reflection; outer sum
+                    // is over the y-pair (ii) -> commutes under pi_z rotation.
+                    // Bit-exact under both, where a flat left-to-right 4-sum
+                    // would seed a ~1 ulp partner asymmetry.
+                    double s[2] = {0., 0.} ;
+                    int    c[2] = {0,  0 } ;
                     for( int ii=0; ii<2; ++ii ) {
+                        int j_cc = j - ii ; // y cell-center index
+                        if ( j_cc < 0 || j_cc >= ny+2*ngz ) continue ;
                         for( int jj=0; jj<2; ++jj) {
-                            int j_cc = j - ii ; // y cell-center index
                             int k_cc = k - jj ; // z cell-center index
-                            if ( (j_cc >= 0) && (j_cc < ny+2*ngz) && (k_cc >= 0) && (k_cc < nz+2*ngz) ){
-                                val += varv(i,j_cc,k_cc) ;
-                                cnt ++ ;
-                            }
-
+                            if ( k_cc < 0 || k_cc >= nz+2*ngz ) continue ;
+                            s[ii] += varv(i,j_cc,k_cc) ;
+                            c[ii] ++ ;
                         }
                     }
+                    double val = s[0] + s[1] ;
+                    int    cnt = c[0] + c[1] ;
                     // coords of edge!
                     double ccoords[3] = {0.5,0.,0.} ;
                     double xyz[3] ;
@@ -230,19 +236,22 @@ void set_A(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                 {
                     auto varv = Kokkos::subview(aux, Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL(), varidx, q ) ;
-                    double val = 0. ;
-                    int cnt = 0 ;
+                    // Pairwise-grouped: inner z-pair (jj, z-reflection),
+                    // outer x-pair (ii, pi_z rotation).  See grmhd_ID_AX.
+                    double s[2] = {0., 0.} ;
+                    int    c[2] = {0,  0 } ;
                     for( int ii=0; ii<2; ++ii ) {
+                        int i_cc = i - ii ; // x cell-center index
+                        if ( i_cc < 0 || i_cc >= nx+2*ngz ) continue ;
                         for( int jj=0; jj<2; ++jj) {
-                            int i_cc = i - ii ; // x cell-center index
                             int k_cc = k - jj ; // z cell-center index
-                            if ( (i_cc >= 0) && (i_cc < nx+2*ngz) && (k_cc >= 0) && (k_cc < nz+2*ngz) ){
-                                val += varv(i_cc,j,k_cc) ;
-                                cnt ++ ;
-                            }
-
+                            if ( k_cc < 0 || k_cc >= nz+2*ngz ) continue ;
+                            s[ii] += varv(i_cc,j,k_cc) ;
+                            c[ii] ++ ;
                         }
                     }
+                    double val = s[0] + s[1] ;
+                    int    cnt = c[0] + c[1] ;
                     // coords of edge!
                     double ccoords[3] = {0.,0.5,0.} ;
                     double xyz[3] ;
@@ -265,19 +274,23 @@ void set_A(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
                 {
                     auto varv = Kokkos::subview(aux, Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL(), varidx, q ) ;
-                    double val = 0. ;
-                    int cnt = 0 ;
+                    // Pairwise-grouped: inner y-pair (jj), outer x-pair (ii).
+                    // z-reflection leaves (i,j) untouched -> trivially invariant;
+                    // pi_z rotation flips both -> inner+outer commute.  See grmhd_ID_AX.
+                    double s[2] = {0., 0.} ;
+                    int    c[2] = {0,  0 } ;
                     for( int ii=0; ii<2; ++ii ) {
+                        int i_cc = i - ii ; // x cell-center index
+                        if ( i_cc < 0 || i_cc >= nx+2*ngz ) continue ;
                         for( int jj=0; jj<2; ++jj) {
-                            int i_cc = i - ii ; // x cell-center index
                             int j_cc = j - jj ; // y cell-center index
-                            if ( (i_cc >= 0) && (i_cc < nx+2*ngz) && (j_cc >= 0) && (j_cc < ny+2*ngz) ){
-                                val += varv(i_cc,j_cc,k) ;
-                                cnt ++ ;
-                            }
-
+                            if ( j_cc < 0 || j_cc >= ny+2*ngz ) continue ;
+                            s[ii] += varv(i_cc,j_cc,k) ;
+                            c[ii] ++ ;
                         }
                     }
+                    double val = s[0] + s[1] ;
+                    int    cnt = c[0] + c[1] ;
                     // coords of edge!
                     double ccoords[3] = {0.,0.,0.5} ;
                     double xyz[3] ;
