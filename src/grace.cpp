@@ -47,6 +47,8 @@
 #include <grace/IO/scalar_output.hh>
 #include <grace/IO/output_diagnostics.hh>
 #include <grace/IO/diagnostics/co_tracker.hh>
+#include <grace/physics/m1_trigger.hh>
+#include <grace/physics/m1.hh>
 #include <grace/system/nan_check.hh>
 #include <grace/physics/b_field_injection.hh>
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
@@ -206,6 +208,10 @@ int main(int argc, char* argv[])
         /**********************************************************************************/
         grace::co_tracker::get().update_and_write() ;
         /**********************************************************************************/
+        /* Activate M1 once the compact objects are close enough (one-way)                 */
+        /**********************************************************************************/
+        grace::m1_update_trigger() ;
+        /**********************************************************************************/
         /* Inject B field mid-run if requested                                            */
         /**********************************************************************************/
         grace::maybe_inject_b_field() ;
@@ -223,6 +229,12 @@ int main(int argc, char* argv[])
         /* Periodic NaN scan, gated by nan_check.check_every                              */
         /**********************************************************************************/
         grace::check_nans_and_act_if_due(/*is_initial=*/false) ;
+        #ifdef GRACE_ENABLE_M1
+        /**********************************************************************************/
+        /* Report beta-equilibrium solver failures (silent otherwise)                      */
+        /**********************************************************************************/
+        grace::report_betaeq_failures() ;
+        #endif
     }
 
     grace::grace_finalize() ;

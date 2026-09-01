@@ -373,11 +373,12 @@ add_test(NAME gamma2_c2p_test COMMAND
 set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 
 # Leptonic (4D, with muons) c2p round-trip.  Only meaningful in a 5-species
-# build: the test case carries the YMUL/YMUSL slots and is #if'd out below 5,
-# so registering it there would make Catch2 fail with "no tests matched".
+# build: the test case carries the YMUL/YMUSL slots and is #if'd out when the
+# muon sector is off, so registering it there would make Catch2 fail with
+# "no tests matched".
 # Uses absolute machine-local table paths (see the yaml) -> not CI-portable;
 # label it "leptonic" so it can be excluded by label as well as by tag.
-if(GRACE_M1_NU_SPECIES EQUAL 5)
+if(GRACE_ENABLE_MUONS)
     add_test(NAME leptonic_c2p_test COMMAND
             mpirun -n 1 ./c2p_test "[leptonic]~[halo]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
     set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")

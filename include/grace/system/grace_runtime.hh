@@ -561,25 +561,22 @@ class grace_runtime_impl_t
         const std::vector<std::string> hydro_aux  = {
             "rho", "press", "eps", "ye", "temperature",
             "Bvec[0]", "zvec[0]", "Bdiv", "c2p_err", "entropy"
-            #if GRACE_M1_NU_SPECIES >= 5
+            #ifdef GRACE_ENABLE_MUONS
             ,"ymu"
             #endif
         };
         const std::vector<std::string> hydro_cons  = {
             "dens", "stilde[0]", "tau", "ye_star", "s_star"
-            #if GRACE_M1_NU_SPECIES >= 5
+            #ifdef GRACE_ENABLE_MUONS
             ,"ymu_star"
             #endif
             #ifdef GRACE_M1_OPTICAL_DEPTH
+            // Electron flavours only -- the muon flavours and nux have no
+            // optical-depth field (see variable_indices.hh).
             , "optd1"
             #if GRACE_M1_NU_SPECIES >= 3
             , "optd2"
-            , "optd3"
             #endif
-            #if GRACE_M1_NU_SPECIES >= 5
-            , "optd4"
-            , "optd5",
-            #endif // GRACE_M1_NU_SPECIES >= 5
             #endif // GRACE_M1_OPTICAL_DEPTH
         };
 
@@ -615,10 +612,21 @@ class grace_runtime_impl_t
             #ifdef GRACE_M1_PHOTONS
             , "kappa_a_ph", "kappa_s_ph", "eta_ph", "kappa_n_ph", "eta_n_ph"
             #endif
-            #ifdef GRACE_M1_DEBUG_EAS
-            // Debug: per-species fugacity eta_nu and the matter chemical
-            // potentials [MeV] that build it.
-            , "eta_nu1"
+            // Ships with the rates it explains: which cells' opacities came
+            // from a failed beta-equilibrium solve.
+            , "betaeq_err"
+            #endif // GRACE_ENABLE_M1
+        };
+
+        // M1 diagnostics -- deliberately its own group, NOT folded into
+        // "rates": those are the EAS rates the transport consumes, these are
+        // read-only by-products of the fugacity_state used to build them.
+        // Requires -DGRACE_M1_DIAGNOSTICS.
+        const std::vector<std::string> diagnostics_aux = {
+            #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_DIAGNOSTICS)
+            // Per-species fugacity eta_nu and the matter chemical potentials
+            // [MeV] that build it.
+            "eta_nu1"
             #if GRACE_M1_NU_SPECIES >= 3
             , "eta_nu2", "eta_nu3"
             #endif
@@ -626,8 +634,15 @@ class grace_runtime_impl_t
             , "eta_nu4", "eta_nu5"
             #endif
             , "mu_e", "mu_mu", "mu_p", "mu_n"
+            // Raw beta-equilibrium offsets (zero at equilibrium).
+            , "mu_delta_npe"
+            #ifdef GRACE_ENABLE_MUONS
+            , "mu_delta_npmu"
             #endif
-            #endif // GRACE_ENABLE_M1
+            // Nuclear composition + beta-equilibration timescale ratio.
+            , "X_n", "X_p", "X_a", "X_h", "Abar", "Zbar"
+            , "beta_eq_tscale"
+            #endif // GRACE_ENABLE_M1 && GRACE_M1_DIAGNOSTICS
         };
         auto out_cell_vars_volume = get_param<std::vector<std::string>>("IO","volume_output_cell_variables") ;
         auto out_cell_vars_plane_surface = get_param<std::vector<std::string>>("IO","plane_surface_output_cell_variables") ;
@@ -683,6 +698,14 @@ class grace_runtime_impl_t
                 }
             } else if ( x == "rates" ) {
                 for( auto const& vn: rates_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_volume_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_volume_output_scalar_aux.push_back(vn) ;
+                    }
+                }
+            } else if ( x == "diagnostics" ) {
+                for( auto const& vn: diagnostics_aux ) {
                     if ( auxprops[vn].is_vector ) {
                         _cell_volume_output_vector_aux.push_back(auxprops[vn].name) ;
                     } else {
@@ -756,6 +779,14 @@ class grace_runtime_impl_t
                         _cell_plane_surface_output_scalar_aux.push_back(vn) ;
                     }
                 }
+            } else if ( x == "diagnostics" ) {
+                for( auto const& vn: diagnostics_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_plane_surface_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_plane_surface_output_scalar_aux.push_back(vn) ;
+                    }
+                }
             } else {
                 if(std::find(vnames.begin(), vnames.end(), x) != vnames.end()) {
                     if( vprops[x].is_vector ){
@@ -817,6 +848,14 @@ class grace_runtime_impl_t
                 }
             } else if ( x == "rates" ) {
                 for( auto const& vn: rates_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_sphere_surface_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_sphere_surface_output_scalar_aux.push_back(vn) ;
+                    }
+                }
+            } else if ( x == "diagnostics" ) {
+                for( auto const& vn: diagnostics_aux ) {
                     if ( auxprops[vn].is_vector ) {
                         _cell_sphere_surface_output_vector_aux.push_back(auxprops[vn].name) ;
                     } else {

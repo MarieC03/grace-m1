@@ -58,6 +58,7 @@
 #endif
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
+#include <grace/physics/m1_trigger.hh>
 #include <grace/physics/m1.hh>
 #ifdef GRACE_M1_OPTICAL_DEPTH
 #include <grace/physics/eas_optical_depth.hh>
@@ -166,6 +167,22 @@ void evolve_impl() {
         aux(i,j,k,C2P_DENS_ERR_,q) = 0.0 ;
         aux(i,j,k,C2P_ERR_,q)      = 0.0 ;
     });
+    #endif
+
+    #ifdef GRACE_ENABLE_M1
+    // Same sticky-OR reset for the beta-equilibrium failure flags -- but
+    // OUTSIDE the FREEZE_HYDRO guard above.  M1 still runs with hydro frozen,
+    // so leaving this inside would mean the slot never clears and the OR
+    // saturates after the first failing substage.
+    {
+        Kokkos::MDRangePolicy<Kokkos::Rank<GRACE_NSPACEDIM+1>,default_execution_space>
+            be_policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
+        parallel_for(GRACE_EXECUTION_TAG("EVOL","reset_betaeq_diagnostics"), be_policy
+                    , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
+        {
+            aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
+        });
+    }
     #endif
 
     #ifdef GRACE_ENABLE_PARTICLES
@@ -858,6 +875,7 @@ void apply_fofc_correction(
     // serves both hydro and M1.
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     auto& fofc_faces = grace::variable_list::get().getfofcfacetags() ;
+    bool const m1_on = m1_is_active() ;   // captured by value into the kernels below
     #endif
 
     // Flux correction runs when hydro (not frozen) OR M1 needs it.
@@ -867,7 +885,9 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fx(idx) ;
         #ifdef GRACE_ENABLE_M1
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
+        // falls through and no radiation flux is recomputed.
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
         #ifdef GRACE_ENABLE_M1
@@ -895,7 +915,9 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fy(idx) ;
         #ifdef GRACE_ENABLE_M1
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
+        // falls through and no radiation flux is recomputed.
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
         #ifdef GRACE_ENABLE_M1
@@ -923,7 +945,9 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fz(idx) ;
         #ifdef GRACE_ENABLE_M1
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;
+        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
+        // falls through and no radiation flux is recomputed.
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
         #ifdef GRACE_ENABLE_M1
@@ -1022,6 +1046,7 @@ void compute_fluxes(
               {VEC(0,0,0),0}
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
         ) ;
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
           GRACE_EXECUTION_TAG("evol", "m1_normalize_conservs")
         , m1_norm_policy
@@ -1160,6 +1185,7 @@ void compute_fluxes(
     //**************************************************************************************************/
     //**************************************************************************************************/
     // compute x flux
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_x_flux")
                 , flux_x_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1198,6 +1224,7 @@ void compute_fluxes(
     }) ;
     #endif
     //**************************************************************************************************/
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_y_flux")
                 , flux_y_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1236,6 +1263,7 @@ void compute_fluxes(
     }) ;
     #endif
     //**************************************************************************************************/
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_z_flux")
                 , flux_z_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1297,6 +1325,7 @@ void compute_fluxes(
     #endif
     #ifdef GRACE_ENABLE_M1
     // un-normalize
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
           GRACE_EXECUTION_TAG("evol", "m1_unnormalize_conservs")
         , m1_norm_policy
@@ -1568,6 +1597,7 @@ void compute_emfs(
     } ) ;
     //**************************************************************************************************/
     // compute EMF -- z (stag xy)
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "EMF_Z")
                 , emf_policy_z
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
@@ -1949,6 +1979,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
         ) ;
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
           GRACE_EXECUTION_TAG("evol", "m1_implicit_sources")
         , policy
@@ -2055,7 +2086,7 @@ void advance_substep( double const t, double const dt, double const dtfact
     // interior.  Placed here so the caller's apply_boundary_conditions
     // exchanges the fresh tau before set_m1_eas computes kappa from it
     // (tau -> ghost exchange -> kappa, as in Cactus frankfurt_m1).
-    if ( get_tau_policy_kind() == tau_policy_kind_t::eikonal ) {
+    if ( m1_is_active() && get_tau_policy_kind() == tau_policy_kind_t::eikonal ) {
         auto& aux = grace::variable_list::get().getaux() ;
         update_m1_optical_depth(old_state, new_state, aux) ;
     }

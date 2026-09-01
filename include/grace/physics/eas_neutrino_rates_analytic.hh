@@ -198,6 +198,30 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double temp_code_to_mev(double temp_code) 
     // return (k_cgs * temp_code) / erg_per_mev;
 }
 
+// Smooth relaxation-rate gate for the muon-flavour channels (GMUNU dilute-Ymu
+// note, S_rhoT).  Replaces the former hard step rho<1e10 || T<2.5 with a
+// sigmoid in log-space -- same T0=2.5 MeV, rho0 raised from 1e10 to the
+// note's 1e11 g/cm^3.  S -> 1 deep in the trapped/hot regime (gate open,
+// rates unchanged), S -> 0 in the cold dilute regime (gate closed).
+//
+// Multiply the emission/absorption PAIR (Q,kappa_a) and (R,kappa_n) by the
+// SAME S: both encode the equilibrium the collision term relaxes toward
+// (Q/kappa_a, R/kappa_n), so a shared factor scales only the relaxation
+// RATE and leaves that equilibrium untouched.  Scaling one member alone
+// would drag the muon radiation field toward a different (wrong)
+// equilibrium instead of just approaching the right one more slowly.
+// kappa_s (scattering) is deliberately NOT gated here -- it changes no
+// muon number and stays independent of this control.
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double muon_rate_gate(double rho_cgs, double temp_mev) {
+    constexpr double rho0 = 1.0e11;   // g/cm^3
+    constexpr double T0   = 2.5;      // MeV
+    double const r = rho0 / safe_pos(rho_cgs);
+    double const t = T0   / safe_pos(temp_mev);
+    double const S_rho = 1.0 / (1.0 + r*r*r*r*r);
+    double const S_T   = 1.0 / (1.0 + t*t*t*t*t*t);
+    return S_rho * S_T;
+}
+
 // Q [MeV cm^-3 s^-1] -> code energy emissivity
 //GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double Q_mev_to_code(double Q_mev, double mass_scale) {
 //    using namespace grace::physical_constants;
@@ -504,6 +528,43 @@ fugacity_state make_fugacity_state(
     F.eta_nu[NUMUBAR] = mu_numubar / T;
     F.eta_nu[NUX]     = mu_nux / T;
 
+    // Re-clamp muon-flavour eta to +/-5: not for the pair/plasmon block[]
+    // factors (those are isfinite()&&>0-guarded, see below) but because the
+    // Kirchhoff inversion (apply_kirchhoff / add_kirchhoff_absorption_opacity_from_QR)
+    // divides by black_body_number/energy ~ FD<2/3>(eta), whose negative
+    // branch is ~exp(eta) -> underflows towards (but not exactly) 0 for
+    // eta << -1 without ever tripping isfinite(); safe_inv_pos_finite then
+    // returns a huge-but-finite reciprocal, producing e.g. kappa_n ~ 1e43.
+    // Confirmed root cause of a real kappa_n[NUMUBAR] blowup in cold,
+    // low-density, low-Ymu matter -- see [[m1-analytic-eas-status]].
+    // Re-tested Aug 2026 WITH the beta-eq step-cap backtracking in place, in
+    // case that had removed the need: it had not.  Disabling these two lines
+    // put kappa_n[NUMUBAR] back to 1.9e14 (clamped: 494) at it=5, and made the
+    // beta-eq solve DIVERGE -- failures 15 -> 39 per step and still climbing at
+    // it=20, of which 37 were BETAEQ_RESIDUAL_LARGE (no root reachable inside
+    // the bounds) against 0 with the clamp.  Both effects are NUMUBAR-only.
+    // Re-tested Aug 2026 with GRACE_M1_OPTICAL_DEPTH=ON and tau_policy=eikonal
+    // (an earlier re-test used tau_policy=none, i.e. the thin limit, and was
+    // not representative).  With a real optical depth the clamp is MORE
+    // load-bearing, not less: removing it drove kappa_n[NUMUBAR] to 5.5e31 by
+    // it=20 and still climbing (thin limit only reached 4e9 and was decaying),
+    // and beta-eq failures 11 -> 52/step with 52 of 52 BETAEQ_RESIDUAL_LARGE.
+    //
+    // Measured why, directly (89678 samples with |eta_numu| > 20):
+    //   eta_numu = (mu_mu + mu_p - mu_n - Qnp)/T reaches +585, so
+    //   eta_numubar = -585, and kappa = R/B ~ exp(-eta) since FD<2,3>(eta<<0)
+    //   ~ exp(eta).  TWO regimes, and neither is fixable here:
+    //   - 17473 cells have mu_mu EXACTLY 0, i.e. the dilute-Ymu ramp fired as
+    //     designed -- and eta_numu is still ~84, purely from
+    //     (mu_p-mu_n-Qnp)/T = 8.51/0.1001 at the table's temperature floor.
+    //     Cold matter, not muon physics; the ramp cannot help.
+    //   - 72205 cells have mu_mu ~ 96 MeV at T ~ 0.8 MeV, above the ramp's
+    //     Y_mu,0 = 6e-4 where it is inactive by design.
+    // tau cannot help either: make_eikonal_tau is electron-flavour only, so
+    // tau_n[NUMU] was 0 in all 89678 samples (as documented in m1.yaml).
+    F.eta_nu[NUMU]    = Kokkos::fmin(Kokkos::fmax(F.eta_nu[NUMU],    -5.0), 5.0);
+    F.eta_nu[NUMUBAR] = Kokkos::fmin(Kokkos::fmax(F.eta_nu[NUMUBAR], -5.0), 5.0);
+
     const double Yp = F.Xp;
     const double Yn = F.Xn;
     const double denom_np = (Kokkos::exp(-F.eta_hat) - 1.0);
@@ -526,40 +587,24 @@ fugacity_state make_fugacity_state(
         F.tau_n[s] = (Kokkos::isfinite(tau0) && tau0 > 0.0) ? tau0 : 0.0;
     }
 
-    // Apply suppression (electron types always; muon types only when 5 species)
+    // Apply suppression (electron types only -- see below for muon types).
     {
         const double fac_nue    = 1.0 - Kokkos::exp(-F.tau_n[NUE]);
         const double fac_nuebar = 1.0 - Kokkos::exp(-F.tau_n[NUEBAR]);
         if (Kokkos::isfinite(fac_nue))    F.eta_nu[NUE]    *= fac_nue;
         if (Kokkos::isfinite(fac_nuebar)) F.eta_nu[NUEBAR] *= fac_nuebar;
-
-        #if GRACE_M1_NU_SPECIES >= 5
-        const double fac_numu    = 1.0 - Kokkos::exp(-F.tau_n[NUMU]);
-        const double fac_numubar = 1.0 - Kokkos::exp(-F.tau_n[NUMUBAR]);
-        if (Kokkos::isfinite(fac_numu))    F.eta_nu[NUMU]    *= fac_numu;
-        if (Kokkos::isfinite(fac_numubar)) F.eta_nu[NUMUBAR] *= fac_numubar;
-        #endif
     }
 
-    #if GRACE_M1_NU_SPECIES >= 5
-    // Muonic-eta stabilizers (FIL fugacities.hh).  eta_numu = mu_numu/T carries
-    // the ~105 MeV muon rest mass and explodes out of muonic equilibrium,
-    // overflowing exp(eta) in the rate blocking factors -> NaN.  Zero it where
-    // muons are negligible, then clamp to +/-5.  ONLY the muonic flavours: the
-    // electron eta is small near beta equilibrium and NUX is left untouched, as
-    // in the reference.
-    {
-        constexpr double tau_nu_thr = 1.0 ;
-        if (F.tau_n[NUMU]    < tau_nu_thr) F.eta_nu[NUMU]    = 0.0 ;
-        if (F.tau_n[NUMUBAR] < tau_nu_thr) F.eta_nu[NUMUBAR] = 0.0 ;
-        if (F.rho_cgs < 1.0e11 || F.ymu < 0.005) {
-            F.eta_nu[NUMU]    = 0.0 ;
-            F.eta_nu[NUMUBAR] = 0.0 ;
-        }
-        F.eta_nu[NUMU]    = Kokkos::fmax(-5.0, Kokkos::fmin(5.0, F.eta_nu[NUMU])) ;
-        F.eta_nu[NUMUBAR] = Kokkos::fmax(-5.0, Kokkos::fmin(5.0, F.eta_nu[NUMUBAR])) ;
-    }
-    #endif
+    // Muon flavours get no tau-suppression and no eta=0 gate: mu_mu is built
+    // from the dilute-Ymu-blocked EOS accessor (mumu_core/block_mumu,
+    // Y_mu,0=6e-4) and ramps to 0 continuously as Y_mu -> the table floor, so
+    // eta_numu = (mu_mu+mu_p-mu_n-Qnp)/T no longer explodes to the
+    // muon-rest-mass scale by itself. It can still be O(10-100) in cold,
+    // non-muonic, neutron-rich matter (the residual (mu_p-mu_n-Qnp)/T that
+    // drives ordinary npe beta equilibrium -- physical, not a muon artifact).
+    // The +/-5 clamp above IS still needed, though: it's not the pair/plasmon
+    // block[] factors (isfinite()&&>0-guarded) but the Kirchhoff
+    // black_body_energy/number denominators that break for large |eta|.
 
     return F;
     }
@@ -945,14 +990,16 @@ nu_rates_all_out compute_all_species_weakhub(
         rates.kappa_n[s] += kappa_n_add[s];
     }
     #if GRACE_M1_NU_SPECIES >= 5
-    if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
-        // Emissivity and opacity MUST be floored with the same constant: the
-        // implicit solve relaxes E -> eta/kappa_a, so a split floor plants a
-        // spurious equilibrium of that ratio in every floored cell.
-        rates.Q[NUMU] = rates.R[NUMU] = weakhub::kappa_zero_cgs;
-        rates.kappa_a[NUMU] = rates.kappa_n[NUMU] = weakhub::kappa_zero_cgs;
-        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = weakhub::kappa_zero_cgs;
-        rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = weakhub::kappa_zero_cgs;
+    // Dilute-Ymu rate gate (see muon_rate_gate): scale the muon-flavour
+    // (Q,kappa_a) and (R,kappa_n) pairs by the SAME smooth factor so the
+    // equilibrium they encode is unchanged and only the relaxation rate
+    // drops in the cold, dilute regime.  kappa_s is untouched.
+    {
+        double const S = muon_rate_gate(F.rho_cgs, F.temp_mev) ;
+        rates.Q[NUMU]          *= S ; rates.kappa_a[NUMU]    *= S ;
+        rates.R[NUMU]          *= S ; rates.kappa_n[NUMU]    *= S ;
+        rates.Q[NUMUBAR]       *= S ; rates.kappa_a[NUMUBAR] *= S ;
+        rates.R[NUMUBAR]       *= S ; rates.kappa_n[NUMUBAR] *= S ;
     }
     #endif
 
@@ -1116,12 +1163,17 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     add_scattering_opacity(F, rates);
 
     // -------------------------------------------------------------------------
-    // Step 7: Suppress muon species below threshold (5-species mode only).
+    // Step 7: Dilute-Ymu rate gate for the muon species (5-species mode only).
+    // Same gate and same (Q,kappa_a)/(R,kappa_n) pairing as the analytic path
+    // (compute_all_species) -- see muon_rate_gate.  kappa_s untouched.
     // -------------------------------------------------------------------------
 #if GRACE_M1_NU_SPECIES >= 5
-    if (F.rho_cgs < 1.0e10 || F.temp_mev < 2.5) {
-        rates.Q[NUMU]    = rates.R[NUMU]    = rates.kappa_a[NUMU]    = rates.kappa_n[NUMU]    = 0.0;
-        rates.Q[NUMUBAR] = rates.R[NUMUBAR] = rates.kappa_a[NUMUBAR] = rates.kappa_n[NUMUBAR] = 0.0;
+    {
+        double const S = muon_rate_gate(F.rho_cgs, F.temp_mev) ;
+        rates.Q[NUMU]    *= S ; rates.kappa_a[NUMU]    *= S ;
+        rates.R[NUMU]    *= S ; rates.kappa_n[NUMU]    *= S ;
+        rates.Q[NUMUBAR] *= S ; rates.kappa_a[NUMUBAR] *= S ;
+        rates.R[NUMUBAR] *= S ; rates.kappa_n[NUMUBAR] *= S ;
     }
 #endif
 

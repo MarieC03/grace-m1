@@ -65,13 +65,32 @@ struct outflows:
     } ;
     #endif
     enum loc_aux_idx_t : int {
-        RHOL=0, EPSL, PRESSL, ZXL, ZYL, ZZL, NUM_AUX
+        RHOL=0, EPSL, PRESSL, ZXL, ZYL, ZZL, YEL, NUM_AUX
     };
     enum diag_var_idx_t : int {
         GEO_UNBOUND=0, BERN_UNBOUND, TOT, N_DIAG_VARS
     } ;
 
-    static constexpr size_t n_fluxes = static_cast<size_t>(3); /* geodesic bernoulli total mass flux */
+    // ---- Y_e-binned ejecta -------------------------------------------------
+    // The three scalars above say HOW MUCH unbound mass crosses the sphere;
+    // these say WHAT IT IS.  The r-process yield is a steep function of Y_e
+    // (Y_e <~ 0.25 -> heavy third-peak elements and a red kilonova, Y_e >~ 0.3
+    // -> a blue one), and neutrino irradiation is precisely what raises Y_e in
+    // the ejecta -- so this histogram is the observable the M1 sector moves.
+    // Two runs with very different neutrino physics can share an identical
+    // Mdot_unbound.
+    //
+    // Bins the BERNOULLI-unbound flux, the usual ejecta criterion, so the bins
+    // sum to Mdot_unbound_bern by construction (that identity is the test).
+    // Compile-time sized because n_fluxes must be constexpr.
+    static constexpr int    n_ye_bins = 25 ;
+    static constexpr double ye_bin_lo = 0.05 ;
+    static constexpr double ye_bin_hi = 0.55 ;
+    //! First histogram column; bin b lives at YE_BIN0 + b.
+    static constexpr int    YE_BIN0   = static_cast<int>(N_DIAG_VARS) ;
+
+    static constexpr size_t n_fluxes =
+        static_cast<size_t>(N_DIAG_VARS + n_ye_bins) ;
 
     static std::vector<std::string> flux_names ;
 
@@ -84,7 +103,7 @@ struct outflows:
         #else
         this->var_interp_idx = std::vector<int>({GTXX_, GTXY_, GTXZ_, GTYY_, GTYZ_, GTZZ_, CHI_, BETAX_, BETAY_, BETAZ_, ALP_});
         #endif
-        this->aux_interp_idx = std::vector<int>({RHO_,EPS_,PRESS_,ZVECX_,ZVECY_,ZVECZ_});
+        this->aux_interp_idx = std::vector<int>({RHO_,EPS_,PRESS_,ZVECX_,ZVECY_,ZVECZ_,YE_});
     }
 
     std::array<double,n_fluxes>

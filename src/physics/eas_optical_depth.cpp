@@ -92,15 +92,10 @@ void relax_cell(
     double const kc0 = aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)+aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ;
     double b0 = state(VEC(i,j,k),m1_optd_idx<0>(),q) ;
     #endif
+    // Electron flavours only -- see m1_optd_idx / variable_indices.hh.
     #if GRACE_M1_NU_SPECIES >= 3
     double const kc1 = aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)+aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ;
-    double const kc2 = aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)+aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ;
-    double b1 = state(VEC(i,j,k),m1_optd_idx<1>(),q), b2 = state(VEC(i,j,k),m1_optd_idx<2>(),q) ;
-    #endif
-    #if GRACE_M1_NU_SPECIES >= 5
-    double const kc3 = aux(VEC(i,j,k),m1_kappaa_idx<3>(),q)+aux(VEC(i,j,k),m1_kappas_idx<3>(),q) ;
-    double const kc4 = aux(VEC(i,j,k),m1_kappaa_idx<4>(),q)+aux(VEC(i,j,k),m1_kappas_idx<4>(),q) ;
-    double b3 = state(VEC(i,j,k),m1_optd_idx<3>(),q), b4 = state(VEC(i,j,k),m1_optd_idx<4>(),q) ;
+    double b1 = state(VEC(i,j,k),m1_optd_idx<1>(),q) ;
     #endif
 
     for (int ni = -1; ni <= 1; ++ni)
@@ -130,20 +125,6 @@ void relax_cell(
             double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<1>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<1>(),q) ;
             b1 = Kokkos::fmin(b1, 0.5*(kc1+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<1>(),q)) ;
         }
-        {
-            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<2>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<2>(),q) ;
-            b2 = Kokkos::fmin(b2, 0.5*(kc2+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<2>(),q)) ;
-        }
-        #endif
-        #if GRACE_M1_NU_SPECIES >= 5
-        {
-            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<3>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<3>(),q) ;
-            b3 = Kokkos::fmin(b3, 0.5*(kc3+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<3>(),q)) ;
-        }
-        {
-            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<4>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<4>(),q) ;
-            b4 = Kokkos::fmin(b4, 0.5*(kc4+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<4>(),q)) ;
-        }
         #endif
     }
 
@@ -152,11 +133,6 @@ void relax_cell(
     #endif
     #if GRACE_M1_NU_SPECIES >= 3
     tau_out[1] = Kokkos::fmax(0.0, b1) ;
-    tau_out[2] = Kokkos::fmax(0.0, b2) ;
-    #endif
-    #if GRACE_M1_NU_SPECIES >= 5
-    tau_out[3] = Kokkos::fmax(0.0, b3) ;
-    tau_out[4] = Kokkos::fmax(0.0, b4) ;
     #endif
 }
 
@@ -181,11 +157,6 @@ void init_m1_optical_depth(grace::var_array_t& state, grace::var_array_t& aux)
         #endif
         #if GRACE_M1_NU_SPECIES >= 3
         state(VEC(i,j,k), m1_optd_idx<1>(), q) = tau0 ;
-        state(VEC(i,j,k), m1_optd_idx<2>(), q) = tau0 ;
-        #endif
-        #if GRACE_M1_NU_SPECIES >= 5
-        state(VEC(i,j,k), m1_optd_idx<3>(), q) = tau0 ;
-        state(VEC(i,j,k), m1_optd_idx<4>(), q) = tau0 ;
         #endif
     }) ;
 }
@@ -221,11 +192,6 @@ void update_m1_optical_depth(
         #endif
         #if GRACE_M1_NU_SPECIES >= 3
         state_write(VEC(i,j,k), m1_optd_idx<1>(), q) = tau_out[1] ;
-        state_write(VEC(i,j,k), m1_optd_idx<2>(), q) = tau_out[2] ;
-        #endif
-        #if GRACE_M1_NU_SPECIES >= 5
-        state_write(VEC(i,j,k), m1_optd_idx<3>(), q) = tau_out[3] ;
-        state_write(VEC(i,j,k), m1_optd_idx<4>(), q) = tau_out[4] ;
         #endif
     }) ;
 }

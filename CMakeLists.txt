@@ -434,6 +434,8 @@ if(GRACE_ENABLE_M1)
         set(_grace_m1_nspecies "0  (photon-only)")
     endif()
     _grace_bool_label(GRACE_M1_PHOTONS _grace_m1_photons)
+    _grace_bool_label(GRACE_M1_OPTICAL_DEPTH _grace_m1_optd)
+    _grace_bool_label(GRACE_M1_DIAGNOSTICS _grace_m1_diag)
     if(GRACE_HAVE_BNS_NURATES)
         set(_grace_m1_nurates "available")
     else()
@@ -442,8 +444,22 @@ if(GRACE_ENABLE_M1)
     set(_grace_m1_details
 "  M1 neutrino species : ${_grace_m1_nspecies}\n"
 "  M1 photon block     : ${_grace_m1_photons}\n"
+"  M1 optical depth    : ${_grace_m1_optd}\n"
+"  M1 diagnostics      : ${_grace_m1_diag}\n"
 "  M1 bns_nurates      : ${_grace_m1_nurates}\n")
 endif()
+
+# Muon sector: independent of M1, so reported unconditionally.
+if(GRACE_ENABLE_MUONS)
+    if(GRACE_M1_NU_SPECIES EQUAL 5)
+        set(_grace_muons "ON  (forced by GRACE_M1_NU_SPECIES=5)")
+    else()
+        set(_grace_muons "ON  (explicit)")
+    endif()
+else()
+    set(_grace_muons "OFF")
+endif()
+string(APPEND _grace_m1_details "  Muon sector (Y_mu)  : ${_grace_muons}\n")
 
 # Flag matter / Z4c FD-order mismatch directly in the summary so it's
 # unmissable; matches the warning emitted at configure time.

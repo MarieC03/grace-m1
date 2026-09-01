@@ -56,6 +56,7 @@
 #include <grace/evolution/evolve.hh>
 #endif
 #include <grace/IO/diagnostics/co_tracker.hh>
+#include <grace/physics/m1_trigger.hh>
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
 #endif
 
@@ -255,6 +256,12 @@ void initialize(int& argc, char* argv[])
         // since it contains previous locations
         grace::co_tracker::initialize() ;
     }
+    // Validate/initialise the M1 trigger on BOTH paths -- fresh start and
+    // restart.  It must run AFTER load_checkpoint(), which may have restored
+    // the latch, and it must run even on the restart path: otherwise a parfile
+    // with the trigger disabled would inherit an idle M1 from a checkpoint
+    // written by a triggered run.
+    grace::m1_trigger_startup_check() ;
 
     GRACE_INFO("Filling coordinate arrays...") ;
     grace::fill_cell_spacings(

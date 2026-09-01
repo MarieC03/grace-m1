@@ -50,6 +50,7 @@
 #include <grace/amr/p4est_headers.hh>
 
 #include <grace/IO/diagnostics/co_tracker.hh>
+#include <grace/physics/m1_trigger.hh>
 #include <grace/physics/b_field_injection.hh>
 #ifdef GRACE_ENABLE_PARTICLES
 #include <grace/particles/particles_module.hh>
@@ -459,6 +460,74 @@ void checkpoint_handler_impl_t::save_checkpoint()
     HDF5_CALL(err,H5Aclose(attr_id));
     HDF5_CALL(err,H5Sclose(attr_dataspace_id));
 
+    /**********************************************************************/
+    /* Evolved-variable layout fingerprint.                               */
+    /*                                                                    */
+    /* The state array is written below as ONE positional dataset, and    */
+    /* the read side can only check its total SIZE.  Two builds whose     */
+    /* evolved enums differ by a reordering therefore produce             */
+    /* size-compatible files whose contents are silently misaligned --    */
+    /* exactly what happened when YMUSTAR_ moved next to YESTAR_.  Record */
+    /* the ordered variable names so restore_checkpoint can refuse a      */
+    /* mismatched file instead of running on garbage.                     */
+    /**********************************************************************/
+    {
+        auto const& vnames = grace::variables::detail::_varnames ;
+        std::string layout ;
+        for ( size_t i = 0 ; i < vnames.size() ; ++i ) {
+            if ( i ) layout += "," ;
+            layout += vnames[i] ;
+        }
+        unsigned int const nvars = static_cast<unsigned int>(vnames.size()) ;
+
+        HDF5_CALL(attr_dataspace_id,H5Screate(H5S_SCALAR));
+        HDF5_CALL(attr_id,H5Acreate2(file_id, "NumEvolvedVars", H5T_NATIVE_UINT,
+                                     attr_dataspace_id, H5P_DEFAULT, H5P_DEFAULT));
+        HDF5_CALL(err,H5Awrite(attr_id, H5T_NATIVE_UINT, &nvars));
+        HDF5_CALL(err,H5Aclose(attr_id));
+        HDF5_CALL(err,H5Sclose(attr_dataspace_id));
+
+        hid_t aspace_id, atype_id ;
+        HDF5_CALL(aspace_id, H5Screate(H5S_SCALAR));
+        HDF5_CALL(atype_id,  H5Tcopy(H5T_C_S1));
+        HDF5_CALL(err,       H5Tset_size(atype_id, layout.size()+1));
+        HDF5_CALL(err,       H5Tset_strpad(atype_id, H5T_STR_NULLTERM));
+        HDF5_CALL(attr_id,   H5Acreate2(file_id, "EvolvedVarLayout", atype_id,
+                                        aspace_id, H5P_DEFAULT, H5P_DEFAULT));
+        HDF5_CALL(err, H5Awrite(attr_id, atype_id, layout.c_str()));
+        HDF5_CALL(err, H5Aclose(attr_id));
+        HDF5_CALL(err, H5Tclose(atype_id));
+        HDF5_CALL(err, H5Sclose(aspace_id));
+    }
+
+    #ifdef GRACE_ENABLE_M1
+    /**********************************************************************/
+    /* M1 activation latch.                                               */
+    /*                                                                    */
+    /* Without this, a job resumed after merger would silently drop back   */
+    /* to inspiral mode and stop evolving the radiation field.            */
+    /**********************************************************************/
+    {
+        unsigned int const m1_active = grace::m1_is_active() ? 1u : 0u ;
+        unsigned int const m1_act_it =
+            static_cast<unsigned int>(grace::m1_activation_iteration()) ;
+
+        HDF5_CALL(attr_dataspace_id,H5Screate(H5S_SCALAR));
+        HDF5_CALL(attr_id,H5Acreate2(file_id, "M1Active", H5T_NATIVE_UINT,
+                                     attr_dataspace_id, H5P_DEFAULT, H5P_DEFAULT));
+        HDF5_CALL(err,H5Awrite(attr_id, H5T_NATIVE_UINT, &m1_active));
+        HDF5_CALL(err,H5Aclose(attr_id));
+        HDF5_CALL(err,H5Sclose(attr_dataspace_id));
+
+        HDF5_CALL(attr_dataspace_id,H5Screate(H5S_SCALAR));
+        HDF5_CALL(attr_id,H5Acreate2(file_id, "M1ActivationIteration", H5T_NATIVE_UINT,
+                                     attr_dataspace_id, H5P_DEFAULT, H5P_DEFAULT));
+        HDF5_CALL(err,H5Awrite(attr_id, H5T_NATIVE_UINT, &m1_act_it));
+        HDF5_CALL(err,H5Aclose(attr_id));
+        HDF5_CALL(err,H5Sclose(attr_dataspace_id));
+    }
+    #endif
+
     // Write scalar attributes (Time, Iteration) here as before...
 
     /* ----------------------------------------------------------------------
@@ -837,6 +906,88 @@ void checkpoint_handler_impl_t::load_checkpoint(int64_t iter )
     HDF5_CALL(err,H5Aclose(attr_id)) ;
     /**********************************************************************/
     ASSERT(iter == iter_read, "Iterations don't match in checkpoint file " << iter << " != " << iter_read) ;
+    #ifdef GRACE_ENABLE_M1
+    /**********************************************************************/
+    /* Restore the M1 activation latch.                                   */
+    /**********************************************************************/
+    if ( H5Aexists(file_id, "M1Active") > 0 ) {
+        unsigned int m1_active = 0, m1_act_it = 0 ;
+        HDF5_CALL(attr_id, H5Aopen(file_id, "M1Active", H5P_DEFAULT)) ;
+        HDF5_CALL(err, H5Aread(attr_id, H5T_NATIVE_UINT, &m1_active)) ;
+        HDF5_CALL(err, H5Aclose(attr_id)) ;
+        if ( H5Aexists(file_id, "M1ActivationIteration") > 0 ) {
+            HDF5_CALL(attr_id, H5Aopen(file_id, "M1ActivationIteration", H5P_DEFAULT)) ;
+            HDF5_CALL(err, H5Aread(attr_id, H5T_NATIVE_UINT, &m1_act_it)) ;
+            HDF5_CALL(err, H5Aclose(attr_id)) ;
+        }
+        grace::m1_restore_latch(m1_active != 0u, static_cast<size_t>(m1_act_it)) ;
+        GRACE_INFO("Restored M1 activation latch from checkpoint: active = {}"
+                   " (activated at iteration {}).", m1_active != 0u, m1_act_it) ;
+    } else {
+        // Pre-trigger checkpoint: fall back to re-deriving the latch from the
+        // tracker on the next update.  Correct here, since co_tracker restores
+        // its own state and the separation is monotone through merger.
+        GRACE_WARN("Checkpoint has no M1 activation latch (written before the "
+                   "M1 trigger existed); it will be re-derived from the "
+                   "compact-object separation.") ;
+    }
+    #endif
+    /**********************************************************************/
+    /* Validate the evolved-variable layout before touching the state.    */
+    /* A reordered enum yields a size-compatible but silently misaligned  */
+    /* file, which the dimension check below cannot catch.                */
+    /**********************************************************************/
+    {
+        auto const& vnames = grace::variables::detail::_varnames ;
+        std::string expect ;
+        for ( size_t i = 0 ; i < vnames.size() ; ++i ) {
+            if ( i ) expect += "," ;
+            expect += vnames[i] ;
+        }
+        if ( H5Aexists(file_id, "EvolvedVarLayout") > 0 ) {
+            HDF5_CALL(attr_id, H5Aopen(file_id, "EvolvedVarLayout", H5P_DEFAULT)) ;
+            hid_t atype_id ;
+            HDF5_CALL(atype_id, H5Aget_type(attr_id)) ;
+            size_t const asize = H5Tget_size(atype_id) ;
+            std::vector<char> buf(asize + 1, '\0') ;
+            HDF5_CALL(err, H5Aread(attr_id, atype_id, buf.data())) ;
+            HDF5_CALL(err, H5Tclose(atype_id)) ;
+            HDF5_CALL(err, H5Aclose(attr_id)) ;
+            std::string const found(buf.data()) ;
+            if ( found != expect ) {
+                // Name the first differing slot -- that is the actionable bit.
+                auto split = [](std::string const& in){
+                    std::vector<std::string> out ; size_t b = 0, e ;
+                    while ( (e = in.find(',', b)) != std::string::npos ) { out.push_back(in.substr(b, e-b)) ; b = e+1 ; }
+                    if ( b <= in.size() ) out.push_back(in.substr(b)) ;
+                    return out ;
+                } ;
+                auto const f = split(found), x = split(expect) ;
+                size_t i = 0 ;
+                while ( i < f.size() && i < x.size() && f[i] == x[i] ) ++i ;
+                std::string const fi = (i < f.size() ? f[i] : std::string("<end>")) ;
+                std::string const xi = (i < x.size() ? x[i] : std::string("<end>")) ;
+                ERROR("Checkpoint evolved-variable layout does not match this build: "
+                      "first difference at slot " << i << " -- checkpoint has '" << fi
+                      << "', this build expects '" << xi << "' (" << f.size() << " vs "
+                      << x.size() << " variables).  The state array is stored positionally, "
+                      "so restoring would silently misread every later variable.  Restart "
+                      "from a checkpoint written by a matching build configuration.") ;
+            }
+        } else {
+            #ifdef GRACE_ENABLE_MUONS
+            ERROR("Checkpoint predates the evolved-variable layout record and this build "
+                  "has the muon sector enabled, whose evolved-array layout changed when "
+                  "YMUSTAR_ moved next to YESTAR_.  The stored layout cannot be verified "
+                  "and restoring would silently misread the state.  Restart from a "
+                  "checkpoint written by this build.") ;
+            #else
+            GRACE_WARN("Checkpoint predates the evolved-variable layout record; its layout "
+                       "cannot be verified.  This build has the muon sector off, whose "
+                       "layout is unchanged, so restoring should be safe.") ;
+            #endif
+        }
+    }
     /**********************************************************************/
     // Set iteration and time in grace runtime
     grace::set_iteration(iter) ;

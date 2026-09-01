@@ -358,6 +358,11 @@ class co_tracker_list_impl_t {
     // checkpointing utilities 
     int get_n_cos()  const { return n_cos  ; }
     int get_merged() const { return merged ; }
+    //! Current coordinate separation of the two tracked objects.  Refreshed
+    //! every `update_every` iterations; meaningless for n_cos < 2.  Used by the
+    //! M1 activation trigger (see grace/physics/m1_trigger.hh), which wants its
+    //! own threshold rather than the merge_distance one.
+    double get_distance() const { return cur_distance ; }
 
     // accessor 
     std::unique_ptr<co_tracker_t> const& 

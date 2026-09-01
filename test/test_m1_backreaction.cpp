@@ -101,7 +101,7 @@ struct cell_t {
         // composition test overrides these explicitly.
         set_new(DENS_,   1.0);
         set_new(YESTAR_, 0.30);
-        #if GRACE_M1_NU_SPECIES >= 5
+        #ifdef GRACE_ENABLE_MUONS
         set_new(YMUSTAR_, 0.02);
         #endif
         // Nonzero rates in the nue and nux channels: add_backreaction skips a
@@ -700,7 +700,7 @@ TEST_CASE("M1 photon backreaction: heating flows to tau, composition untouched",
 
     c.set_new(DENS_, 1.0);
     c.set_new(YESTAR_, 0.30);
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     c.set_new(YMUSTAR_, 0.02);
     #endif
     c.set_new(TAU_, 0.5);
@@ -714,7 +714,7 @@ TEST_CASE("M1 photon backreaction: heating flows to tau, composition untouched",
     REQUIRE_THAT(c.get_new(ERADPH_), WithinRel(8.0e-4, 1e-14));  // untouched
     // Photons carry no lepton number: Ye*/Ymu* must be bit-identical.
     REQUIRE(c.get_new(YESTAR_) == 0.30);
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     REQUIRE(c.get_new(YMUSTAR_) == 0.02);
     #endif
 }
@@ -849,7 +849,7 @@ TEST_CASE("M1 backreaction: momentum kick is applied unconditionally",
     double const D = 1.0e-4, tau0 = 1.0e-4;
     c.set_new(DENS_, D);
     c.set_new(YESTAR_, 0.30 * D);
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     c.set_new(YMUSTAR_, 0.02 * D);
     #endif
     c.set_new(TAU_, tau0);

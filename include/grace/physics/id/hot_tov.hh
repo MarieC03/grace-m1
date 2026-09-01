@@ -118,13 +118,15 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
             if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
                 double ye = 0.1, ymu = 0.0 ;
                 this->_eos.betaeq_ye_ymu__rho_temp(id.rho, id.temp, ye, ymu) ;
-                // Margherita fix_ymu_for_too_high_yp: at the hot, low-density
-                // surface the beta-eq can give ye + ymu > yemax (thermal muons
-                // + proton-rich).  Drop the muons there so the stored
-                // composition matches what the EOS evaluates (total_press etc.
-                // apply the same rule), keeping the initial data self-consistent.
-                if ( ye + ymu > this->_eos.get_c2p_ye_max() )
-                    ymu = this->_eos.get_c2p_ymu_min() ;
+                // At the hot, low-density surface the beta-eq can give
+                // ye + ymu > yemax (thermal muons + proton-rich).  No charge-
+                // budget fix here: id.ye/id.ymu are passed by reference into
+                // press_eps_csnd2_entropy__temp_rho_ye_ymu below, whose
+                // limit_ymu(ye, ymu, err) applies the identical cap and writes
+                // the corrected Ymu straight back into id.ymu -- so the stored
+                // composition is guaranteed to match what the EOS evaluated,
+                // by construction rather than by a second, separately
+                // maintained copy of the same rule.
                 id.ye  = ye ;
                 id.ymu = ymu ;
             } else {

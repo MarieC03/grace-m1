@@ -359,7 +359,7 @@ TEST_CASE("c2p round-trip / Minkowski, magnetisation sweep", "[c2p][mhd]")
 }
 
 
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
 // ---------------------------------------------------------------------------
 //  4D leptonic EOS round-trip, WITH muons.
 //
@@ -376,7 +376,7 @@ TEST_CASE("c2p round-trip / Minkowski, magnetisation sweep", "[c2p][mhd]")
 //  RESET_YE/RESET_YMU/EPS_TOO_LOW machinery).  Ye + Ymu is held below
 //  0.9*Ye_max so the proton-fraction axis never saturates.
 //
-//  Requires GRACE_M1_NU_SPECIES >= 5 (YMUL/YMUSL slots).  Tag [leptonic]
+//  Requires GRACE_ENABLE_MUONS (YMUL/YMUSL slots).  Tag [leptonic]
 //  so the hybrid ctest run filters it out and vice versa.
 // ---------------------------------------------------------------------------
 TEST_CASE("c2p round-trip / leptonic 4D, with muons", "[c2p][hydro][leptonic]")
@@ -1360,7 +1360,7 @@ TEST_CASE("c2p leptonic: exactly AT ye_max / ymu_max (table upper edges)",
         REQUIRE(r[LEP_H] > 0.0) ;
     }
 }
-#endif // GRACE_M1_NU_SPECIES >= 5
+#endif // GRACE_ENABLE_MUONS
 
 
 TEST_CASE("c2p round-trip / Schwarzschild-CKS, no B", "[c2p][hydro][curved]")
@@ -1545,7 +1545,7 @@ TEST_CASE("PROBE: entropy backup vs momentum kick", "[c2p][probe]")
 }
 
 
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
 // ---------------------------------------------------------------------------
 //  PROBE A: is eps ~ 1/rho at the stellar surface in the ACTUAL 4D table?
 //
@@ -1705,10 +1705,10 @@ TEST_CASE("PROBE B: leptonic entropy backup vs momentum kick",
     }}
     REQUIRE(true) ;
 }
-#endif // GRACE_M1_NU_SPECIES >= 5
+#endif // GRACE_ENABLE_MUONS
 
 
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
 // ---------------------------------------------------------------------------
 //  PROBE C: is eps (hence tau) negative at the observed halo conditions?
 //  The [BR diag] halo cells sit at rho ~ 1.07e-12, T ~ 0.21 MeV, Ye = 0.5,
@@ -1748,7 +1748,7 @@ TEST_CASE("PROBE C: eps sign at halo conditions", "[c2p][leptonic][probe]")
 #endif
 
 
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
 // ---------------------------------------------------------------------------
 //  PROBE D: what does the EOS look like at rho_atm = 1e-14 vs 1e-12?
 //  eps ~ 1/rho at the radiation-dominated surface (probe A), so dropping the
@@ -1781,7 +1781,7 @@ TEST_CASE("PROBE D: EOS at candidate atmosphere floors", "[c2p][leptonic][probe]
 }
 #endif
 
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
 // ===========================================================================
 // Halo cells captured from a production run
 // ===========================================================================

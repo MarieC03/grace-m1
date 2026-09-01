@@ -33,6 +33,7 @@
 #include <grace/coordinates/coordinates.hh>
 #include <grace/system/grace_system.hh>
 #include <grace/IO/hdf5_output.hh>
+#include <grace/physics/m1_trigger.hh>
 #include <grace/IO/hdf5_surface_output.hh>
 #include <grace/IO/hdf5_sphere_output.hh>
 
@@ -578,6 +579,11 @@ void write_var_arrays_hdf5( std::vector<std::string> const& varlist
     auto h_mirror = Kokkos::create_mirror_view(d_mirror) ; 
     for( int ivar=0; ivar<varlist.size(); ++ivar)
     {
+        #ifdef GRACE_ENABLE_M1
+        // M1 trigger not yet fired: leave the radiation/rate datasets out of
+        // the file entirely rather than writing frozen atmosphere-floor values.
+        if ( !grace::m1_is_active() && grace::is_m1_gated_output_name(varlist[ivar]) ) continue ;
+        #endif
         size_t varidx = grace::get_variable_index(varlist[ivar],isaux) ; 
         GRACE_TRACE("Writing var {} to output. Variable index {} from auxiliaries? {}"
                    , varlist[ivar], varidx, isaux) ; 
@@ -678,6 +684,10 @@ void write_vector_var_arrays_hdf5( std::vector<std::string> const& varlist
     auto h_mirror = Kokkos::create_mirror_view(d_mirror) ; 
     for( auto const& vname: varlist )
     {
+        #ifdef GRACE_ENABLE_M1
+        // M1 trigger not yet fired -- see the scalar writer above.
+        if ( !grace::m1_is_active() && grace::is_m1_gated_output_name(vname) ) continue ;
+        #endif
         std::array<std::string, 3> const compnames 
                 = {
                     vname + "[0]",

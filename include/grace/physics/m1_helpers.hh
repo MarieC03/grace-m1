@@ -135,7 +135,15 @@ template<int ispec>
 GRACE_HOST_DEVICE constexpr int m1_optd_idx() = delete;
 #else
 // Per-block optical-depth index (scalar, stride 1).  No photon variant.
+// ELECTRON FLAVOURS ONLY (ispec 0 = nue, 1 = nuebar): tau is consumed solely by
+// the (1-exp(-tau)) suppression in make_fugacity_state, which skips the muon
+// flavours and nux.  The static_assert keeps a future m1_optd_idx<2>() a
+// compile error rather than a silent read past OPTD2_.
 template<int ispec> GRACE_HOST_DEVICE constexpr int m1_optd_idx() {
+    static_assert(ispec < 2,
+        "Optical depth exists for the electron flavours only (nue, nuebar). "
+        "The muon flavours and nux use the dilute-Ymu treatment instead and "
+        "have no OPTD field -- see variable_indices.hh.") ;
     return OPTD1_ + ispec ;
 }
 #endif

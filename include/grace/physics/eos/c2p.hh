@@ -46,7 +46,7 @@ enum c2p_sig_enum_t : uint8_t {
     C2P_EPS_TOO_LOW,
     C2P_YE_TOO_LOW,
     C2P_YE_TOO_HIGH,
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     C2P_YMU_TOO_LOW,
     C2P_YMU_TOO_HIGH,
     #endif
@@ -60,12 +60,14 @@ enum c2p_sig_enum_t : uint8_t {
 } ;
 
 // c2p_err bit layout. Bit INDICES are not fixed across builds: C2P_RESET_YMU
-// only exists when GRACE_M1_NU_SPECIES >= 5, and C2P_FOFC_FLOORED/
+// only exists when GRACE_ENABLE_MUONS is defined, and C2P_FOFC_FLOORED/
 // C2P_FOFC_DMP only exist when GRACE_ENABLE_FOFC is defined. Each present
 // bit shifts every later enumerator up by one — decode against the enum
-// ordinal for your build, never a hardcoded bit number.
-//   reset-which-conserved flags (C2P_RESET_DENS..C2P_RESET_YE, +YMU in
-//              5-species builds): drive the conservative rewrite logic in
+// ordinal for your build, never a hardcoded bit number.  (GRACE_ENABLE_MUONS
+// is implied by GRACE_M1_NU_SPECIES=5, so every 5-species build keeps the
+// layout it had before muons became an independent switch.)
+//   reset-which-conserved flags (C2P_RESET_DENS..C2P_RESET_YE, +YMU when the
+//              muon sector is on): drive the conservative rewrite logic in
 //              compute_auxiliaries — DO NOT renumber their relative order.
 //   raw-signal mirror bits (C2P_SIG_*): set whenever the corresponding
 //              c2p_sig or eos_err fired during a c2p call. Pure diagnostic
@@ -125,7 +127,7 @@ enum c2p_err_enum_t : uint8_t {
     C2P_RESET_STILDE,
     C2P_RESET_ENTROPY,
     C2P_RESET_YE,
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     C2P_RESET_YMU,
     #endif
     // Signal-mirror bits begin. Pure diagnostic; not consumed by the
@@ -178,7 +180,7 @@ void c2p_set_all_resets(c2p_err_t& err)
     err.set(C2P_RESET_STILDE)  ;
     err.set(C2P_RESET_ENTROPY) ;
     err.set(C2P_RESET_YE)      ;
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
         err.set(C2P_RESET_YMU)     ;
     #endif
 }
@@ -220,7 +222,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         err.set(C2P_RESET_ENTROPY) ;
         if constexpr (has_ye_v<eos_t>) {
                     err.set(C2P_RESET_YE) ;
-                    #if GRACE_M1_NU_SPECIES >= 5
+                    #ifdef GRACE_ENABLE_MUONS
                     err.set(C2P_RESET_YMU) ;
                     #endif
         }
@@ -232,7 +234,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_signals(
         if (sig.test(C2P_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
     }
 
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
     if (sig.test(C2P_YMU_TOO_LOW) or sig.test(C2P_YMU_TOO_HIGH)) {
         err.set(C2P_RESET_YMU) ;
     }
@@ -308,7 +310,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
         err.set(C2P_RESET_ENTROPY) ;
         if constexpr (has_ye_v<eos_t>) {
             err.set(C2P_RESET_YE) ;
-            #if GRACE_M1_NU_SPECIES >= 5
+            #ifdef GRACE_ENABLE_MUONS
             err.set(C2P_RESET_YMU) ;
             #endif
         }
@@ -318,7 +320,7 @@ void KOKKOS_INLINE_FUNCTION c2p_handle_eos_signals(
     if constexpr (has_ye_v<eos_t>) {
         if (eos_err.test(EOS_YE_TOO_LOW))  { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_LOW)  ; }
         if (eos_err.test(EOS_YE_TOO_HIGH)) { err.set(C2P_RESET_YE); err.set(C2P_SIG_YE_TOO_HIGH) ; }
-        #if GRACE_M1_NU_SPECIES >= 5
+        #ifdef GRACE_ENABLE_MUONS
         if (eos_err.test(EOS_YMU_TOO_LOW) or eos_err.test(EOS_YMU_TOO_HIGH)) {
             err.set(C2P_RESET_YMU) ;
         }

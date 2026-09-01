@@ -184,11 +184,23 @@ eos:
       type: bool
       default: false
       description: >
+        Controls ONLY whether the separate electronic lepton table is added on
+        top of the baryon table.  It does NOT affect the charge coordinate:
+        `ye` always means the true electron fraction and the baryon table is
+        always sampled at yp = ye + ymu (charge neutrality).
+
         If false (default): the baryon table already contains the electron
-        contribution (the standard convention for SFHo, DD2, BHBlp, etc.);
-        the electronic lepton table is consulted only for mu_e.
-        Set to true only if the baryon table was generated without electrons
-        and the full electronic thermodynamics must be added explicitly.
+        contribution (the standard convention for SFHo, DD2, BHBlp, etc.), so
+        the electronic table is not used at all -- neither for P/eps/entropy
+        nor for mu_e, which comes from the baryon table's own self-consistent
+        value.  Note the baryon table's baked-in electron gas is then
+        evaluated at yp rather than ye, over-counting electrons by Y_mu.
+
+        Set to true if the baryon table was generated WITHOUT electrons (e.g.
+        sfho_compose_noele_0-5ye.h5), so the full electronic thermodynamics
+        must be added explicitly.  This is what every shipped parfile uses for
+        muonic runs, and it is the configuration with no Y_mu trade-off.
+
         Setting this incorrectly (true when the baryon table already includes
         electrons) causes double-counting of the electron contribution.
 

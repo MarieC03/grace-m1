@@ -121,15 +121,31 @@ struct device_handle {
         w = Kokkos::fmax(0.0, Kokkos::fmin(w, 1.0));
     }
 
+    //! Axis brackets + interpolation weights for one (rho, T, Ye, Ymu) point.
+    //! Hoisted out of interp_table because lookup() interpolates 15-21 tables
+    //! at the SAME coordinates: the brackets depend only on the point, never on
+    //! the table or the species, so bisecting once per lookup instead of once
+    //! per table turns ~60 binary searches into 4.
+    struct bracket_t {
+        int    ir{0},  it{0},  iy{0},  im{0};
+        double wr{0.}, wt{0.}, wy{0.}, wm{0.};
+    };
+
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    bracket_t find_brackets(double lrho, double ltemp, double ye, double lymu) const {
+        bracket_t b;
+        find_bracket(logrho_axis,  nrho,  lrho,  b.ir, b.wr);
+        find_bracket(logtemp_axis, ntemp, ltemp, b.it, b.wt);
+        find_bracket(ye_axis,      nye,   ye,    b.iy, b.wy);
+        if (nymu > 1) find_bracket(logymu_axis, nymu, lymu, b.im, b.wm);
+        return b;
+    }
+
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     double interp_table(const Kokkos::View<double*>& table, int ispec,
-                                               double lrho, double ltemp, double ye, double lymu) const {
-        int ir = 0, it = 0, iy = 0, im = 0;
-        double wr = 0.0, wt = 0.0, wy = 0.0, wm = 0.0;
-        find_bracket(logrho_axis, nrho, lrho, ir, wr);
-        find_bracket(logtemp_axis, ntemp, ltemp, it, wt);
-        find_bracket(ye_axis, nye, ye, iy, wy);
-        if (nymu > 1) find_bracket(logymu_axis, nymu, lymu, im, wm);
+                                               bracket_t const& b) const {
+        int const ir = b.ir, it = b.it, iy = b.iy, im = b.im;
+        double const wr = b.wr, wt = b.wt, wy = b.wy, wm = b.wm;
 
         double out = 0.0;
         const int mz = (nymu > 1 ? 2 : 1);
@@ -194,31 +210,34 @@ struct device_handle {
           lymu = Kokkos::fmax(logymu_min, Kokkos::fmin(lymu, logymu_max));
       }
 
+      // One bisection per axis for the whole lookup (see bracket_t).
+      bracket_t const b = find_brackets(lrho, ltemp, yle, lymu);
+
       if (n_species_table == 3) {
           #pragma unroll
           for (int s = 0; s < 2; ++s) {
-              out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[s]  = interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[s]     = interp_table(kappa_s_table, s, b);
           }
-          out.kappa_a_en[4]  = interp_table(kappa_a_en_table,  2, lrho, ltemp, yle, lymu);
-          out.kappa_a_num[4] = interp_table(kappa_a_num_table, 2, lrho, ltemp, yle, lymu);
-          out.kappa_s[4]     = interp_table(kappa_s_table,     2, lrho, ltemp, yle, lymu);
+          out.kappa_a_en[4]  = interp_table(kappa_a_en_table, 2, b);
+          out.kappa_a_num[4] = interp_table(kappa_a_num_table, 2, b);
+          out.kappa_s[4]     = interp_table(kappa_s_table, 2, b);
       } else if (n_species_table == 5) { // only use 5 species or higher when you have FIVE_SPECIES
           #pragma unroll
           for (int s = 0; s < 5; ++s) {
-              out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[s]  = interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[s]     = interp_table(kappa_s_table, s, b);
           }
       } else if (n_species_table == 6) {
           // Table layout: 0=nue 1=anue 2=numu 3=anumu 4=nutau 5=anutau.
           // nue / anue map straight to slots 0,1 in every build.
           #pragma unroll
           for (int s = 0; s < 2; ++s) {
-              out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[s]  = interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[s]     = interp_table(kappa_s_table, s, b);
           }
 #if GRACE_M1_NU_SPECIES <= 3
           // 3-species run: the single nux field carries ALL FOUR heavy-lepton
@@ -228,17 +247,17 @@ struct device_handle {
           constexpr double w_nux = 0.25 ;
           #pragma unroll
           for (int s = 2; s < 6; ++s) {
-              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table, s, b);
           }
 #else
           // 5-species run: numu, anumu map to slots 2,3; nux = nutau + anutau.
           #pragma unroll
           for (int s = 2; s < 4; ++s) {
-              out.kappa_a_en[s]  = interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[s]     = interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[s]  = interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[s] = interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[s]     = interp_table(kappa_s_table, s, b);
           }
           // E_nux = E_nutau + E_antinutau already carries the species count, so
           // the opacity is the energy-weighted MEAN of the two slots, not their
@@ -247,9 +266,9 @@ struct device_handle {
           constexpr double w_nux = 0.5 ;
           #pragma unroll
           for (int s = 4; s < 6; ++s) {
-              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table,  s, lrho, ltemp, yle, lymu);
-              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, lrho, ltemp, yle, lymu);
-              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table,     s, lrho, ltemp, yle, lymu);
+              out.kappa_a_en[4]  += w_nux * interp_table(kappa_a_en_table, s, b);
+              out.kappa_a_num[4] += w_nux * interp_table(kappa_a_num_table, s, b);
+              out.kappa_s[4]     += w_nux * interp_table(kappa_s_table, s, b);
           }
 #endif
 

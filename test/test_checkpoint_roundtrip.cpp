@@ -130,12 +130,15 @@ TEST_CASE("Checkpoint round-trip is bit-exact on evolved state",
                   << "\n";
     }
     #if defined(GRACE_ENABLE_M1) && GRACE_M1_NU_SPECIES >= 5
-    // Spot-pin the muon-era fields inside the diffed range: if any of these
-    // enum entries moves outside the registered block, restartability of
-    // muonic runs is silently broken.
+    // Spot-pin the 5-species radiation fields inside the diffed range: if any
+    // of these enum entries moves outside the registered block, restartability
+    // is silently broken.
     REQUIRE(ERAD5_    < N_HRSC_CC);
     REQUIRE(FRADZ5_   < N_HRSC_CC);
     REQUIRE(NRAD5_    < N_HRSC_CC);
+    #endif
+    #ifdef GRACE_ENABLE_MUONS
+    // Same for the muon sector, which is independent of the species count.
     REQUIRE(YMUSTAR_  < N_HRSC_CC);
     #endif
     #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_PHOTONS)

@@ -43,6 +43,7 @@
 #include <grace/physics/eas_policies.hh>
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
+#include <grace/physics/m1_trigger.hh>
 #endif
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
 #include <grace/physics/z4c.hh>
@@ -172,6 +173,9 @@ void compute_auxiliary_quantities(
     #endif
     #endif
     #ifdef GRACE_ENABLE_M1
+    // Closure auxiliaries: a per-species root-find per cell, one of the larger
+    // savings while the M1 trigger has not fired.
+    if ( m1_is_active() )
     parallel_for(GRACE_EXECUTION_TAG("EVOL","m1_get_auxiliaries"), policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
@@ -188,7 +192,10 @@ void compute_auxiliary_quantities(
         m1_eq_system.compute_auxiliaries<M1_PHOTON_SPECIES>(VEC(i,j,k), q, dev_coords);
         #endif
     }) ;
-    // now fill out the eas
+    // Now fill out the eas.  Still called while M1 is idle: with
+    // GRACE_M1_DIAGNOSTICS it runs in a reduced fugacity-only mode so the
+    // chemical potentials keep being written (and the rate slots floored);
+    // without it, set_m1_eas returns immediately.
     set_m1_eas<eos_t>(state,sstate,aux) ;
     #endif
 

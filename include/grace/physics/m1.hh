@@ -325,7 +325,13 @@ struct m1_equations_system_t
         m1_closure_t cl{
             prims, metric
         } ;
-        cl.update_closure(0) ;
+        // NB: no update_closure() here.  The only things this function reads
+        // off the closure are cl.E and cl.F, and those are set by initialize()
+        // from the constructor -- not by update_closure.  Solving the closure
+        // here (a full-bracket Brent per species per cell, over the whole grid
+        // INCLUDING ghosts, on every one of the 4 imex222 auxiliary passes)
+        // produced only cl.J/cl.Gamma, which fed a mean-energy local left over
+        // from the old atmosphere treatment and was never stored anywhere.
         // rescale if superluminal
         if ( cl.F >= cl.E ) {
             double fact = 0.9999 * cl.E / cl.F ;
@@ -333,8 +339,6 @@ struct m1_equations_system_t
             this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) *= fact ;
             this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) *= fact ;
         }
-        // compute radiation avg energy
-        double epsilon = cl.J / prims[NRADL] * cl.Gamma ;
         // Set atmosphere / excision
         double r = rtp[0] ;
         bool excise = excision_params.excise_by_radius
@@ -357,23 +361,6 @@ struct m1_equations_system_t
         double const N_atmo = atmo_params.N_fl * Kokkos::pow(r, atmo_params.N_fl_scaling) ;
         bool const E_bad = cl.E         < E_atmo * (1. + atmo_params.atmo_tol ) ;
         bool const N_bad = prims[NRADL] < N_atmo * (1. + atmo_params.atmo_tol ) ;
-        #ifdef GRACE_M1_DEBUG_EAS
-        // Debug: log numu (ispec==2) floor events on IN-STAR cells (electron
-        // neutrino well above the floor, so the legitimately-floored atmosphere
-        // -- where ALL species sit at E_atmo -- is skipped).  With M1-aware FOFC
-        // active these should essentially vanish.  Off unless -DGRACE_M1_DEBUG_EAS.
-        if constexpr ( ispec == 2 ) {
-            if ( E_bad || N_bad ) {
-                const double E_nue = this->_state(VEC(i,j,k), m1_erad_idx<0>(), q)
-                                   / metric.sqrtg() ;
-                if ( E_nue > 1.0e3 * E_atmo )
-                    printf("[M1 floor numu] i=%d j=%d k=%d q=%ld  E=%.6e N=%.6e  E_atmo=%.6e  "
-                           "E_nue=%.6e  trig(E<atmo=%d N<atmo=%d)\n",
-                           int(i), int(j), int(k), (long)q, cl.E, prims[NRADL], E_atmo, E_nue,
-                           int(E_bad), int(N_bad)) ;
-            }
-        }
-        #endif
         // ---- OLD keep-N / full-reset branches (kept for reference) ----------
         // if ( E_bad && !N_bad ) {
         //     double const E_keepN = prims[NRADL] * eps_atmo ;   // = N when eps_fl=1
@@ -399,7 +386,6 @@ struct m1_equations_system_t
             this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = sg * N_atmo ;
-            epsilon = 0.0 ;
         } else if ( excise ) {
             this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex ;
             this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
@@ -408,7 +394,6 @@ struct m1_equations_system_t
             // here since we are in excision it's safe to assume v^i == 0 :
             // Gamma == 1 and N = sqrtg E / eps_target
             this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
-            epsilon = excision_params.eps_ex;
         }
     }
 
@@ -477,11 +462,6 @@ struct m1_equations_system_t
         double  U[4]  ;
         cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
         //U[0] = ( prims[ERADL] + dt * dtfact * eas[ETAL]) / ( 1. + dt * dtfact * eas[KAL]) ;
-        #if 0
-        if ( i == 4 and j == 4 and k == 4 ) {
-            printf("E_guess %.16g eta %.16g kappa %.16g \n", U[0], eas[ETAL], eas[KAL]) ;
-        }
-        #endif
         // take a pointer so we can capture it
         // in the lambda
         m1_closure_t* pcl = &cl;
@@ -570,25 +550,6 @@ struct m1_equations_system_t
             prims, eas, dt, dtfact, &N, &dN
         ) ;
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
-        #ifdef GRACE_M1_DEBUG_EAS
-        // Debug: for numu (ispec==2), log the implicit solve's in/out E and N and
-        // the eas it used, but only for cells that (a) produce a suspiciously low
-        // numu result (within ~1e3x the radiation floor) AND (b) sit inside the
-        // star (electron neutrino well above floor).  Condition (b) skips the
-        // (legitimately floored) atmosphere so stdout isn't flooded.  Off unless
-        // -DGRACE_M1_DEBUG_EAS.
-        if constexpr ( ispec == 2 ) {
-            const double E_nue = this->_state(VEC(i,j,k), m1_erad_idx<0>(), q)
-                               / metric.sqrtg() ;
-            if ( (U0 < 1.0e3*atmo_params.E_fl || N < 1.0e3*atmo_params.E_fl)
-                 && E_nue > 1.0e3*atmo_params.E_fl ) {
-                printf("[M1 implicit numu] i=%d j=%d k=%d q=%ld  Ein=%.6e Eout=%.6e  "
-                       "Nin=%.6e Nout=%.6e  eta=%.6e kappa_a=%.6e  E_nue=%.6e\n",
-                       int(i), int(j), int(k), (long)q, prims[ERADL], U0,
-                       prims[NRADL], N, eas[ETAL], eas[KAL], E_nue) ;
-            }
-        }
-        #endif
     }
 
     // ----------------------------------------------------------------------
@@ -1343,6 +1304,9 @@ struct m1_equations_system_t
 /**************************************************************************************************/
 /* Standalone functions for m1 initial data and eas calculations                                  */
 /**************************************************************************************************/
+//! Per-step count of beta-equilibrium solver failures (see m1.cpp).
+void report_betaeq_failures() ;
+
 template < typename eos_t >
 void set_m1_eas(
       grace::var_array_t& state

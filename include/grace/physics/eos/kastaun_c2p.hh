@@ -333,7 +333,7 @@ namespace grace {
       ye = conservs[YESL] / D ;
 
       ymu = 0.0;
-    #if GRACE_M1_NU_SPECIES >= 5
+    #ifdef GRACE_ENABLE_MUONS
       ymu = conservs[YMUSL] / D ;
     #endif
 

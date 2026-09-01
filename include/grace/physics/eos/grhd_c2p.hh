@@ -1,4 +1,3 @@
-
 /**
  * @file grhd_c2p.hh
  * @author Carlo Musolino (musolino@itp.uni-frankfurt.de)
@@ -78,7 +77,7 @@ struct grhd_c2p_t {
 
         ye = conservs[YESL] / D ;
         ymu = 0;
-        #if GRACE_M1_NU_SPECIES >= 5
+        #ifdef GRACE_ENABLE_MUONS
         ymu = conservs[YMUSL] / D ;
         #endif
         q  = conservs[TAUL] / D ;
@@ -111,7 +110,7 @@ struct grhd_c2p_t {
 
         prims[RHOL] = D/W ;
         prims[YEL]  = ye ;
-        #if GRACE_M1_NU_SPECIES >= 5
+        #ifdef GRACE_ENABLE_MUONS
         prims[YMUL]  = ymu ;
         #endif
         /* Enforce range on eps tilde */

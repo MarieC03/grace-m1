@@ -284,7 +284,7 @@ struct compute_bns_nurates_eas
         const double rhoL  = aux(i, j, k, RHO_,  q);
         const double tempL = aux(i, j, k, TEMP_,  q); // MeV
         const double yeL   = aux(i, j, k, YE_,    q);
-    #if GRACE_M1_NU_SPECIES < 5
+    #ifndef GRACE_ENABLE_MUONS
         const double ymuL = 0.0;
     #else
         const double ymuL = aux(i, j, k, YMU_,    q);;

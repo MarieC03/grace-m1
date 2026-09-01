@@ -389,7 +389,9 @@ void register_variables() {
     register_evolved_vector({SX_,SY_,SZ_},"stilde",hydro_bc,"second_order")  ;
     register_evolved_scalar(TAU_,"tau",hydro_bc,"second_order") ;
     register_evolved_scalar(YESTAR_,"ye_star",hydro_bc,"second_order") ;
-    // YMU registerd together with the M1 variables
+    #ifdef GRACE_ENABLE_MUONS
+    register_evolved_scalar(YMUSTAR_,"ymu_star",hydro_bc,"second_order") ;
+    #endif
     register_evolved_scalar(ENTROPYSTAR_,"s_star",hydro_bc,"second_order") ;
 
     // stag
@@ -399,6 +401,9 @@ void register_variables() {
     register_aux_vector({ZVECX_,ZVECY_,ZVECZ_}, "zvec") ;
     register_aux_vector({BX_,BY_,BZ_}, "Bvec") ;
     register_aux_scalar(YE_, "ye") ;
+    #ifdef GRACE_ENABLE_MUONS
+    register_aux_scalar(YMU_, "ymu") ;
+    #endif
     register_aux_scalar(TEMP_,"temperature") ;
     register_aux_scalar(ENTROPY_,"entropy") ;
     register_aux_scalar(EPS_,"eps") ;
@@ -431,8 +436,6 @@ void register_variables() {
     register_evolved_scalar(ERAD5_,"Erad5",m1_bc,"second_order") ;
     register_evolved_scalar(NRAD5_,"Nrad5",m1_bc,"second_order") ;
     register_evolved_vector({FRADX5_,FRADY5_,FRADZ5_},"Frad5",m1_bc,"second_order") ;
-    register_evolved_scalar(YMUSTAR_,"ymu_star",hydro_bc,"second_order") ;
-
     #endif
     #ifdef GRACE_M1_PHOTONS
     register_evolved_scalar(ERADPH_,"Erad_ph",m1_bc,"second_order") ;
@@ -447,11 +450,6 @@ void register_variables() {
     #endif
     #if GRACE_M1_NU_SPECIES >= 3
     register_evolved_scalar(OPTD2_,"optd2",m1_bc,"second_order") ;
-    register_evolved_scalar(OPTD3_,"optd3",m1_bc,"second_order") ;
-    #endif
-    #if GRACE_M1_NU_SPECIES >= 5
-    register_evolved_scalar(OPTD4_,"optd4",m1_bc,"second_order") ;
-    register_evolved_scalar(OPTD5_,"optd5",m1_bc,"second_order") ;
     #endif
     #endif
     // aux
@@ -485,8 +483,8 @@ void register_variables() {
     register_aux_scalar(ETA5_,"eta5") ;
     register_aux_scalar(KAPPAAN5_,"kappa_n5") ;
     register_aux_scalar(ETAN5_,"eta_n5") ;
-    register_aux_scalar(YMU_, "ymu") ;
     #endif
+    register_aux_scalar(BETAEQ_ERR_,"betaeq_err") ;
     #ifdef GRACE_M1_PHOTONS
     register_aux_scalar(KAPPAAPH_,"kappa_a_ph") ;
     register_aux_scalar(KAPPASPH_,"kappa_s_ph") ;
@@ -494,7 +492,7 @@ void register_variables() {
     register_aux_scalar(KAPPAANPH_,"kappa_n_ph") ;
     register_aux_scalar(ETANPH_,"eta_n_ph") ;
     #endif
-    #ifdef GRACE_M1_DEBUG_EAS
+    #ifdef GRACE_M1_DIAGNOSTICS
     register_aux_scalar(ETANU1_,"eta_nu1") ;
     #if GRACE_M1_NU_SPECIES >= 3
     register_aux_scalar(ETANU2_,"eta_nu2") ;
@@ -508,6 +506,17 @@ void register_variables() {
     register_aux_scalar(MUMU_,"mu_mu") ;
     register_aux_scalar(MUP_, "mu_p") ;
     register_aux_scalar(MUN_, "mu_n") ;
+    register_aux_scalar(MUDELTA_NPE_, "mu_delta_npe") ;
+    #ifdef GRACE_ENABLE_MUONS
+    register_aux_scalar(MUDELTA_NPMU_,"mu_delta_npmu") ;
+    #endif
+    register_aux_scalar(XN_,  "X_n")  ;
+    register_aux_scalar(XP_,  "X_p")  ;
+    register_aux_scalar(XA_,  "X_a")  ;
+    register_aux_scalar(XH_,  "X_h")  ;
+    register_aux_scalar(ABAR_,"Abar") ;
+    register_aux_scalar(ZBAR_,"Zbar") ;
+    register_aux_scalar(BETAEQ_TSCALE_,"beta_eq_tscale") ;
     #endif
     #endif
 

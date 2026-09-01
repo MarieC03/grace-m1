@@ -210,17 +210,14 @@ tau_policy_fixed make_eikonal_tau(
     VEC(const int i, const int j, const int k), int64_t q)
 {
     tau_policy_fixed tf{} ;
+    // Electron flavours only.  tau[NUMU]/[NUMUBAR]/[NUX] stay at their zero
+    // default: nothing consumes them (the suppression in make_fugacity_state is
+    // NUE/NUEBAR-only), so there are no OPTD fields for them to read.
     #if GRACE_M1_NU_SPECIES >= 1
     tf.tau[NUE] = state(VEC(i,j,k), m1_optd_idx<0>(), q) ;
     #endif
-    #if GRACE_M1_NU_SPECIES >= 5
+    #if GRACE_M1_NU_SPECIES >= 3
     tf.tau[NUEBAR]  = state(VEC(i,j,k), m1_optd_idx<1>(), q) ;
-    tf.tau[NUMU]    = state(VEC(i,j,k), m1_optd_idx<2>(), q) ;
-    tf.tau[NUMUBAR] = state(VEC(i,j,k), m1_optd_idx<3>(), q) ;
-    tf.tau[NUX]     = state(VEC(i,j,k), m1_optd_idx<4>(), q) ;
-    #elif (GRACE_M1_NU_SPECIES >= 3)
-    tf.tau[NUEBAR]  = state(VEC(i,j,k), m1_optd_idx<1>(), q) ;
-    tf.tau[NUX]     = state(VEC(i,j,k), m1_optd_idx<2>(), q) ;
     #endif
     return tf ;
 }

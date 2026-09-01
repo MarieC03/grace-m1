@@ -229,6 +229,16 @@ eos_storage_t::eos_storage_t() {
                   "eos_type=tabulated.") ;
         _tabulated = read_eos_table() ;
     } else if ( eos_type == "leptonic") {
+        #ifndef GRACE_ENABLE_MUONS
+        // The leptonic 4D EOS *is* the muon EOS: it carries the muon table and
+        // its Y_mu axis.  With the muon sector off, Y_mu is pinned to 0 (and
+        // then clamped to eos_ymumin), so the table is loaded and interpolated
+        // for nothing.  Use eos_type=tabulated instead.
+        GRACE_WARN("eos_type=leptonic with GRACE_ENABLE_MUONS off: Y_mu is pinned "
+                   "to zero, so the muon table is loaded and interpolated but "
+                   "cannot do anything.  Reconfigure with -DGRACE_ENABLE_MUONS=ON "
+                   "to evolve Y_mu, or use eos_type=tabulated.") ;
+        #endif
         _leptonic_4d = read_leptonic_4d_table() ;
     } else if ( eos_type == "ideal_gas") {
         _gammalaw = ideal_gas_eos_t(

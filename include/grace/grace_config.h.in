@@ -170,7 +170,14 @@ namespace grace {
 #define GRACE_M1_NU_SPECIES @GRACE_M1_NU_SPECIES@
 #cmakedefine GRACE_M1_PHOTONS
 #cmakedefine GRACE_M1_OPTICAL_DEPTH
-#cmakedefine GRACE_M1_DEBUG_EAS
+#cmakedefine GRACE_M1_DIAGNOSTICS
+// Muon sector (conserved YMUSTAR_, primitive/aux ymu, c2p muon resets,
+// muonic backreaction).  Independent of M1 -- valid at any species count and
+// with M1 off -- but implied by 5-species transport.
+#cmakedefine GRACE_ENABLE_MUONS
+#if GRACE_M1_NU_SPECIES >= 5 && !defined(GRACE_ENABLE_MUONS)
+#error "GRACE_M1_NU_SPECIES=5 requires GRACE_ENABLE_MUONS; reconfigure with CMake (do not hand-edit this header)."
+#endif
 #cmakedefine GRACE_HAVE_BNS_NURATES
 #cmakedefine GRACE_ENABLE_PARTICLES
 

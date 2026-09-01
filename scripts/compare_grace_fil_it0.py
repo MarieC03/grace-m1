@@ -80,7 +80,7 @@ fig, axes = plt.subplots(3, 3, figsize=(16, 12))
 print(f"{'field':18} {'GRACE@core':>13} {'FIL@core':>13} {'ratio':>8}")
 for ax, (label, filf, gname, logy) in zip(axes.flat, FIELDS):
     if gname not in g:
-        ax.set_title(f"{label}\n(not in output — needs GRACE_M1_DEBUG_EAS)")
+        ax.set_title(f"{label}\n(not in output — needs GRACE_M1_DIAGNOSTICS)")
         ax.axis("off")
         print(f"{label:18}  SKIPPED ({gname} not in GRACE file)")
         continue

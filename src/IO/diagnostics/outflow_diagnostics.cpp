@@ -42,12 +42,29 @@
 
 
 #include <array>
+#include <cstdio>
 #include <vector>
 #include <string>
 
 namespace grace {
 
-std::vector<std::string> outflows::flux_names = {"Mdot_unbound_geo", "Mdot_unbound_bern", "Mdot_tot"} ;
+namespace {
+//! "Mdot_ye_0.050_0.070" style labels, so the bin edges travel with the data
+//! and post-processing never has to re-derive them.
+std::vector<std::string> make_outflow_flux_names() {
+    std::vector<std::string> names{"Mdot_unbound_geo", "Mdot_unbound_bern", "Mdot_tot"} ;
+    double const dye = (outflows::ye_bin_hi - outflows::ye_bin_lo) / outflows::n_ye_bins ;
+    char buf[64] ;
+    for ( int b = 0 ; b < outflows::n_ye_bins ; ++b ) {
+        double const lo = outflows::ye_bin_lo + b * dye ;
+        std::snprintf(buf, sizeof(buf), "Mdot_ye_%.3f_%.3f", lo, lo + dye) ;
+        names.emplace_back(buf) ;
+    }
+    return names ;
+}
+} // namespace
+
+std::vector<std::string> outflows::flux_names = make_outflow_flux_names() ;
 
 #ifdef GRACE_ENABLE_M1
 // Labels follow the radiation-block order used in compute_local_fluxes:
@@ -83,7 +100,7 @@ outflows::compute_local_fluxes(
     GRACE_VERBOSE("We have {} points", npoints) ;
 
     // initialize local flux array
-    std::array<double,n_fluxes> flux_loc = {0.,0.,0.} ;
+    std::array<double,n_fluxes> flux_loc{} ;   // all n_fluxes entries zeroed
 
     // if no local points return
     if (npoints == 0 ) return flux_loc ;
@@ -123,7 +140,8 @@ outflows::compute_local_fluxes(
                 , press{ivals_aux(i,loc_aux_idx_t::PRESSL)}
                 , zx{ivals_aux(i,loc_aux_idx_t::ZXL)}
                 , zy{ivals_aux(i,loc_aux_idx_t::ZYL)}
-                , zz{ivals_aux(i,loc_aux_idx_t::ZZL)} ;
+                , zz{ivals_aux(i,loc_aux_idx_t::ZZL)}
+                , ye{ivals_aux(i,loc_aux_idx_t::YEL)} ;
         #else
         double gxx{ivals(i,loc_var_idx_t::GTXXL)}
                 , gxy{ivals(i,loc_var_idx_t::GTXYL)}
@@ -141,7 +159,8 @@ outflows::compute_local_fluxes(
                 , press{ivals_aux(i,loc_aux_idx_t::PRESSL)}
                 , zx{ivals_aux(i,loc_aux_idx_t::ZXL)}
                 , zy{ivals_aux(i,loc_aux_idx_t::ZYL)}
-                , zz{ivals_aux(i,loc_aux_idx_t::ZZL)} ;
+                , zz{ivals_aux(i,loc_aux_idx_t::ZZL)}
+                , ye{ivals_aux(i,loc_aux_idx_t::YEL)} ;
         #endif
         #if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
         metric_array_t metric{
@@ -191,7 +210,14 @@ outflows::compute_local_fluxes(
         }
 
         if ( h*u_t < -h_min ) {
-            flux_loc[diag_var_idx_t::BERN_UNBOUND] += r * r * domega * mass_flux ;
+            double const dm = r * r * domega * mass_flux ;
+            flux_loc[diag_var_idx_t::BERN_UNBOUND] += dm ;
+            // Same integrand, binned by composition.  Clamped rather than
+            // dropped at the edges so the bins always sum to BERN_UNBOUND.
+            constexpr double dye = (ye_bin_hi - ye_bin_lo) / n_ye_bins ;
+            int b = static_cast<int>((ye - ye_bin_lo) / dye) ;
+            b = b < 0 ? 0 : (b >= n_ye_bins ? n_ye_bins - 1 : b) ;
+            flux_loc[YE_BIN0 + b] += dm ;
         }
 
         flux_loc[diag_var_idx_t::TOT] += r * r * domega * mass_flux ;

@@ -216,7 +216,9 @@ m1:
       default: 0
       description: >
         Outer radius [code units] of the optical-depth path estimate.
-        Required (> 0) by tau_policy local_spherical and local_kappa.
+        Required (> 0) by tau_policy local_kappa (and by local_spherical, which
+        is deprecated -- see tau_policy).  Unused by eikonal, which solves for
+        tau rather than estimating a path length.
 
     tau_policy:
       type: keyword
@@ -225,13 +227,37 @@ m1:
       description: >
         Optical depth used to suppress the neutrino fugacities
         (eta_nu -> eta_nu * (1 - exp(-tau))).
-        none: thin limit everywhere.
-        analytic_density: Deaton+ 2013 density fit — COLD NS only, known
-        to fail for hot matter.
-        local_spherical: kappa * (r_outer - r) seeded by the cold fit.
-        local_kappa: per-species (kappa_a + kappa_s) * (r_outer - r) using
-        the previous step's opacities (recommended; thin at t=0, builds up
-        within one step).
+
+        IMPORTANT: the suppression is applied to the ELECTRON FLAVOURS ONLY
+        (nue, nuebar).  The muon flavours and nux are handled by the dilute-Ymu
+        treatment instead (the mu_mu tanh ramp below Y_mu,0, the +/-5 fugacity
+        clamp, and the muon rate gate), so tau is neither computed nor stored
+        for them -- there are no optd3/4/5 fields.
+
+        none (default): thin limit everywhere.
+
+        analytic_density: Deaton+ 2013 density fit.  COLD NS only -- known to
+        fail for hot matter, so not appropriate for a post-merger remnant.
+
+        local_spherical: DEPRECATED, and NOT what its name suggests.  The
+        kappa * (r_outer - r) geometry it is supposed to compute lives in the
+        tau_post hook, whose result is discarded (see "Step 9" in
+        eas_neutrino_rates_analytic.hh); its tau_init returns the cold fit.  At
+        runtime this policy is therefore IDENTICAL to analytic_density, with
+        the same hot-matter failure.  Prefer eikonal, or local_kappa.
+
+        local_kappa: per-species (kappa_a + kappa_s) * (r_outer - r) using the
+        previous step's opacities; thin at t=0, builds up within one step.
+        Requires tau_outer_radius_code > 0.
+
+        eikonal: Neilsen+ 2014 min-path relaxation -- the physically
+        best-motivated option, and the only one that is not a geometric
+        estimate.  Solves |grad tau| = kappa by a monotone Jacobi sweep over
+        the OPTD* fields once per substep, ordered tau -> ghost exchange ->
+        kappa so the fugacities see a freshly exchanged tau.
+        REQUIRES the build flag -DGRACE_M1_OPTICAL_DEPTH=ON (OFF by default);
+        selecting it without that flag is a startup error, since the OPTD*
+        evolved fields it relaxes do not exist otherwise.
 
     weakhub_table:
       type: string
@@ -326,3 +352,46 @@ m1:
         in-bounds limiters cannot catch because it lands INSIDE the table
         bounds.  This is FIL's M1_rho_floor.  0 (default) disables the cutoff.
         A few x the atmosphere floor grmhd.atmosphere.rho_fl is a typical value.
+
+  trigger:
+    type: schema
+    description: >
+      Delay the whole M1 sector until the compact objects are close enough.
+      Neutrinos are irrelevant during a BNS inspiral but M1 is ~64% of a
+      timestep, so an inspiral otherwise pays in full for transport that does
+      nothing.  Mirrors FIL's Trigger thorn steering
+      frankfurt_m1::evolve_radiation off the BNS separation.
+
+      While idle, ALL M1 work is skipped -- neutrino and photon fluxes,
+      sources, the implicit solve, backreaction, the closure auxiliaries, the
+      eikonal optical depth and the EAS rates -- and the M1 variables are left
+      frozen at their atmosphere-floor values.  The trigger is a pure compute
+      gate: M1 does not constrain the timestep in Z4 runs, so an idle M1 cannot
+      change the inspiral evolution.
+
+      With GRACE_M1_DIAGNOSTICS the EAS still runs in a reduced fugacity-only
+      mode, so the chemical potentials and composition keep being written while
+      the rates themselves are skipped.
+
+    enabled:
+      type: bool
+      default: false
+      description: >
+        Arm the trigger.  False (default) means M1 is active from t=0, i.e. the
+        behaviour of every parfile written before the trigger existed.
+        Requires co_tracker to be configured with two objects and a positive
+        update_every -- GRACE errors out at startup otherwise, rather than
+        silently never activating.
+
+    separation:
+      type: double
+      default: 30.0
+      range: "(0,*)"
+      description: >
+        Coordinate separation [code units] below which M1 activates, read from
+        the co_tracker.  Deliberately independent of co_tracker.merge_distance
+        (which decides "the binary has merged" and drives regridding): you
+        normally want neutrinos switched on somewhat BEFORE merger, so this
+        should be the larger of the two.  One-way -- once activated M1 is never
+        switched off again, since the separation of a single remnant is
+        meaningless.

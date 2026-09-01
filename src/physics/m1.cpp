@@ -48,6 +48,7 @@
 // m1 includes
 #include <grace/physics/m1.hh>
 #include <grace/physics/m1_helpers.hh>
+#include <grace/physics/m1_trigger.hh>
 #include <grace/physics/eas_kinds.hh>
 #include <grace/physics/eas_policies.hh>
 #include <grace/physics/eas_optical_depth.hh>
@@ -69,6 +70,68 @@
 #include <string>
 
 namespace grace {
+//**************************************************************************************************
+/**
+ * @brief Report how many cells failed the beta-equilibrium solve this step.
+ *
+ * The solver's failures are otherwise invisible: every call site is
+ * `if (eq_ok) {...}` with no else, so a run where it never converges behaves
+ * exactly like `betaeq_policy: off` while claiming to equilibrate.  Modelled on
+ * check_nans_and_act_if_due: reduce the per-cell aux(BETAEQ_ERR_) bitmask,
+ * MPI-sum, emit one warning.
+ */
+void report_betaeq_failures() {
+    using namespace grace ;
+    using namespace Kokkos ;
+
+    // Only meaningful when a solver actually runs.
+    if ( get_betaeq_mode() == betaeq_mode_t::off ) return ;
+
+    DECLARE_GRID_EXTENTS ;
+    auto aux = grace::variable_list::get().getaux() ;
+
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
+        policy({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ;
+
+    // Two counters in one pass: total failures, and the subset that was merely
+    // pinned on an EOS-table bound.  The split is the whole point -- an
+    // at-bound cell is at the best equilibrium the table can represent, not a
+    // broken solve, and the two used to be indistinguishable in the log.
+    uint64_t constexpr at_bound_mask = uint64_t(1) << BETAEQ_AT_BOUND ;
+    uint64_t constexpr res_large_mask = uint64_t(1) << BETAEQ_RESIDUAL_LARGE ;
+    int64_t local_failed = 0, local_bound = 0, local_res = 0 ;
+    parallel_reduce( GRACE_EXECUTION_TAG("DIAG","betaeq_failure_count")
+                   , policy
+                   , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k),
+                                   int const& q, int64_t& acc, int64_t& acc_b,
+                                   int64_t& acc_r)
+    {
+        double const f = aux(VEC(i,j,k),BETAEQ_ERR_,q) ;
+        if ( f != 0.0 ) {
+            ++acc ;
+            uint64_t const bits = static_cast<uint64_t>(f) ;
+            if ( bits & at_bound_mask ) ++acc_b ;
+            if ( bits & res_large_mask ) ++acc_r ;
+        }
+    }, local_failed, local_bound, local_res ) ;
+
+    uint64_t local_u64[3]  = { static_cast<uint64_t>(local_failed)
+                             , static_cast<uint64_t>(local_bound)
+                             , static_cast<uint64_t>(local_res) } ;
+    uint64_t global_u64[3] = { 0, 0, 0 } ;
+    parallel::mpi_allreduce(local_u64, global_u64, 3, sc_MPI_SUM) ;
+
+    if ( global_u64[0] == 0 ) return ;
+    GRACE_WARN("Beta-equilibrium solver failed in {} cells at iteration {} "
+               "({} ran into a variable bound; {} of those settled there but "
+               "kept a large residual, i.e. no root exists inside the bounds).  "
+               "Those cells kept their un-equilibrated rates; decode the "
+               "per-cell cause from the betaeq_err bitmask (betaeq_err_enum_t).",
+               global_u64[0], grace::get_iteration(),
+               global_u64[1], global_u64[2]) ;
+}
+
+
 
 template < typename eos_t >
 void set_m1_eas() {
@@ -90,6 +153,13 @@ void set_m1_eas(
     using namespace Kokkos ;
 
     DECLARE_GRID_EXTENTS ;
+
+    // M1 idle: without the diagnostics build there is nothing to produce here,
+    // so skip the whole EAS pass.  With it, the providers still run in
+    // fugacity-only mode (see neutrinos_eas_op::diagnostics_only).
+    #ifndef GRACE_M1_DIAGNOSTICS
+    if ( !m1_is_active() ) return ;
+    #endif
 
     auto eos = eos::get().get_eos<eos_t>() ;
 

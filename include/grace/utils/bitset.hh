@@ -65,6 +65,18 @@ struct bitset_t {
     KOKKOS_INLINE_FUNCTION void set_all() {
         for (size_t w = 0; w < kWords; ++w) words[w] = ~uint64_t(0);
     }
+
+    // Is any bit set?  Callers previously had to spell out a disjunction of
+    // test() calls (or wrote `err != bitset_t{}`, which does not compile --
+    // there is no operator==), so an EOS-error check in beta_eq_residual was
+    // commented out as unworkable.  This is that check.
+    KOKKOS_INLINE_FUNCTION bool any() const {
+        for (size_t w = 0; w < kWords; ++w) if (words[w]) return true;
+        return false;
+    }
+
+    // Are all bits clear?
+    KOKKOS_INLINE_FUNCTION bool none() const { return !any(); }
 };
 
 }

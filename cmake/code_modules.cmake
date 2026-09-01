@@ -13,15 +13,40 @@
 # The species form strict supersets, so the source tests it with
 # `#if GRACE_M1_NU_SPECIES >= {1,3,5}`.  Any neutrino species turns on the
 # shared M1 infrastructure (GRACE_ENABLE_M1); the photon block does too.
-option(GRACE_ENABLE_M1 "Enable M1 radiation transport" OFF)
+# NB: GRACE_ENABLE_M1 is NOT a user option -- it is derived from the flags
+# below and published as a hidden INTERNAL cache entry further down.  It used
+# to be an option() that the implication blocks overwrote with a plain set(),
+# which shadowed the cache instead of writing to it: every M1 build tree then
+# reported GRACE_ENABLE_M1=OFF in ccmake while M1 was actually compiled in.
 set(GRACE_M1_NU_SPECIES "0" CACHE STRING "Grey neutrino species evolved by M1 (0, 1, 3, or 5)")
 set_property(CACHE GRACE_M1_NU_SPECIES PROPERTY STRINGS 0 1 3 5)
 if(NOT GRACE_M1_NU_SPECIES MATCHES "^(0|1|3|5)$")
     message(FATAL_ERROR "GRACE_M1_NU_SPECIES must be 0, 1, 3, or 5 (got '${GRACE_M1_NU_SPECIES}').")
 endif()
 if(GRACE_M1_NU_SPECIES GREATER 0)
-    set(GRACE_ENABLE_M1 ON)
     message(STATUS "M1 neutrino transport: ${GRACE_M1_NU_SPECIES}-species.")
+endif()
+
+# Muon sector: evolve the muon fraction Y_mu as an independent fluid
+# composition variable (conserved YMUSTAR_, primitive/aux ymu, c2p muon
+# resets, muonic backreaction).  Orthogonal to M1 -- valid at any species
+# count and with M1 off entirely (pure GRMHD + muonic EOS).
+#
+# FORCED ON at 5 species: numu/numubar transport is meaningless without a
+# muon sector, so the invariant GRACE_M1_NU_SPECIES==5 => GRACE_ENABLE_MUONS
+# holds by construction (grace_config.h.in #errors if it is ever violated).
+# Deliberately NOT auto-cleared when the species count drops back below 5 --
+# that would defeat "explicitly switchable"; turn it off by hand.
+#
+# The forcing writes through with CACHE ... FORCE so ccmake shows the real
+# value and a reconfigure is idempotent.
+option(GRACE_ENABLE_MUONS "Evolve the muon fraction Y_mu (forced ON when GRACE_M1_NU_SPECIES=5)" OFF)
+if(GRACE_M1_NU_SPECIES EQUAL 5 AND NOT GRACE_ENABLE_MUONS)
+    set(GRACE_ENABLE_MUONS ON CACHE BOOL
+        "Evolve the muon fraction Y_mu (forced ON when GRACE_M1_NU_SPECIES=5)" FORCE)
+    message(STATUS "Muon sector: ON (forced by GRACE_M1_NU_SPECIES=5).")
+elseif(GRACE_ENABLE_MUONS)
+    message(STATUS "Muon sector: ON (explicitly enabled, ${GRACE_M1_NU_SPECIES}-species).")
 endif()
 
 # Photon M1 transport: a single, explicitly-addressed radiation block with
@@ -29,7 +54,6 @@ endif()
 # lepton-number coupling).  Implies the M1 infrastructure.
 option(GRACE_M1_PHOTONS "Enable photon M1 transport block" OFF)
 if(GRACE_M1_PHOTONS)
-    set(GRACE_ENABLE_M1 ON)
     message(STATUS "M1 photon transport enabled.")
 endif()
 
@@ -41,26 +65,39 @@ endif()
 # is used.
 option(GRACE_M1_OPTICAL_DEPTH "Enable the eikonal neutrino optical-depth solver" OFF)
 if(GRACE_M1_OPTICAL_DEPTH)
-    set(GRACE_ENABLE_M1 ON)
     message(STATUS "M1 eikonal optical-depth solver enabled.")
 endif()
 
-# Debug: write EAS-rate diagnostic fields into dedicated aux slots so they can
-# be dumped via the "rates" output group and compared cell-by-cell against the
-# reference (FIL).  Covers the per-species equilibrium fugacity eta_nu = mu_nu/T
-# (eta_nu1..5) and the matter chemical potentials feeding it (mu_e, mu_mu, mu_p,
-# mu_n) -- the latter localise where mu_n-mu_p collapses so eta_nu is nonzero at
-# beta equilibrium.  Off by default; costs a handful of extra aux scalars when
-# enabled.  Implies the M1 infrastructure.
-option(GRACE_M1_DEBUG_EAS "Output EAS-rate diagnostics (eta_nu, mu_e/mu_mu/mu_p/mu_n) to aux" OFF)
-if(GRACE_M1_DEBUG_EAS)
-    set(GRACE_ENABLE_M1 ON)
-    message(STATUS "M1 EAS-rate diagnostics enabled.")
+# Write M1 diagnostic fields into dedicated aux slots, dumped via the
+# "diagnostics" output group.  All of them are read straight out of the
+# fugacity_state that neutrinos_eas_op already builds every substep, so they
+# cost stores but no extra EOS lookups or root-finds (contrast FIL's
+# compute_m1_diagnostics.cc, which recomputes everything at analysis time).
+# Covers: the per-species equilibrium fugacity eta_nu = mu_nu/T (eta_nu1..5),
+# the matter chemical potentials feeding it (mu_e, mu_mu, mu_p, mu_n), the raw
+# beta-equilibrium offsets (mu_delta_npe, mu_delta_npmu), the nuclear
+# composition already interpolated by the same EOS call (X_n, X_p, X_a, X_h,
+# Abar, Zbar) and the beta-equilibration timescale ratio (beta_eq_tscale).
+# Off by default; costs a handful of extra aux scalars when enabled.
+# Implies the M1 infrastructure.
+option(GRACE_M1_DIAGNOSTICS "Output M1 diagnostics (eta_nu, chemical potentials, composition) to aux" OFF)
+if(GRACE_M1_DIAGNOSTICS)
+    message(STATUS "M1 diagnostics enabled.")
 endif()
 
-# Consistency: M1 must transport something.  Catches an enabled M1 build (e.g.
-# a stale GRACE_ENABLE_M1=ON in the cache, or photon/debug flags alone) that
-# selects zero neutrino species and no photons.
+# GRACE_ENABLE_M1 is fully DERIVED from the flags above -- any neutrino
+# species, the photon block, the optical-depth solver or the diagnostics all
+# require the shared M1 infrastructure.  Published as CACHE INTERNAL so it is
+# hidden from ccmake (no knob left to display a stale value) and recomputed
+# from scratch on every configure (no way for a stale ON to survive).
+if(GRACE_M1_NU_SPECIES GREATER 0 OR GRACE_M1_PHOTONS OR GRACE_M1_OPTICAL_DEPTH OR GRACE_M1_DIAGNOSTICS)
+    set(GRACE_ENABLE_M1 ON  CACHE INTERNAL "Derived: M1 infrastructure required" FORCE)
+else()
+    set(GRACE_ENABLE_M1 OFF CACHE INTERNAL "Derived: M1 infrastructure required" FORCE)
+endif()
+
+# Consistency: M1 must transport something.  Now only reachable by enabling
+# the optical-depth solver or the diagnostics with no species and no photons.
 if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES EQUAL 0 AND NOT GRACE_M1_PHOTONS)
     message(FATAL_ERROR
         "M1 is enabled but GRACE_M1_NU_SPECIES=0 and GRACE_M1_PHOTONS=OFF — "

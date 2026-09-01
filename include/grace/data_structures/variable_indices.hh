@@ -166,6 +166,12 @@ enum evol_hrsc_var_cc_idx : int {
     SZ_,
     TAU_,
     YESTAR_,
+    #ifdef GRACE_ENABLE_MUONS
+    // Muon fraction, the exact analogue of YESTAR_ (and, like it, registered
+    // with hydro_bc rather than m1_bc).  Independent of M1: this slot exists
+    // whenever the muon sector is on, including with no radiation transport.
+    YMUSTAR_,
+    #endif
     ENTROPYSTAR_,
     #ifdef GRACE_ENABLE_M1
     #if GRACE_M1_NU_SPECIES >= 1
@@ -198,7 +204,6 @@ enum evol_hrsc_var_cc_idx : int {
     FRADX5_,
     FRADY5_,
     FRADZ5_,
-    YMUSTAR_,
     #endif
     #ifdef GRACE_M1_PHOTONS
     // Photon radiation block: a single species, addressed explicitly
@@ -210,23 +215,24 @@ enum evol_hrsc_var_cc_idx : int {
     FRADZPH_,
     #endif
     #ifdef GRACE_M1_OPTICAL_DEPTH
-    // Per-block neutrino optical depths (eikonal solver).  Scalar, stride 1,
-    // one per radiation block in the same block->flavour mapping as ERAD*:
-    //   3sp: OPTD1_=nue, OPTD2_=nuebar, OPTD3_=nux
-    //   5sp: + OPTD4_=numubar (block 3), OPTD5_=nux (block 4) [OPTD3_=numu]
-    // Inert evolved variables: zero flux/source, carried unchanged by the RK
-    // and overwritten by the relaxation sweep; registered only so they get
-    // ghost exchange + AMR prolongation + BCs.
+    // Optical depth for the ELECTRON flavours only: OPTD1_ = nue,
+    // OPTD2_ = nuebar.  Inert evolved variables (zero flux/source, carried
+    // unchanged by the RK and overwritten by the relaxation sweep); registered
+    // only so they get ghost exchange + AMR prolongation + BCs.
+    //
+    // There are deliberately no numu/numubar/nux fields.  tau is consumed at
+    // exactly one place -- the (1-exp(-tau)) fugacity suppression in
+    // make_fugacity_state -- and that applies to NUE/NUEBAR only; the muon
+    // flavours and nux get the dilute-Ymu treatment instead (mu_mu ramp,
+    // +/-5 fugacity clamp, muon_rate_gate).  Relaxing tau for them was pure
+    // dead work: computed every substep, ghost-exchanged, prolonged, and never
+    // read.  m1_optd_idx() static_asserts ispec < 2 so this cannot silently
+    // regress.
     #if GRACE_M1_NU_SPECIES >= 1
     OPTD1_,
     #endif
     #if GRACE_M1_NU_SPECIES >= 3
     OPTD2_,
-    OPTD3_,
-    #endif
-    #if GRACE_M1_NU_SPECIES >= 5
-    OPTD4_,
-    OPTD5_,
     #endif
     #endif
     #endif
@@ -322,6 +328,11 @@ enum aux_var_idx : int {
     BY_,
     BZ_,
     YE_,
+    #ifdef GRACE_ENABLE_MUONS
+    // Muon fraction primitive, the analogue of YE_.  Outside the M1 block:
+    // the muon sector is independent of radiation transport.
+    YMU_,
+    #endif
     TEMP_,
     ENTROPY_,
     EPS_,
@@ -365,8 +376,13 @@ enum aux_var_idx : int {
     ETAN5_,
     KAPPAAN5_,
     //M1_IMPL_ERR5_,
-    YMU_,
     #endif
+    // Beta-equilibrium solver failure flags, packed as a bitmask (see
+    // betaeq_err_enum_t in eas_policies.hh).  Deliberately NOT under
+    // GRACE_M1_DIAGNOSTICS: that flag is off by default, i.e. in production,
+    // which is exactly where a silently non-converging solver must not hide.
+    // Bit indices are build-dependent -- decode against the enum ordinal.
+    BETAEQ_ERR_,
     #ifdef GRACE_M1_PHOTONS
     // Photon rates (same per-block layout as the neutrino species).
     KAPPAAPH_,
@@ -375,10 +391,11 @@ enum aux_var_idx : int {
     ETANPH_,
     KAPPAANPH_,
     #endif
-    #ifdef GRACE_M1_DEBUG_EAS
-    // Debug: EAS-rate diagnostics written by neutrinos_eas_op from the
-    // fugacity_state F and dumped via the "rates" output group.  Gate with the
-    // GRACE_M1_DEBUG_EAS CMake option.
+    #ifdef GRACE_M1_DIAGNOSTICS
+    // M1 diagnostics written by neutrinos_eas_op from the fugacity_state F it
+    // already builds every substep, dumped via the "diagnostics" output group.
+    // Read-only by-products: no extra EOS lookups or root-finds.  Gate with the
+    // GRACE_M1_DIAGNOSTICS CMake option.
     //   eta_nu = mu_nu / T  (per species)  -- the equilibrium fugacity.
     ETANU1_,
     #if GRACE_M1_NU_SPECIES >= 3
@@ -396,6 +413,31 @@ enum aux_var_idx : int {
     MUMU_,
     MUP_,
     MUN_,
+    //   Raw beta-equilibrium offsets [MeV], FIL's mu_delta_* (compute_m1_diagnostics.cc).
+    //   In GRACE's Qnp convention mu_delta_npe = -mu_nue and mu_delta_npmu = -mu_numu,
+    //   but taken straight from the potentials: unlike eta_nu they see neither the
+    //   tau suppression nor the +/-5 muonic clamp, so they are the honest "how far
+    //   from beta equilibrium is this cell" measure.  Zero at equilibrium; the sign
+    //   says which way it drives, which makes mu_delta_npmu a muonization indicator.
+    MUDELTA_NPE_,
+    #ifdef GRACE_ENABLE_MUONS
+    MUDELTA_NPMU_,
+    #endif
+    //   Nuclear composition, already interpolated by the same EOS call that gives
+    //   mu_e/mu_p/mu_n and otherwise discarded: free nucleon / alpha / heavy mass
+    //   fractions and the average heavy nucleus.  X_n+X_p+X_a+X_h should be 1.
+    XN_,
+    XP_,
+    XA_,
+    XH_,
+    ABAR_,
+    ZBAR_,
+    //   Beta-equilibration timescale ratio tau_beta_min/dt from the "timescale"
+    //   betaeq policy (< 1 means the cell equilibrates within the step).  Only the
+    //   ratio is stored: the per-species tau_beta = 1/sqrt(ka(ka+ks)) is already
+    //   reconstructible offline from the kappa_a*/kappa_s* in the "rates" group,
+    //   but dt is not in the output.  Large sentinel when the policy is inactive.
+    BETAEQ_TSCALE_,
     #endif
     #endif
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4

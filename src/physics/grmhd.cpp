@@ -205,7 +205,7 @@ static void set_grmhd_initial_data_current_sheet()
                     // them to deterministic defaults rather than reading
                     // uninitialised memory.
                     aux(i,j,k,YE_,q)      = 0.0;
-                    #if GRACE_M1_NU_SPECIES >= 5
+                    #ifdef GRACE_ENABLE_MUONS
                     aux(i,j,k,YMU_,q)     = 0.0;
                     #endif
                     aux(i,j,k,TEMP_,q)    = 0.0;
@@ -430,7 +430,7 @@ static void set_grmhd_initial_data_impl(arg_t ... kernel_args)
                     aux(VEC(i,j,k),ZVECZ_,q)  = w * id.vz ;
                     // set ye
                     aux(VEC(i,j,k),YE_,q)  = id.ye  ;
-                    #if GRACE_M1_NU_SPECIES >= 5
+                    #ifdef GRACE_ENABLE_MUONS
                     aux(VEC(i,j,k),YMU_,q) = id.ymu ;
                     #endif
 
@@ -768,7 +768,7 @@ void set_conservs_from_prims() {
         state(VEC(i,j,k),SZ_,q) = cons[STZL] ;
         state(VEC(i,j,k),TAU_,q) = cons[TAUL] ;
         state(VEC(i,j,k),YESTAR_,q) = cons[YESL] ;
-#if GRACE_M1_NU_SPECIES >= 5
+#ifdef GRACE_ENABLE_MUONS
         state(VEC(i,j,k),YMUSTAR_,q) = cons[YMUSL] ;
 #endif
         state(VEC(i,j,k),ENTROPYSTAR_,q) = cons[ENTSL] ;

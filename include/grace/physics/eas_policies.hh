@@ -33,6 +33,7 @@
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <grace/physics/m1_trigger.hh>
 #include <grace/physics/eas_optical_depth.hh>
 
 #include <grace/utils/device.h>
@@ -266,6 +267,51 @@ struct photon_eas_op {
 } ;
 
 //------------------------------------------------------------------------------
+// Beta-equilibrium failure flags
+//------------------------------------------------------------------------------
+// Packed into aux(BETAEQ_ERR_) with sticky-OR semantics, exactly like c2p_err
+// (see c2p.hh for the pattern and the decode caveat).  Bit INDICES are
+// build-dependent -- BETAEQ_MUON_SECTOR only exists with muons -- so decode
+// against the enum ordinal for your build, never a literal.
+//
+// Every one of these was previously a bare `return false` that the caller
+// swallowed with `if (eq_ok) {...}` and no else, making a cell that tried and
+// failed indistinguishable in the output from one that succeeded.
+//
+// At NAMESPACE scope rather than inside neutrinos_eas_op<eos_t>: the ordinals
+// depend only on GRACE_ENABLE_MUONS, never on eos_t, and report_betaeq_failures
+// (m1.cpp) needs to test a bit without instantiating the operator.
+enum betaeq_err_enum_t : uint8_t {
+    BETAEQ_NO_DENSITY = 0,     //!< D <= 0: no baryons to equilibrate
+    BETAEQ_EPS0_NONFINITE,     //!< energy-target EOS lookup failed
+    BETAEQ_RESIDUAL_NONFINITE, //!< a residual evaluation went non-finite
+    BETAEQ_JACOBIAN_SINGULAR,  //!< pivot underflow in the FD Jacobian solve
+    BETAEQ_NOT_CONVERGED,      //!< exhausted the Newton iteration budget
+    BETAEQ_NO_BRACKET,         //!< find_ye_betaeq: no sign change in [ye_lo,ye_hi]
+    BETAEQ_BISECT_DIVERGED,    //!< find_ye_betaeq: non-finite residual mid-bisection
+    BETAEQ_EOS_ERROR,          //!< beta_eq_residual: EOS reported an error
+    //! Qualifier on NOT_CONVERGED: at least one active unknown was sitting on
+    //! its own bound when the iteration budget ran out.  This separates "the
+    //! equilibrium lies outside the EOS table, and parking on the edge is the
+    //! right answer" from "the solve is genuinely wandering" -- indistinguishable
+    //! otherwise, because vmax is measured BEFORE the bound clamp, so a
+    //! perfectly stationary pinned iterate keeps re-reporting its rejected step.
+    BETAEQ_AT_BOUND,
+    //! Qualifier on NOT_CONVERGED: the step test passed but the SCALED
+    //! RESIDUAL did not.  Only reachable on the bound-contact path, where the
+    //! step cap is backtracked -- without this guard a shrinking cap would
+    //! manufacture "convergence" at a point that is nowhere near a root, and
+    //! the caller would feed that bogus equilibrium to the opacities.
+    BETAEQ_RESIDUAL_LARGE,
+    #ifdef GRACE_ENABLE_MUONS
+    BETAEQ_MUON_SECTOR,        //!< the failing solve included the muon sector
+    #endif
+    BETAEQ_N_ERR
+} ;
+using betaeq_err_t = bitset_t<BETAEQ_N_ERR> ;
+
+
+//------------------------------------------------------------------------------
 // Neutrino EAS operator
 //------------------------------------------------------------------------------
 template <typename eos_t>
@@ -291,7 +337,10 @@ struct neutrinos_eas_op
         use_weakhub(grace::weakhub::weakhub_enabled_from_params()),
         betaeq_mode(get_betaeq_mode()),
         tau_kind(get_tau_policy_kind()),
-        weakhub(grace::weakhub::get_device_handle())
+        weakhub(grace::weakhub::get_device_handle()),
+        // M1 trigger not yet fired: build the fugacity state for the
+        // diagnostics but skip the rates entirely.
+        diagnostics_only(!m1_is_active())
     {
         spherical_tau.r_outer_code = grace::get_param<double>("m1", "eas", "tau_outer_radius_code");
         spherical_tau.seed_with_analytic = true;
@@ -309,16 +358,32 @@ struct neutrinos_eas_op
     // chemical potential, so the Ye this drives to matches both
     // make_fugacity_state (mu_nue = mu_e+mu_p-mu_n-Qnp) and the leptonic
     // cold-table beta-eq generator.  Verified against FIL's Ye.
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double beta_eq_residual(double rho, double T, double Ye, double Ymu) const {
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double beta_eq_residual(double rho, double T, double Ye, double Ymu, bool& ok) const {
         double mu_p=0.0, mu_mu=0.0, mu_n=0.0;
         double Xa=0.0, Xh=0.0, Xn=0.0, Xp=0.0, Abar=1.0, Zbar=1.0;
         eos_err_t err;
         double ye_loc = Ye, T_loc = T, rho_loc = rho;
         double ymu_loc = Ymu;
         const double mu_e = eos.mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(mu_mu, mu_p, mu_n, Xa, Xh, Xn, Xp, Abar, Zbar, T_loc, rho_loc, ye_loc, ymu_loc, err);
-        //if (err != eos_err_t{} || !::isfinite(mu_e) || !::isfinite(mu_p) || !::isfinite(mu_n)) return 0.0;
-        // KEN could not make this work
-        if ( !::isfinite(mu_e) || !::isfinite(mu_p) || !::isfinite(mu_n)) return 0.0;
+        // Signal failure through `ok` rather than returning 0.0 -- 0.0 is
+        // EXACTLY the converged-root condition, so a failed lookup used to read
+        // as "this cell is perfectly in beta equilibrium" and was accepted as
+        // the answer by the bisection below.  That is the bug being fixed here.
+        //
+        // Deliberately NOT testing `err`: find_ye_betaeq brackets the root over
+        // Ye in [1e-6, 0.60], which straddles the table's Ye axis, so limit_ye
+        // sets EOS_YE_TOO_LOW/HIGH on essentially every probe.  Rejecting on
+        // err.any() disables the whole mode (measured: 1098 of 1098 active
+        // cells flagged, across the full density range including the core).
+        // The clamped lookups are perfectly usable; only a NON-FINITE potential
+        // means the residual is meaningless.  This is why the original
+        // `err != eos_err_t{}` line was commented out -- the compile error
+        // (bitset_t has no operator!=) was the lesser of its two problems.
+        if ( !::isfinite(mu_e) || !::isfinite(mu_p) || !::isfinite(mu_n) ) {
+            ok = false ;
+            return 0.0 ;
+        }
+        ok = true ;
         return (mu_e + mu_p - mu_n - nu_constants::Qnp);
     }
 
@@ -486,9 +551,22 @@ struct neutrinos_eas_op
         const double* xyz,
         double T_old, double Ye_old, double Ymu_old,
         double& T_eq, double& Ye_eq, double& Ymu_eq,
+        betaeq_err_t& berr,
         beq_mode_t mode = beq_mode_t::FULL) const
     {
         T_eq = T_old ; Ye_eq = Ye_old ; Ymu_eq = Ymu_old ;
+
+        // Record a failure.  The mode qualifier is stamped HERE, not on entry:
+        // set at entry it would mark every cell that merely ATTEMPTED a
+        // muon-sector solve, so a successful cell would look flagged and the
+        // per-step failure count would be badly inflated.
+        auto fail = [&](betaeq_err_enum_t bit) {
+            berr.set(bit) ;
+            #ifdef GRACE_ENABLE_MUONS
+            if ( mode != beq_mode_t::PARTIAL_E ) berr.set(BETAEQ_MUON_SECTOR) ;
+            #endif
+            return false ;
+        } ;
         #if GRACE_M1_NU_SPECIES < 3
         // Requires at least nue + nuebar + nux evolved blocks.
         return false ;
@@ -500,7 +578,7 @@ struct neutrinos_eas_op
         FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
         const double oosg = 1.0 / metric.sqrtg() ;
         const double D    = state(VEC(i,j,k),DENS_,q) * oosg ;
-        if (!(D > 0.0)) return false ;
+        if (!(D > 0.0)) return fail(BETAEQ_NO_DENSITY) ;
 
         const double N_nue    = state(VEC(i,j,k), m1_nrad_idx<0>(), q) * oosg ;
         const double N_nuebar = state(VEC(i,j,k), m1_nrad_idx<1>(), q) * oosg ;
@@ -562,7 +640,7 @@ struct neutrinos_eas_op
         eos_err_t err0{} ;
         double T0 = T_old, rho0 = rho_code, yle0 = eps_yle, ylmu0 = eps_ylmu ;
         const double eps0 = eos.eps__temp_rho_ye_ymu(T0, rho0, yle0, ylmu0, err0) ;
-        if (!::isfinite(eps0)) return false ;
+        if (!::isfinite(eps0)) return fail(BETAEQ_EPS0_NONFINITE) ;
         const double u = E_rad + rho_code * (1.0 + eps0) ;
 
         // Frozen taus of the current state.
@@ -574,7 +652,7 @@ struct neutrinos_eas_op
         double fv[3] ;
         if (!betaeq_residuals(rho_code, xyz, tauf,
                               v[0], v[1], v[2], Yle, Ylmu, u, fv, mode))
-            return false ;
+            return fail(BETAEQ_RESIDUAL_NONFINITE) ;
 
         const double ye_lo  = eos.get_c2p_ye_min(),  ye_hi  = eos.get_c2p_ye_max() ;
         const double ymu_lo = eos.get_c2p_ymu_min(), ymu_hi = eos.get_c2p_ymu_max() ;
@@ -583,6 +661,23 @@ struct neutrinos_eas_op
         constexpr double tol      = 1.0e-10 ;
 
         bool converged = false ;
+        bool touched_bound = false ;
+
+        // Step-cap backtracking on bound contact.  Measured (Aug 2026): every
+        // muon-sector failure was a two-cycle against the Ymu axis -- the
+        // iterate is clamped onto a bound, its next step is capped at 0.05,
+        // and it lands exactly one cap away (exits at ymu_hi-0.05 = 0.15 or
+        // ymu_lo+0.05 = 0.0505), forever.  Halving the cap every time the
+        // clamp actually bites collapses the cycle onto the bound instead of
+        // letting it orbit.  Cells that never touch a bound are untouched by
+        // this, so their convergence decision is bit-for-bit as before.
+        double cap_scale = 1.0 ;
+        constexpr double cap_scale_min = 1.0e-12 ;
+        // Convergence needs a small RESIDUAL too, but only on the bound path:
+        // shrinking the cap shrinks the step test's own measure, so without
+        // this a backtracked cell would declare victory at f1/Ylmu ~ 31.
+        constexpr double res_tol = 1.0e-6 ;
+        double vmax = 0.0, rmax = 0.0 ;
         for (int it = 0; it < max_iter && !converged; ++it) {
             // FD Jacobian J[r][c] = d f_{ridx[r]} / d v_{uidx[c]}
             double J[3][3] = {} ;
@@ -594,7 +689,7 @@ struct neutrinos_eas_op
                 double fp[3] ;
                 if (!betaeq_residuals(rho_code, xyz, tauf,
                                       vp[0], vp[1], vp[2], Yle, Ylmu, u, fp, mode))
-                    return false ;
+                    return fail(BETAEQ_RESIDUAL_NONFINITE) ;
                 for (int r = 0; r < n_eq; ++r)
                     J[r][c] = (fp[ridx[r]] - fv[ridx[r]]) / h ;
             }
@@ -609,7 +704,7 @@ struct neutrinos_eas_op
                 int piv = c ;
                 for (int r = c+1; r < n_eq; ++r)
                     if (Kokkos::fabs(A[r][c]) > Kokkos::fabs(A[piv][c])) piv = r ;
-                if (Kokkos::fabs(A[piv][c]) < 1.0e-300) return false ;
+                if (Kokkos::fabs(A[piv][c]) < 1.0e-300) return fail(BETAEQ_JACOBIAN_SINGULAR) ;
                 if (piv != c)
                     for (int cc = 0; cc <= n_eq; ++cc) {
                         const double tmp = A[c][cc] ;
@@ -631,30 +726,73 @@ struct neutrinos_eas_op
             double scale = 1.0 ;
             for (int c = 0; c < n_eq; ++c) {
                 const bool is_T = (uidx[c] == 2) ;
-                const double cap = is_T
+                const double cap = cap_scale * ( is_T
                     ? 0.5*Kokkos::fmax(v[2], 1.0)   // |dT| <= max(T/2, 0.5)
-                    : 0.05 ;                        // |dY| <= 0.05 per step
+                    : 0.05 ) ;                      // |dY| <= 0.05 per step
                 if (Kokkos::fabs(dx[c]) > cap)
                     scale = Kokkos::fmin(scale, cap/Kokkos::fabs(dx[c])) ;
             }
-            double vmax = 0.0 ;
+            vmax = 0.0 ;
             for (int c = 0; c < n_eq; ++c) {
                 v[uidx[c]] += scale * dx[c] ;
                 vmax = Kokkos::fmax(vmax,
                         Kokkos::fabs(scale*dx[c])
                       / Kokkos::fmax(Kokkos::fabs(v[uidx[c]]), 1.0e-3)) ;
             }
-            v[0] = Kokkos::fmax(ye_lo,  Kokkos::fmin(ye_hi,  v[0])) ;
-            v[1] = Kokkos::fmax(ymu_lo, Kokkos::fmin(ymu_hi, v[1])) ;
-            v[2] = Kokkos::fmax(T_lo,   Kokkos::fmin(T_hi,   v[2])) ;
+            // Sticky, because the failure mode here is a 2-CYCLE against a
+            // bound, not a cell that comes to rest on one: the iterate is
+            // clamped to the bound, the next step is capped at |dY| <= 0.05,
+            // and it lands exactly one cap away.  Sampling only the final
+            // iterate sees whichever phase iteration 50 happened to be in and
+            // undercounts badly.
+            double const v0c = Kokkos::fmax(ye_lo,  Kokkos::fmin(ye_hi,  v[0])) ;
+            double const v1c = Kokkos::fmax(ymu_lo, Kokkos::fmin(ymu_hi, v[1])) ;
+            double const v2c = Kokkos::fmax(T_lo,   Kokkos::fmin(T_hi,   v[2])) ;
+            bool const hit_bound = (v0c != v[0]) || (v1c != v[1]) || (v2c != v[2]) ;
+            touched_bound = touched_bound || hit_bound ;
+            if (hit_bound)
+                cap_scale = Kokkos::fmax(0.5*cap_scale, cap_scale_min) ;
+            v[0] = v0c ; v[1] = v1c ; v[2] = v2c ;
 
             if (!betaeq_residuals(rho_code, xyz, tauf,
                                   v[0], v[1], v[2], Yle, Ylmu, u, fv, mode))
-                return false ;
+                return fail(BETAEQ_RESIDUAL_NONFINITE) ;
 
-            converged = (vmax < tol) ;
+            // Scaled residual norm over the ACTIVE rows.  Row meanings differ
+            // by build: 5sp is (e-lepton, mu-lepton, energy), 3sp is
+            // (e-lepton, energy) -- see betaeq_residuals.
+            rmax = 0.0 ;
+            for (int r = 0; r < n_eq; ++r) {
+                #if GRACE_M1_NU_SPECIES >= 5
+                double const sc = (ridx[r] == 0)
+                        ? Kokkos::fmax(Kokkos::fabs(Yle),  1.0e-3)
+                    : (ridx[r] == 1)
+                        ? Kokkos::fmax(Kokkos::fabs(Ylmu), 1.0e-3)
+                        : Kokkos::fmax(Kokkos::fabs(u),    1.0e-30) ;
+                #else
+                double const sc = (ridx[r] == 0)
+                        ? Kokkos::fmax(Kokkos::fabs(Yle),  1.0e-3)
+                        : Kokkos::fmax(Kokkos::fabs(u),    1.0e-30) ;
+                #endif
+                rmax = Kokkos::fmax(rmax, Kokkos::fabs(fv[ridx[r]]) / sc) ;
+            }
+
+            converged = (vmax < tol) && (!touched_bound || rmax < res_tol) ;
         }
-        if (!converged) return false ;
+        if (!converged) {
+            // Did the iteration ever run into a variable bound?  Measured
+            // (Aug 2026): essentially every muon-sector failure is an
+            // amplitude-0.05 two-cycle against ymu_lo or ymu_hi -- Ymu exits
+            // at exactly ymu_lo+0.05 or ymu_hi-0.05 -- so this separates
+            // "the equilibrium is outside the representable Ymu range" from a
+            // genuinely wandering solve.  vmax is measured BEFORE the clamp,
+            // which is why such a cell never reports convergence.
+            if (touched_bound) berr.set(BETAEQ_AT_BOUND) ;
+            // Step settled but residual did not: the cap backtracking worked
+            // and the root is still not reachable inside the variable bounds.
+            if (vmax < tol && rmax >= res_tol) berr.set(BETAEQ_RESIDUAL_LARGE) ;
+            return fail(BETAEQ_NOT_CONVERGED) ;
+        }
 
         Ye_eq  = v[0] ;
         Ymu_eq = v[1] ;
@@ -664,29 +802,44 @@ struct neutrinos_eas_op
     }
 
     // This is only beta eq for ye
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE void find_ye_betaeq(double rho, double T, double& Ye0, double& Ymu0) const {
-        // Device-friendly bisection. If no bracket -> return Ye0.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE bool find_ye_betaeq(double rho, double T, double& Ye0, double& Ymu0,
+                                                              betaeq_err_t& berr) const {
+        // Device-friendly bisection.  On ANY failure Ye0 is left untouched --
+        // it used to fall through to `Ye0 = mid` even after breaking on a
+        // non-finite residual, i.e. a diverged bisection silently returned its
+        // current midpoint as if it were the root.
         double a = 1.0e-6, b = 0.60;
-        double fa = beta_eq_residual(rho, T, a,Ymu0), fb = beta_eq_residual(rho, T, b,Ymu0);
-        if (!::isfinite(fa) || !::isfinite(fb) || fa * fb > 0.0) return ;
+        bool ok_a = true, ok_b = true ;
+        double fa = beta_eq_residual(rho, T, a, Ymu0, ok_a) ;
+        double fb = beta_eq_residual(rho, T, b, Ymu0, ok_b) ;
+        if ( !ok_a || !ok_b ) { berr.set(BETAEQ_EOS_ERROR) ; return false ; }
+        if (!::isfinite(fa) || !::isfinite(fb) || fa * fb > 0.0) {
+            berr.set(BETAEQ_NO_BRACKET) ; return false ;
+        }
 
         double left = a, right = b, fleft = fa, mid = Ye0;
         for (int it = 0; it < 40; ++it) {
             mid = 0.5 * (left + right);
-            const double fm = beta_eq_residual(rho, T, mid,Ymu0);
-            if (!::isfinite(fm) || fm == 0.0) break;
+            bool ok_m = true ;
+            const double fm = beta_eq_residual(rho, T, mid, Ymu0, ok_m);
+            if ( !ok_m ) { berr.set(BETAEQ_EOS_ERROR) ; return false ; }
+            if (!::isfinite(fm)) { berr.set(BETAEQ_BISECT_DIVERGED) ; return false ; }
+            if (fm == 0.0) break;
             if (fleft * fm <= 0.0) right = mid; else { left = mid; fleft = fm; }
             if ((right - left) < 1.0e-8) break;
         }
         Ye0 = mid;
-        return;
+        return true;
     }
 
     // Transparent low-density cell: floor every EAS rate output without touching
     // the EOS.  1e-60 not 0 so log-scale plots of kappa work; this path returns
     // before the temperature correction, so the value cannot be amplified.
+    // Rate slots only.  Split out of floor_eas so the fugacity-only mode (M1
+    // trigger not yet fired) can floor the rates while still writing REAL
+    // diagnostics from F, instead of the transparent-cell placeholders.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    void floor_eas(VEC(const int i, const int j, const int k), int64_t q) const {
+    void floor_rates(VEC(const int i, const int j, const int k), int64_t q) const {
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS1_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN1_,q)=weakhub::kappa_floor_code;
         #endif
@@ -698,7 +851,15 @@ struct neutrinos_eas_op
         aux(i,j,k,ETA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS4_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN4_,q)=weakhub::kappa_floor_code;
         aux(i,j,k,ETA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS5_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN5_,q)=weakhub::kappa_floor_code;
         #endif
-        #ifdef GRACE_M1_DEBUG_EAS
+    }
+
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    void floor_eas(VEC(const int i, const int j, const int k), int64_t q) const {
+        floor_rates(VEC(i,j,k), q) ;
+        // Transparent cell: the beta-eq solver never ran, so "no failure".
+        // Written (not OR'd) so a stale bit cannot survive here.
+        aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
+        #ifdef GRACE_M1_DIAGNOSTICS
         // Keep the debug fugacity / chemical-potential fields consistent with a
         // transparent cell (no F is built here) so they don't show stale data.
         // To inspect F in the low-density region, set grmhd.atmosphere.atmo_tol = -1.
@@ -711,8 +872,74 @@ struct neutrinos_eas_op
         aux(i,j,k,ETANU2_,q)=1.e-30; aux(i,j,k,ETANU3_,q)=1.e-30;
         #endif
         aux(i,j,k,MUE_,q)=1.e-30; aux(i,j,k,MUMU_,q)=1.e-30; aux(i,j,k,MUP_,q)=1.e-30; aux(i,j,k,MUN_,q)=1.e-30;
+        aux(i,j,k,MUDELTA_NPE_,q)=1.e-30;
+        #ifdef GRACE_ENABLE_MUONS
+        aux(i,j,k,MUDELTA_NPMU_,q)=1.e-30;
+        #endif
+        aux(i,j,k,XN_,q)=1.e-30; aux(i,j,k,XP_,q)=1.e-30; aux(i,j,k,XA_,q)=1.e-30; aux(i,j,k,XH_,q)=1.e-30;
+        aux(i,j,k,ABAR_,q)=1.e-30; aux(i,j,k,ZBAR_,q)=1.e-30;
+        // Sentinel, not the 1e-30 floor: a transparent cell never equilibrates,
+        // and beta_eq_tscale is a ratio where small means "equilibrates fast".
+        aux(i,j,k,BETAEQ_TSCALE_,q)=1.e30;
         #endif
     }
+
+    // Write the M1 diagnostics from a finished fugacity_state.  Factored out so
+    // both the normal path and the fugacity-only path (M1 trigger not yet
+    // fired) produce identical fields; only `betaeq_tscale` differs, since it
+    // is the one diagnostic derived from the rates rather than from F.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    void write_diagnostics(VEC(const int i, const int j, const int k), int64_t q,
+                           fugacity_state const& F, double betaeq_tscale) const {
+        #ifdef GRACE_M1_DIAGNOSTICS
+        // M1 diagnostics -- everything below is read straight out of the
+        // fugacity_state F that was already built above, so this costs stores
+        // and (for the two mu_delta) two subtractions, nothing else.
+        //
+        // Per-species equilibrium fugacity eta_nu = mu_nu / T (already
+        // (1-exp(-tau))-suppressed and +/-5-clamped in make_fugacity_state) so
+        // it can be compared cell-by-cell against the reference evolution.
+        #if (GRACE_M1_NU_SPECIES >= 1)
+        aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
+        #endif
+        #if (GRACE_M1_NU_SPECIES >= 5)
+        aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
+        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUMU];
+        aux(i,j,k,ETANU4_,q) = F.eta_nu[NUMUBAR];
+        aux(i,j,k,ETANU5_,q) = F.eta_nu[NUX];
+        #elif (GRACE_M1_NU_SPECIES >= 3)
+        aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
+        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUX];
+        #endif
+        // Matter chemical potentials [MeV] that built eta_nu, straight from the
+        // EOS read in make_fugacity_state.  mu_nue = mu_e+mu_p-mu_n-Qnp, so a
+        // collapsed mu_n-mu_p shows up directly as mu_n ~ mu_p here.
+        aux(i,j,k,MUE_,q)  = F.mu_e;
+        aux(i,j,k,MUMU_,q) = F.mu_mu;
+        aux(i,j,k,MUP_,q)  = F.mu_p;
+        aux(i,j,k,MUN_,q)  = F.mu_n;
+        // Raw beta-equilibrium offsets [MeV] (FIL's mu_delta_*).  Identically
+        // -mu_nue and -mu_numu in GRACE's Qnp convention, but built from the
+        // potentials directly so they carry neither the tau suppression nor the
+        // muonic clamp that eta_nu above does.  Zero at beta equilibrium.
+        aux(i,j,k,MUDELTA_NPE_,q)  = F.mu_n - F.mu_p - F.mu_e  + nu_constants::Qnp;
+        #ifdef GRACE_ENABLE_MUONS
+        aux(i,j,k,MUDELTA_NPMU_,q) = F.mu_n - F.mu_p - F.mu_mu + nu_constants::Qnp;
+        #endif
+        // Nuclear composition -- interpolated by the same EOS call that produced
+        // mu_e/mu_p/mu_n above and otherwise thrown away.
+        aux(i,j,k,XN_,q)   = F.Xn;
+        aux(i,j,k,XP_,q)   = F.Xp;
+        aux(i,j,k,XA_,q)   = F.Xa;
+        aux(i,j,k,XH_,q)   = F.Xh;
+        aux(i,j,k,ABAR_,q) = F.Abar;
+        aux(i,j,k,ZBAR_,q) = F.Zbar;
+        // tau_beta_min/dt from the "timescale" betaeq policy (< 1 => the cell
+        // equilibrates within the step); large sentinel under other policies.
+        aux(i,j,k,BETAEQ_TSCALE_,q) = betaeq_tscale;
+        #endif
+    }
+
 
     // Main Kernel
     void KOKKOS_INLINE_FUNCTION operator()(VEC(const int i, const int j, const int k), int64_t q, double* xyz) const {
@@ -723,10 +950,16 @@ struct neutrinos_eas_op
        double T         = aux(VEC(i,j,k),TEMP_,q);
        double Ye        = aux(VEC(i,j,k),YE_,q);
        double Ymu       = 0.0;
-       #if GRACE_M1_NU_SPECIES >= 5
+       #ifdef GRACE_ENABLE_MUONS
         Ymu = aux(VEC(i,j,k),YMU_,q);
         #endif
-        if (betaeq_mode == betaeq_mode_t::chemical) find_ye_betaeq(rho, T, Ye, Ymu);
+        // Per-cell beta-equilibrium failure flags, sticky-OR'd into
+        // aux(BETAEQ_ERR_) at the end of the kernel.  Always on (not gated by
+        // GRACE_M1_DIAGNOSTICS): that flag is off in production, which is
+        // exactly where a silently non-converging solver must not hide.
+        betaeq_err_t berr{} ;
+
+        if (betaeq_mode == betaeq_mode_t::chemical) find_ye_betaeq(rho, T, Ye, Ymu, berr);
 
         // Fluid-frame mean neutrino energy per species [MeV], used to drive the
         // T_nu spectral correction off the actual radiation field (FIL parity).
@@ -789,8 +1022,43 @@ struct neutrinos_eas_op
             return launch(tau_policy_none{});
         };
 
+        #ifdef GRACE_M1_DIAGNOSTICS
+        // M1 idle: the diagnostics all read F alone, so build it through the
+        // same tau dispatch and stop there.  The rate slots are floored rather
+        // than left stale -- they are in the "rates" output group and would
+        // otherwise plot as garbage.  beta_eq_tscale keeps its "never
+        // equilibrates" sentinel, the honest value when no rates were computed.
+        if ( diagnostics_only ) {
+            switch (tau_kind) {
+            case tau_policy_kind_t::local_spherical:
+                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, spherical_tau); break;
+            case tau_policy_kind_t::analytic_density:
+                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy_analytic_density{}); break;
+            case tau_policy_kind_t::local_kappa:
+                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz,
+                        make_lagged_kappa_tau(aux, VEC(i,j,k), q, spherical_tau.r_outer_code, xyz)); break;
+            #ifdef GRACE_M1_OPTICAL_DEPTH
+            case tau_policy_kind_t::eikonal:
+                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz,
+                        make_eikonal_tau(state, VEC(i,j,k), q)); break;
+            #endif
+            default:
+                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy_none{}); break;
+            }
+            floor_rates(VEC(i,j,k), q) ;
+            write_diagnostics(VEC(i,j,k), q, F, 1.0e30) ;
+            return ;
+        }
+        #endif
+
         nu_rates_all_out all = evaluate_rates();
 
+        #ifdef GRACE_M1_DIAGNOSTICS
+        // Carrier for the beta_eq_tscale diagnostic.  Large sentinel = "never
+        // equilibrates", which is the honest answer under every policy that
+        // does not compute a timescale at all.
+        double betaeq_tscale_diag = 1.0e30 ;
+        #endif
         // ------------------------------------------------------------------
         // Timescale-gated beta equilibration (betaeq_policy = "timescale").
         //
@@ -812,6 +1080,9 @@ struct neutrinos_eas_op
                 tau_beta_min = Kokkos::fmin(tau_beta_min, tau_beta) ;
             }
             const double beta_equil_tscale = tau_beta_min / dt ;
+            #ifdef GRACE_M1_DIAGNOSTICS
+            betaeq_tscale_diag = beta_equil_tscale ;
+            #endif
 
             // Radiation number floors (undensitized), mirroring the
             // reference implementation's N > 1e-16 guards.
@@ -840,7 +1111,7 @@ struct neutrinos_eas_op
                 double T_eq = T_old, Ye_eq = Ye_old, Ymu_eq = Ymu_old ;
                 const bool eq_ok = m1_get_beta_equilibrium(
                     F, VEC(i,j,k), q, xyz,
-                    T_old, Ye_old, Ymu_old, T_eq, Ye_eq, Ymu_eq) ;
+                    T_old, Ye_old, Ymu_old, T_eq, Ye_eq, Ymu_eq, berr) ;
 
                 // On solver failure keep the current state (the reference
                 // likewise falls through on GSL non-convergence).
@@ -860,15 +1131,25 @@ struct neutrinos_eas_op
                         Ymu = fac * Ymu_eq + (1.0 - fac) * Ymu_old ;
                     }
 
-                    // Persist the equilibrated primitives and recompute the
-                    // rates at the new state.  NB: re-syncing the conserved
-                    // hydro variables to the modified (T, Ye, Ymu) is the
-                    // implicit solver's responsibility, not done here.
-                    aux(VEC(i,j,k),TEMP_,q) = T ;
-                    aux(VEC(i,j,k),YE_,q)   = Ye ;
-                    #if GRACE_M1_NU_SPECIES >= 5
-                    aux(VEC(i,j,k),YMU_,q)  = Ymu ;
-                    #endif
+                    // Recompute the rates at the equilibrated state.  The
+                    // equilibrated (T, Ye, Ymu) stay LOCAL and are deliberately
+                    // NOT written back into aux: beta-equilibration here is a
+                    // closure on the OPACITIES, not a fluid state update, which
+                    // is exactly what FIL does (driver_get_eas.cc keeps them in
+                    // stack locals _T/_ye/_ymu, feeds them to Fugacities +
+                    // calc_eas, and writes no grid function -- its schedule
+                    // block declares only READS of the hydro variables).
+                    //
+                    // Writing them to aux would be worse than useless: the next
+                    // c2p re-derives T/Ye/Ymu from the untouched conserved
+                    // state and erases them one substage later, but in the
+                    // meantime TEMP_/YE_/YMU_ are RECONSTRUCTION variables, so
+                    // the leak perturbs the hydro fluxes -- and it leaves
+                    // EPS_/PRESS_/ENTROPY_ disagreeing with TEMP_.
+                    //
+                    // The genuine fluid<->radiation exchange is add_backreaction
+                    // (m1.hh), which updates the conserveds and pairs both
+                    // halves of the exchange.
                     all = evaluate_rates() ;
                 }
             }
@@ -916,7 +1197,7 @@ struct neutrinos_eas_op
 
             if (eCoupled && muCoupled) {                       // both sectors trapped
                 if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
-                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::FULL)) {
+                                            T_eq,Ye_eq,Ymu_eq, berr, beq_mode_t::FULL)) {
                     Ye  = (Re ==2) ? Ye_eq  : Ye0  + (Ye_eq -Ye0 )*wfac(tau_e ) ;
                     Ymu = (Rmu==2) ? Ymu_eq : Ymu0 + (Ymu_eq-Ymu0)*wfac(tau_mu) ;
                     if (Re==2 && Rmu==2) {
@@ -925,7 +1206,7 @@ struct neutrinos_eas_op
                         // mixed (T/PT): T from energy conservation at final Y's
                         double Te=T0, da=Ye, db=Ymu ;
                         if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz,
-                                T0, Ye, Ymu, Te, da, db, beq_mode_t::ENERGY_ONLY))
+                                T0, Ye, Ymu, Te, da, db, berr, beq_mode_t::ENERGY_ONLY))
                             T = Te ;
                         else
                             T = T_eq ;                         // fallback: full-eq T
@@ -934,14 +1215,14 @@ struct neutrinos_eas_op
                 }
             } else if (eCoupled) {                             // electrons only (Ymu fixed)
                 if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
-                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::PARTIAL_E)) {
+                                            T_eq,Ye_eq,Ymu_eq, berr, beq_mode_t::PARTIAL_E)) {
                     Ye = (Re==2) ? Ye_eq : Ye0 + (Ye_eq-Ye0)*wfac(tau_e) ;
                     T  = (Re==2) ? T_eq  : T0  + (T_eq -T0 )*wfac(tau_e) ;
                     changed = true ;                           // Ymu untouched
                 }
             } else if (muCoupled) {                            // muons only (Ye fixed)
                 if (m1_get_beta_equilibrium(F, VEC(i,j,k), q, xyz, T0,Ye0,Ymu0,
-                                            T_eq,Ye_eq,Ymu_eq, beq_mode_t::PARTIAL_MU)) {
+                                            T_eq,Ye_eq,Ymu_eq, berr, beq_mode_t::PARTIAL_MU)) {
                     Ymu = (Rmu==2) ? Ymu_eq : Ymu0 + (Ymu_eq-Ymu0)*wfac(tau_mu) ;
                     T   = (Rmu==2) ? T_eq   : T0   + (T_eq  -T0  )*wfac(tau_mu) ;
                     changed = true ;                           // Ye untouched
@@ -950,9 +1231,8 @@ struct neutrinos_eas_op
             // (F,F), or all solves failed -> leave (T,Ye,Ymu) as-is.
 
             if (changed) {
-                aux(VEC(i,j,k),TEMP_,q) = T ;
-                aux(VEC(i,j,k),YE_,q)   = Ye ;
-                aux(VEC(i,j,k),YMU_,q)  = Ymu ;
+                // Rates only -- the equilibrated state stays local.  See the
+                // timescale branch above for why it is not written to aux.
                 all = evaluate_rates() ;
             }
         }
@@ -973,29 +1253,20 @@ struct neutrinos_eas_op
         { const nu_rates_out r = all.out[NUE];    aux(i,j,k,ETA1_,q)=r.eta_E; aux(i,j,k,KAPPAA1_,q)=r.kappa_a; aux(i,j,k,KAPPAS1_,q)=r.kappa_s; aux(i,j,k,ETAN1_,q)=r.eta_N; aux(i,j,k,KAPPAAN1_,q)=r.kappa_n; }
         #endif
 
-        #ifdef GRACE_M1_DEBUG_EAS
-        // Debug: dump the per-species equilibrium fugacity eta_nu = mu_nu / T
-        // (already (1-exp(-tau))-suppressed and clamped in make_fugacity_state)
-        // so it can be compared cell-by-cell against the reference evolution.
-        #if (GRACE_M1_NU_SPECIES >= 1)
-        aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
-        #endif
-        #if (GRACE_M1_NU_SPECIES >= 5)
-        aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
-        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUMU];
-        aux(i,j,k,ETANU4_,q) = F.eta_nu[NUMUBAR];
-        aux(i,j,k,ETANU5_,q) = F.eta_nu[NUX];
-        #elif (GRACE_M1_NU_SPECIES >= 3)
-        aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
-        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUX];
-        #endif
-        // Matter chemical potentials [MeV] that built eta_nu, straight from the
-        // EOS read in make_fugacity_state.  mu_nue = mu_e+mu_p-mu_n-Qnp, so a
-        // collapsed mu_n-mu_p shows up directly as mu_n ~ mu_p here.
-        aux(i,j,k,MUE_,q)  = F.mu_e;
-        aux(i,j,k,MUMU_,q) = F.mu_mu;
-        aux(i,j,k,MUP_,q)  = F.mu_p;
-        aux(i,j,k,MUN_,q)  = F.mu_n;
+        // Pack the beta-eq failure bits into aux(BETAEQ_ERR_) with sticky-OR
+        // semantics over the timestep, exactly as grmhd.hh does for c2p_err:
+        // reset once per step in evolve(), OR-accumulated on every substage so
+        // the value at step end is the union of failures seen.  BETAEQ_N_ERR is
+        // far below 64, so kWords==1 and words[0] holds the whole pattern -- do
+        // NOT read/write only words[0] here if it ever grows past 64.  All
+        // values are integers well under 2^53, so the double round-trip is exact.
+        {
+            uint64_t const prev = static_cast<uint64_t>(aux(VEC(i,j,k),BETAEQ_ERR_,q)) ;
+            aux(VEC(i,j,k),BETAEQ_ERR_,q) = static_cast<double>(prev | berr.words[0]) ;
+        }
+
+        #ifdef GRACE_M1_DIAGNOSTICS
+        write_diagnostics(VEC(i,j,k), q, F, betaeq_tscale_diag) ;
         #endif
     }
 
@@ -1010,6 +1281,9 @@ struct neutrinos_eas_op
   bool use_weakhub;
   betaeq_mode_t betaeq_mode;
   tau_policy_kind_t tau_kind;
+  //! Fugacity-only mode: write diagnostics from F, floor the rates, skip the
+  //! rate evaluation and everything downstream of it.
+  bool diagnostics_only;
   grace::weakhub::device_handle weakhub;
   grace::tau_policy_local_spherical spherical_tau{};
 };

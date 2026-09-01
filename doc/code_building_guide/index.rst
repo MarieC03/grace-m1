@@ -283,9 +283,34 @@ Optional physics modules
    * - CMake Parameter
      - Type
      - Description
-   * - GRACE_ENABLE_M1
+   * - GRACE_M1_NU_SPECIES
+     - 0 / 1 / 3 / 5
+     - Grey neutrino species evolved by M1 (0 = none, 5 = nue, nuebar, numu,
+       numubar, nux).  Any value > 0 enables the M1 infrastructure.
+       ``5`` forces ``GRACE_ENABLE_MUONS=ON``.
+   * - GRACE_ENABLE_MUONS
      - Boolean
-     - Enable M1 radiative transport (developer-only, work in progress).
+     - Evolve the muon fraction Y_mu (conserved ``ymu_star``, primitive
+       ``ymu``, c2p muon resets, muonic backreaction).  Independent of M1 --
+       valid at any species count and with M1 off entirely.  Forced ON when
+       ``GRACE_M1_NU_SPECIES=5``.
+   * - GRACE_M1_PHOTONS
+     - Boolean
+     - Enable the photon M1 transport block.  Enables the M1 infrastructure.
+   * - GRACE_M1_OPTICAL_DEPTH
+     - Boolean
+     - Enable the eikonal neutrino optical-depth solver.  Enables the M1
+       infrastructure.
+   * - GRACE_M1_DIAGNOSTICS
+     - Boolean
+     - Write M1 diagnostics (eta_nu, chemical potentials, composition) to aux,
+       dumped via the ``diagnostics`` output group.  Enables the M1
+       infrastructure.
+   * - GRACE_ENABLE_M1
+     - *derived*
+     - **Not user-settable.**  Derived from the options above and stored as an
+       internal cache entry, so ``-DGRACE_ENABLE_M1=ON`` has no effect.  To
+       disable M1, turn off every option that implies it.
    * - GRACE_ENABLE_PARTICLES
      - Boolean
      - Build the GRACE particle subsystem (tracers; future MC / PIC).

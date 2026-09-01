@@ -167,6 +167,8 @@ class eos_storage_t {
             return _tabulated.enthalpy_minimum() ;
         } else if ( eos_type == "ideal_gas" ) {
             return _gammalaw.enthalpy_minimum() ;
+        } else if ( eos_type == "leptonic" ) {
+            return _leptonic_4d.enthalpy_minimum() ;
         }
         ERROR("Unknown eos_type in enthalpy_minimum().") ;
         return 1.0 ;
