@@ -1,0 +1,344 @@
+# =============================================================================
+# Head-on BNS collision, SFHo + muons + M1 (Weakhub)
+#
+# GRACE translation of FIL_HEADON_sfho_muons_M1_lowres.par
+# ID: FUKA BNS_HEAD_ON.sfho_good.50.0.0.2.48169.q1  (Mtot = 2.48169, q = 1, d = 50)
+#
+# REQUIRED BUILD (these are compile-time in GRACE, parfile-time in Cactus):
+#   cmake -S . -B build \
+#     -DGRACE_M1_NU_SPECIES=5        # FIL: frankfurt_m1::use_5_spec_m1     = yes
+#     -DGRACE_ENABLE_MUONS=ON        # forced ON at 5 species anyway
+#     -DGRACE_M1_OPTICAL_DEPTH=ON    # FIL: m1_which_tau = "eikonal-simple"
+#     -DGRACE_M1_DIAGNOSTICS=ON      # FIL: frankfurt_m1::use_m1_diagnostics = yes
+#     -DGRACE_METRIC_EVOL=Z4 -DGRACE_ENABLE_FOFC=ON -DCMAKE_BUILD_TYPE=Release
+#
+# Grid equivalence: GRACE builds a BRICK of CUBIC trees sized on the smallest
+# extent (connectivity.cpp:56-69).  With x,y in [-1024,1024] and z in [0,1024]
+# that is a 2x2x1 brick of 1024-wide trees, so dx = 1024/(16 * 2^L) and the
+# spacing is isotropic.  Levels 2..8 therefore reproduce FIL's dx = 16 -> 0.25
+# over 7 levels exactly.
+# =============================================================================
+name: "fil_headon_sfho_muons_m1"
+
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  n_device_streams: 4
+}
+
+# ---------------------------------------------------------------------------
+# Grid.  FIL: CoordBase 128x128x64 over [-1024,1024]^2 x [0,1024], ghost_size 4,
+# ReflectionSymmetry z, Carpet max_refinement_levels = 7.
+# ---------------------------------------------------------------------------
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+
+  xmin: -1024.0,
+  xmax:  1024.0,
+  ymin: -1024.0,
+  ymax:  1024.0,
+  zmin:     0.0,
+  zmax:  1024.0,
+
+  reflection_symmetries: {
+    z: true
+  },
+
+  n_ghostzones: 4,
+
+  initial_refinement_level: 2,   # dx = 16   (FIL level 0)
+  max_refinement_level:     8,   # dx = 0.25 (FIL level 6) -> 7 levels total
+
+  # FIL: CarpetRegrid2 radius_N[1..4] = 512/256/128/64, fixed boxes.
+  n_fmr_boxes: 4,
+  fmr_boxes: [
+    { target_level_delta: 1, x_min: -512, x_max: 512, y_min: -512, y_max: 512, z_min: 0, z_max: 512 },
+    { target_level_delta: 2, x_min: -256, x_max: 256, y_min: -256, y_max: 256, z_min: 0, z_max: 256 },
+    { target_level_delta: 3, x_min: -128, x_max: 128, y_min: -128, y_max: 128, z_min: 0, z_max: 128 },
+    { target_level_delta: 4, x_min:  -64, x_max:  64, y_min:  -64, y_max:  64, z_min: 0, z_max:  64 }
+  ],
+
+  # FIL: radius_N[5] = 32, radius_N[6] = 16 follow the stars via
+  # BNSTrackerGen + CarpetTracker.  GRACE does the same with the co_tracker.
+  regrid_every: 128,             # FIL: CarpetRegrid2::regrid_every = 128
+  regrid_at_preinitial: true,
+  preinitial_regrid_depth: 2,
+
+  refinement_criterion: "binary_tracker",
+
+  binary_tracker_amr_criterion: {
+    compact_object_1_refine_radius_factor:  1.5,
+    compact_object_2_refine_radius_factor:  1.5,
+    compact_object_1_coarsen_radius_factor: 3.0,
+    compact_object_2_coarsen_radius_factor: 3.0,
+    post_merger_refine_radius:  32,
+    post_merger_coarsen_radius: 48
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Time integration.
+# FIL uses MoL RK3 + dtfac 0.25.  GRACE needs imex222: the M1 collision source
+# is solved IMPLICITLY, and the explicit steppers have no implicit stage.
+# ---------------------------------------------------------------------------
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.25,                    # FIL: Time::dtfac = 0.25
+  termination_condition: "walltime",
+  final_walltime: 23.5                 # FIL: TerminationTrigger::max_walltime = 24
+}
+
+# ---------------------------------------------------------------------------
+# Initial data + hydro.  FIL: kadathimporter BNS (FUKA), pure_hydro_run = yes.
+# ---------------------------------------------------------------------------
+grmhd: {
+  id_type: "fuka",
+
+  fuka: {
+    filename: "BNS_HEAD_ON.sfho_good.50.0.0.2.48169.q1.0.0.11",
+    id_dir: "/mnt/rafast/miler/codes/fuka_old/codes/FUKA/BNS_headon/bin/Release",
+    fuka_id_type: "BNS",
+    set_shift_to_zero: true
+  },
+
+  atmosphere: {
+    rho_fl:   1.e-14,                  # FIL: Margherita::rho_atm
+    temp_fl:  0.1,                     # FIL: Margherita::temp_atm
+    atmo_tol: 0.01                     # FIL: frankfurt_m1::M1_atmo_tol
+  },
+
+  excision: {
+    excision_criterion: "lapse",
+    excision_lapse: 0.05               # FIL: IllinoisGRMHD::lapse_excision
+  },
+
+  c2p: {
+    tolerance: 1.e-09,                 # FIL: IllinoisGRMHD::c2p_residual_tol
+    use_c2p_entropy_backup: false
+  },
+
+  B_field_initialization: "none"       # FIL: pure_hydro_run = yes
+}
+
+# ---------------------------------------------------------------------------
+# EOS.  FIL: Margherita "tabulated_leptonic", SFHo + muonic lepton table.
+#
+# NB the table pairing differs from FIL on purpose -- see the note at the
+# bottom of this file.  FIL uses an electrons-INCLUDED baryon table with
+# add_ele_contributions_to_table = no; in GRACE that combination double-counts
+# the lepton contribution and produces c2p errors.
+# ---------------------------------------------------------------------------
+eos: {
+  eos_type: "leptonic",
+
+  tabulated_eos: {
+    table_filename:      "/mnt/rafast/mcassing/EoS/sfho_compose_noele_ye0-5.h5",
+    table_format:        "compose",
+    cold_table_filename: "/mnt/rafast/miler/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+
+  leptonic: {
+    table_filename:      "/mnt/rafast/mcassing/EoS/muonic/sfhoele_0-5ye_newformat_1000mev_mu_max_fullfermi_allfixed_Bollig_typeIII_hotfixMuon_electron_tables.h5",
+    cold_table_filename: "/mnt/rafast/miler/eos/cold_sfho_muons.grace",
+    add_ele_contribution: false,
+    cold_table_temperature: 0.100001   # FIL: Margherita::temp_slice = 0.1
+  },
+
+  eps_maximum: 1.e+05                  # FIL: Margherita::eps_max
+}
+
+# ---------------------------------------------------------------------------
+# M1 neutrino transport.  FIL: frankfurt_m1 + frankfurt_m1_optical_depth,
+# evolve_radiation = no, switched on by Trigger[1] at bns_sep_tot < 15.
+# ---------------------------------------------------------------------------
+m1: {
+  bc_kind: "outgoing",                 # FIL: Radiation_BC = "outflow"
+  id_type: "zero",
+
+  eas: {
+    kinds: ["neutrino_weakhub"],       # FIL: m1_which_eas = "Weakhub"
+    weakhub_table: "/mnt/rafast/mcassing/EoS/weakhub/SFHocompose_grey_npemu_Bollig_suppress_noPP_advopac_20240818_Weakhub_grey.h5",
+
+    beta_decay:        true,
+    plasmon_decay:     true,           # FIL: plasmon_decay  = yes
+    bremsstrahlung:    true,           # FIL: bremstrahlung  = yes
+    pair_annihilation: true,           # FIL: pair_annihil   = yes
+
+    temperature_correction: true,
+
+    tau_policy:    "eikonal",          # FIL: m1_which_tau = "eikonal-simple"
+    betaeq_policy: "off"               # FIL: use_grrt_beta_eq = no
+  },
+
+  atmosphere: {
+    E_fl: 1.e-14,                      # FIL: frankfurt_m1::E_atmo
+    N_fl: 1.e-14                       # FIL: frankfurt_m1::N_atmo
+  },
+
+  backreaction: {
+    enabled: true                      # FIL: couple_fluid/couple_ye/couple_ymu = 1
+    # FIL also sets M1_rho_floor = 1e-14, which maps to backreaction.rho_min.
+    # GRACE's schema marks that parameter "!!! DO NOT USE !!!", so it is left
+    # at its default of 0 here.  See the note at the bottom.
+  },
+
+  # FIL Trigger[1]: bns_sep_tot < 15 -> steer evolve_radiation = yes
+  trigger: {
+    enabled: true,
+    separation: 15.0
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Spacetime.  FIL: Antelope (Z4c) + Dissipation.
+# ---------------------------------------------------------------------------
+z4c: {
+  eta:     0.6,                        # FIL: Antelope::eta
+  kappa_1: 0.05,                       # FIL: Antelope::kappa1
+  eps_diss: 0.2,                       # FIL: Dissipation::epsdis
+  eta_damp_radius:   50.0,             # FIL: Antelope::eta_damp_radius
+  kappa_damp_radius: 50.0              # FIL: Antelope::kappa_damp_radius
+}
+
+# ---------------------------------------------------------------------------
+# Compact-object tracking.  FIL: BNSTrackerGen + CarpetTracker, stars at +-25.
+# Drives both the AMR criterion above and the M1 trigger.
+# ---------------------------------------------------------------------------
+co_tracker: {
+  n_cos: 2,
+  update_every: 1,
+  merge_distance: 10,                  # < m1.trigger.separation, as intended
+
+  cos: [
+    { kind: "ns", name: "ns_1", x_i: -25.0, radius: 8 },
+    { kind: "ns", name: "ns_2", x_i:  25.0, radius: 8 }
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# Detectors.  FIL: SphericalSurface 300/500 + Multipole radii 200/300/500,
+# healpix outflow slices at 35/100/200/300/500.
+# ---------------------------------------------------------------------------
+spherical_surfaces: {
+  n_surfaces: 5,
+
+  spherical_detectors: [
+    # NB: resolution must be ODD -- the surface integrator uses Simpson's rule
+    # (spherical_surface_helpers.hh:59).  FIL's healpix slice_resolution of 64
+    # is therefore not usable verbatim.
+    { name: "DET_35",  radius:  35, resolution: 65 },
+    { name: "DET_100", radius: 100, resolution: 65 },
+    { name: "GW_200",  radius: 200, resolution: 91 },
+    { name: "GW_300",  radius: 300, resolution: 91 },
+    { name: "GW_500",  radius: 500, resolution: 91 }
+  ]
+}
+
+gw_integrals: {
+  detector_names: ["GW_200", "GW_300", "GW_500"]
+}
+
+outflows: {
+  detector_names: ["DET_35", "DET_100", "GW_200", "GW_300"]
+}
+
+adm_integrals: {
+  detector_names: ["GW_200", "GW_300", "GW_500"]
+}
+
+mhd_diagnostics: {
+  compute_energy_every: 128,
+  compute_other_diagnostics_every: 128
+}
+
+# ---------------------------------------------------------------------------
+# NaN checking.  FIL: NaNChecker check_every 512, action terminate.
+# ---------------------------------------------------------------------------
+nan_check: {
+  enabled: true,
+  check_every: 512,
+  action: "terminate"
+}
+
+# ---------------------------------------------------------------------------
+# Checkpointing.  FIL: checkpoint_every_walltime_hours 12, keep 3.
+# ---------------------------------------------------------------------------
+checkpoints: {
+  interval_kind: "walltime",
+  walltime_interval: 12,
+  max_n_checkpoints: 3,
+  checkpoint_at_termination: true
+}
+
+# ---------------------------------------------------------------------------
+# Output.
+# ---------------------------------------------------------------------------
+IO: {
+  info_output_every: 128,              # FIL: CarpetIOBasic::outInfo_every
+  info_output_max_reductions:   ["rho", "temperature", "ymu", "Erad2", "c2p_err"],
+  info_output_min_reductions:   ["alp"],
+  info_output_norm2_reductions: ["z4c_H"],
+
+  scalar_output_every: 128,            # FIL: CarpetIOScalar::outScalar_every
+  scalar_output_minmax: [
+    "rho", "press", "temperature", "ye", "ymu", "alp",
+    "mu_e", "mu_mu", "mu_p", "mu_n", "mu_delta_npe", "mu_delta_npmu",
+    "eta_nu1", "eta_nu2", "eta_nu3", "eta_nu4", "eta_nu5",
+    "Erad1", "Erad2", "Erad3", "Erad4", "Erad5",
+    "Nrad1", "Nrad2", "Nrad3", "Nrad4", "Nrad5",
+    "betaeq_err"
+  ],
+  scalar_output_norm2:    ["z4c_H"],
+  scalar_output_integral: ["dens", "c2p_dens_corr"],
+
+  # FIL: CarpetIOHDF5::out2D_every = 256, xy/xz/yz
+  plane_surface_output_every: 256,
+  plane_surface_output_cell_variables: ["metric", "hydro", "m1", "rates", "diagnostics", "c2p_err"],
+
+  # FIL: CarpetIOHDF5::out3D_every = 5120
+  volume_output_every: 5120,
+  volume_output_cell_variables: ["metric", "hydro", "m1"],
+  volume_output_base_directory: "output_volume",
+
+  sphere_surface_output_every: 512,    # FIL: healpix::output_every
+  diagnostic_output_every: 128,        # FIL: out0D_every / compute_every
+
+  output_use_hdf5: true,
+  hdf5_compression_level: 0,
+  hdf5_chunk_size: 8192,
+  output_extra_quantities: true
+}
+
+# =============================================================================
+# Deliberate departures from the FIL parfile -- please review these three.
+#
+# 1. EOS TABLE PAIRING.  FIL uses sfho_compose_electrons_ye0-5.h5 (electrons
+#    INCLUDED) with add_ele_contributions_to_table = no and
+#    baryon_eos_contains_e_contri = yes.  In GRACE that pairing double-counts
+#    the lepton contribution and produces c2p errors, so this file uses the
+#    no-electron baryon table with eos.leptonic.add_ele_contribution = true.
+#    The baryon table path above is therefore a GUESS at your no-electron SFHo
+#    file name -- correct it if it differs.
+#
+# 2. m1.backreaction.rho_min is left at 0 although FIL sets M1_rho_floor=1e-14.
+#    GRACE's schema documents that parameter as "!!! DO NOT USE !!!".  If you
+#    want FIL parity here, set rho_min: 1.e-14 and be aware of that warning.
+#
+# 3. TIME STEPPER.  imex222 instead of FIL's RK3, because GRACE solves the M1
+#    collision term implicitly.  cfl_factor is kept at FIL's 0.25; the M1
+#    profiling config in this directory uses 0.2, so drop it if you see
+#    implicit-solver trouble early on.
+#
+# Not translated (no GRACE equivalent):
+#   - CarpetIOHDF5 out1D output (GRACE has no 1D line output)
+#   - AHFinderDirect / QuasiLocalMeasures horizon finding, and FIL's Trigger[0]
+#     (alp < 0.2 -> start horizon finding).  GRACE's bh_diagnostics needs a
+#     detector name list; add one if this head-on run is expected to collapse.
+#   - frankfurt_m1::couple_entropy = 0.  GRACE's backreaction is all-or-nothing
+#     (m1.backreaction.enabled), with no per-channel toggles.
+#   - FIL's yp / ynue / ynumu diagnostic grid functions have no GRACE aux
+#     equivalent; the chemical potentials and eta_nu* above are the closest.
+# =============================================================================
