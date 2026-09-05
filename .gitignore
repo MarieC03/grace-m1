@@ -8,4 +8,13 @@ testb
 \#*
 *~
 .vscode
-.claude
+.claude# stray run/build artifacts in the source tree
+/CMakeCache.txt
+/compile_commands.json
+/Testing/
+/generated_cold_table.grace
+logs/
+output_scalar/
+output_surface/
+output_volume/
+__pycache__/

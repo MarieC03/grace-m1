@@ -51,13 +51,18 @@ $<$<BOOL:${GRACE_ENABLE_PROFILING}>:GRACE_GPUProfiling> )
 # Tests involving Kokkos
 add_library(kokkos_tests_main mains/kokkos_tests_main.cc)
 target_include_directories(kokkos_tests_main PRIVATE "${HEADER_DIR}")
-target_link_libraries(  kokkos_tests_main PRIVATE
+# yaml_cpp::yaml is PUBLIC: the kokkos tests include GRACE headers that pull in
+# <yaml-cpp/yaml.h> (config_parser.hh via get_param), and add_kokkos_test does not
+# link yaml itself, so the include directory has to propagate from here.
+target_link_libraries(  kokkos_tests_main
+PUBLIC
+yaml_cpp::yaml
+PRIVATE
 Catch2::Catch2
 $<TARGET_OBJECTS:grace_error_handlers>
 $<TARGET_OBJECTS:grace_parallel>
 $<TARGET_OBJECTS:grace_singleton>
 $<TARGET_OBJECTS:grace_config_helpers>
-yaml_cpp::yaml
 Kokkos::kokkos
 MPI::MPI_CXX
 p4est::sc
