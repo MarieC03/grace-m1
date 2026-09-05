@@ -48,7 +48,9 @@
 #include <grace/IO/output_diagnostics.hh>
 #include <grace/IO/diagnostics/co_tracker.hh>
 #include <grace/physics/m1_trigger.hh>
-#include <grace/physics/m1.hh>
+#ifdef GRACE_ENABLE_M1
+#include <grace/physics/m1.hh>   // report_betaeq_failures
+#endif
 #include <grace/system/nan_check.hh>
 #include <grace/physics/b_field_injection.hh>
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
