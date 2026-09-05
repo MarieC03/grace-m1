@@ -238,16 +238,16 @@ struct m1_equations_system_t
         #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
         fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, GXX_, q, dgdd_dx, idx(0,q)) ;
         #else
-        double chi = s(CHI_) ;
-        double oochi = 1./Kokkos::fmax(1e-15,chi) ;
+        // CHI_ holds W = gamma^{-1/6} (gdd = gtdd / W^2), same convention as grmhd.hh.
+        double const ooW    = 1./Kokkos::fmax(1e-15, s(CHI_)) ;
+        double const ooWsqr = SQR(ooW) ;
         double dchi_dx[3] ;
         fill_deriv_scalar<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, CHI_, q, dchi_dx, idx(0,q)) ;
         fill_deriv_tensor<MATTER_METRIC_DER_ORDER>(this->_state, i,j,k, GTXX_, q, dgdd_dx, idx(0,q)) ;
-        // gdd = gtdd/chi
-        // dgdd/dx = dgtdd/dx / chi - gdd / chi dchi/dx
+        // dgdd/dx = dgtdd/dx / W^2 - 2 gdd dW/dx / W
         for( int idir=0; idir<3; ++idir) {
             for( int a=0; a<6; ++a) {
-                dgdd_dx[a + 6*idir] = oochi * ( dgdd_dx[a + 6*idir] - gdd[a] * dchi_dx[idir] );
+                dgdd_dx[a + 6*idir] = ooWsqr * dgdd_dx[a + 6*idir] - 2. * ooW * dchi_dx[idir] * gdd[a] ;
             }
         }
         #endif
@@ -269,7 +269,7 @@ struct m1_equations_system_t
         double const Ktr = Khat + 2. * theta ;
         #endif
         for( int a=0; a<6; ++a ) {
-            Kdd[a] = oochi * Atdd[a] + Ktr * gdd[a] / 3. ;
+            Kdd[a] = ooWsqr * Atdd[a] + Ktr * gdd[a] / 3. ;
         }
         #endif
         /**************************************************************************************************/
