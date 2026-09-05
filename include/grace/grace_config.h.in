@@ -186,6 +186,32 @@ namespace grace {
 #define GRACE_N_M1_AUX  5
 #endif
 
+// 7.1 Radiation transport scheme (GRACE_RADIATION_SCHEME = M1|LBM).
+//   M1  -- grey two-moment M1 (default).  GRACE_M1_TRANSPORT is defined.
+//   LBM -- Lattice-Boltzmann: GRACE_LBM_NDIR intensities per species as
+//          inert evolved variables (variable_indices.hh, lbm.hh); M1's
+//          transport kernels are compiled out (GRACE_M1_TRANSPORT undefined)
+//          while the shared infrastructure -- species, EAS, atmosphere,
+//          trigger, moment slots -- stays.  GRACE_ENABLE_LBM is the
+//          #ifdef-friendly alias of the scheme test.
+#define GRACE_RADIATION_SCHEME_M1  0
+#define GRACE_RADIATION_SCHEME_LBM 1
+#define GRACE_RADIATION_SCHEME GRACE_RADIATION_SCHEME_@GRACE_RADIATION_SCHEME@
+#cmakedefine GRACE_ENABLE_LBM
+#cmakedefine GRACE_M1_TRANSPORT
+#ifdef GRACE_ENABLE_LBM
+// Direction count of the compiled-in stencil table and where to find it.
+#define GRACE_LBM_NDIR @GRACE_LBM_NDIR@
+#define GRACE_LBM_STENCIL_NAME "@GRACE_LBM_STENCIL@"
+#define GRACE_LBM_DATA_DIR "@CMAKE_SOURCE_DIR@/data/lbm"
+// Species carried by LBM: the neutrino species, plus the photon block.
+#ifdef GRACE_M1_PHOTONS
+#define GRACE_LBM_NSPECIES (GRACE_M1_NU_SPECIES + 1)
+#else
+#define GRACE_LBM_NSPECIES (GRACE_M1_NU_SPECIES)
+#endif
+#endif
+
 //=====================================================================
 // 8. Numeric constants
 //=====================================================================

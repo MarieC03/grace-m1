@@ -57,6 +57,9 @@
 #endif
 #include <grace/IO/diagnostics/co_tracker.hh>
 #include <grace/physics/m1_trigger.hh>
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm.hh>
+#endif
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
 #endif
 
@@ -262,6 +265,9 @@ void initialize(int& argc, char* argv[])
     // with the trigger disabled would inherit an idle M1 from a checkpoint
     // written by a triggered run.
     grace::m1_trigger_startup_check() ;
+    #ifdef GRACE_ENABLE_LBM
+    grace::lbm::startup_check() ;
+    #endif
 
     GRACE_INFO("Filling coordinate arrays...") ;
     grace::fill_cell_spacings(

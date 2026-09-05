@@ -466,6 +466,61 @@ struct moving_scattering_diffusion_m1_id_t {
 } ;
 
 
+struct sphere_wave_m1_id_t {
+    // Reference (Olsen & Rezzolla) "sphere wave": an isotropic blob of unit
+    // energy density inside r < radius on a floor, no opacities -- it free-streams
+    // into an expanding shell.  int E dV is conserved until the shell hits the
+    // boundary; r^2 E is constant across the shell.
+    sphere_wave_m1_id_t(
+        m1_atmo_params_t _atmo,
+        m1_excision_params_t _excision,
+        coord_array_t<GRACE_NSPACEDIM> _pcoords,
+        double _radius
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), radius(_radius)
+    {}
+
+    m1_id_t KOKKOS_INLINE_FUNCTION
+    operator() (
+        VEC(int const i, int const j, int const k),
+        int const q) const
+    {
+        m1_id_t id ;
+        double xyz[3] = {
+            pcoords(VEC(i,j,k),0,q),
+            pcoords(VEC(i,j,k),1,q),
+            pcoords(VEC(i,j,k),2,q)
+        };
+        double const r = sqrt(SQR(xyz[0]) + SQR(xyz[1]) + SQR(xyz[2])) ;
+
+        id.erad1 = ( r < radius ) ? 1.0 : atmo.E_fl ;
+        id.fradx1 = id.frady1 = id.fradz1 = 0. ;
+        id.nrad1 = id.erad1 ;
+
+        #if GRACE_M1_NU_SPECIES >= 3
+            id.erad2 = id.erad1 ; id.nrad2 = id.nrad1 ;
+            id.fradx2 = id.frady2 = id.fradz2 = 0. ;
+            id.erad3 = id.erad1 ; id.nrad3 = id.nrad1 ;
+            id.fradx3 = id.frady3 = id.fradz3 = 0. ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+            id.erad4 = id.erad1 ; id.nrad4 = id.nrad1 ;
+            id.fradx4 = id.frady4 = id.fradz4 = 0. ;
+            id.erad5 = id.erad1 ; id.nrad5 = id.nrad1 ;
+            id.fradx5 = id.frady5 = id.fradz5 = 0. ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+            id.eradph = id.erad1 ; id.nradph = id.nrad1 ;
+            id.fradxph = id.fradyph = id.fradzph = 0. ;
+        #endif
+        return id ;
+    }
+
+    m1_atmo_params_t atmo ;
+    m1_excision_params_t excision ;
+    coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    double radius ;
+} ;
+
 struct emitting_sphere_m1_id_t {
     emitting_sphere_m1_id_t(
         m1_atmo_params_t _atmo,

@@ -461,6 +461,13 @@ else()
 endif()
 string(APPEND _grace_m1_details "  Muon sector (Y_mu)  : ${_grace_muons}\n")
 
+# Radiation scheme detail: the compiled-in LBM stencil and its direction count.
+if(GRACE_ENABLE_LBM)
+    set(_grace_lbm_detail "  (stencil ${GRACE_LBM_STENCIL}, ${GRACE_LBM_NDIR} directions)")
+else()
+    set(_grace_lbm_detail "")
+endif()
+
 # Flag matter / Z4c FD-order mismatch directly in the summary so it's
 # unmissable; matches the warning emitted at configure time.
 if(NOT GRACE_MATTER_METRIC_DER_ORDER STREQUAL GRACE_Z4C_DER_ORDER)
@@ -493,6 +500,7 @@ set(_grace_summary
 "  Particles           : ${_grace_particles}\n"
 "  M1 radiation        : ${_grace_m1}\n"
 ${_grace_m1_details}
+"  Radiation scheme    : ${GRACE_RADIATION_SCHEME}${_grace_lbm_detail}\n"
 "  ---------------------------------------------------------\n"
 "  LORENE ID           : ${_grace_lorene}\n"
 "  FUKA ID             : ${_grace_fuka}\n"

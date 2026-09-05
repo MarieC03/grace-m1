@@ -49,6 +49,9 @@ const std::vector< std::string > code_modules {
     #ifdef GRACE_ENABLE_M1
     , "m1"
     #endif 
+    #ifdef GRACE_ENABLE_LBM
+    , "lbm"
+    #endif
     , "eos"
     , "checkpoints"
     , "coordinate_system"
@@ -79,6 +82,9 @@ const std::vector< std::string > code_modules_default_configs {
      #endif
      #ifdef GRACE_ENABLE_M1
      , "${CMAKE_SOURCE_DIR}/parameters/m1.yaml"
+     #endif
+     #ifdef GRACE_ENABLE_LBM
+     , "${CMAKE_SOURCE_DIR}/parameters/lbm.yaml"
      #endif
      , "${CMAKE_SOURCE_DIR}/parameters/eos.yaml"
      , "${CMAKE_SOURCE_DIR}/parameters/checkpoints.yaml"

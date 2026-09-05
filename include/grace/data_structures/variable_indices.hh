@@ -316,6 +316,18 @@ enum evol_fd_var_cc_idx : int {
     BDRIVERY_,
     BDRIVERZ_,
     #endif
+    #ifdef GRACE_ENABLE_LBM
+    // Lattice-Boltzmann intensities: GRACE_LBM_NDIR directions x
+    // GRACE_LBM_NSPECIES species, species-major -- population d of species s
+    // is LBM_I0_ + s*GRACE_LBM_NDIR + d (lbm_idx() in lbm.hh).  Inert evolved
+    // variables: placed AFTER N_HRSC_CC so they get no flux slot and the
+    // flux/reflux buffers do not grow, zero RHS in every stepper, registered
+    // so they inherit ghost exchange, AMR prolongation, BCs and checkpointing.
+    // Advanced once per step by the LBM stream/collide sweep (lbm.hh), which
+    // then writes the moments into the ERAD*/FRAD* slots above.
+    LBM_I0_,
+    LBM_IEND_ = LBM_I0_ + GRACE_LBM_NDIR * GRACE_LBM_NSPECIES - 1,
+    #endif
     N_EVOL_VARS
 } ; 
 
@@ -439,6 +451,15 @@ enum aux_var_idx : int {
     //   but dt is not in the output.  Large sentinel when the policy is inactive.
     BETAEQ_TSCALE_,
     #endif
+    #endif
+    #ifdef GRACE_ENABLE_LBM
+    // LBM by-products of the moment quadrature: the exact pressure tensor
+    // P^ij per species (what M1 has to close for), 6 slots per species,
+    // LBM_P0_ + 6*s + {xx,xy,xz,yy,yz,zz}; and the per-cell lambda-iteration
+    // count of the last collision.  Output group "lbm".
+    LBM_P0_,
+    LBM_PEND_ = LBM_P0_ + 6 * GRACE_LBM_NSPECIES - 1,
+    LBM_NITER_,
     #endif
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
     PSI4RE_,

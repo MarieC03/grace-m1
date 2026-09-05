@@ -105,6 +105,69 @@ if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES EQUAL 0 AND NOT GRACE_M1_PHOTONS)
         "-DGRACE_M1_PHOTONS=ON.")
 endif()
 
+# Radiation transport scheme (compile-time): which solver evolves the
+# radiation fields registered by the M1 infrastructure.
+#   M1  -- grey two-moment M1 with analytic closure (default).
+#   LBM -- general-relativistic Lattice-Boltzmann (Olsen & Rezzolla 2025,
+#          arXiv:2502.17552): the specific intensity is carried along a fixed
+#          Lebedev direction set as N_dir inert evolved variables per species.
+#          M1's flux, source, closure and implicit kernels are compiled out
+#          (GRACE_M1_TRANSPORT undefined); species, EAS providers, atmosphere,
+#          trigger and the moment slots are shared.  Needs the M1
+#          infrastructure, i.e. at least one radiation species.
+set(GRACE_RADIATION_SCHEME "M1" CACHE STRING "Radiation transport scheme (M1|LBM)")
+set_property(CACHE GRACE_RADIATION_SCHEME PROPERTY STRINGS M1 LBM)
+if(NOT GRACE_RADIATION_SCHEME MATCHES "^(M1|LBM)$")
+    message(FATAL_ERROR
+        "GRACE_RADIATION_SCHEME=${GRACE_RADIATION_SCHEME} is not one of M1, LBM.")
+endif()
+if(GRACE_RADIATION_SCHEME STREQUAL "LBM")
+    if(NOT GRACE_ENABLE_M1)
+        message(FATAL_ERROR
+            "GRACE_RADIATION_SCHEME=LBM needs a radiation species: set "
+            "-DGRACE_M1_NU_SPECIES={1,3,5} and/or -DGRACE_M1_PHOTONS=ON.")
+    endif()
+    set(GRACE_ENABLE_LBM    ON  CACHE INTERNAL "Derived: LBM radiation scheme selected" FORCE)
+    set(GRACE_M1_TRANSPORT  OFF CACHE INTERNAL "Derived: M1 transport kernels compiled in" FORCE)
+else()
+    set(GRACE_ENABLE_LBM    OFF CACHE INTERNAL "Derived: LBM radiation scheme selected" FORCE)
+    if(GRACE_ENABLE_M1)
+        set(GRACE_M1_TRANSPORT ON  CACHE INTERNAL "Derived: M1 transport kernels compiled in" FORCE)
+    else()
+        set(GRACE_M1_TRANSPORT OFF CACHE INTERNAL "Derived: M1 transport kernels compiled in" FORCE)
+    endif()
+endif()
+
+# LBM direction stencil: the name of a table file under data/lbm/ (Lebedev
+# quadrature, columns w,cx,cy,cz,theta,phi; header line 2 is the direction
+# count).  The count sets the extent of the evolved-variable enum, so it has
+# to be a compile-time constant -- it is read from the selected file here.
+# Selecting by file name rather than by order means refined (ghost-direction)
+# tables for the adaptive scheme are just more files.
+set(GRACE_LBM_STENCIL "Lebedev29" CACHE STRING
+    "LBM direction stencil: table file under data/lbm/ (e.g. Lebedev29 = 302 directions)")
+set(GRACE_LBM_NDIR 0)
+if(GRACE_ENABLE_LBM)
+    set(_lbm_table "${CMAKE_SOURCE_DIR}/data/lbm/${GRACE_LBM_STENCIL}")
+    if(NOT EXISTS "${_lbm_table}")
+        message(FATAL_ERROR
+            "GRACE_LBM_STENCIL=${GRACE_LBM_STENCIL}: no such table ${_lbm_table}")
+    endif()
+    file(STRINGS "${_lbm_table}" _lbm_hdr LIMIT_COUNT 2)
+    list(GET _lbm_hdr 1 _lbm_count)
+    string(STRIP "${_lbm_count}" _lbm_count)
+    if(NOT _lbm_count MATCHES "^[0-9]+$")
+        message(FATAL_ERROR
+            "GRACE_LBM_STENCIL=${GRACE_LBM_STENCIL}: header line 2 of ${_lbm_table} "
+            "is not a direction count (got '${_lbm_count}').")
+    endif()
+    set(GRACE_LBM_NDIR ${_lbm_count})
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_lbm_table}")
+    message(STATUS "Radiation scheme: LBM, stencil ${GRACE_LBM_STENCIL} (${GRACE_LBM_NDIR} directions).")
+elseif(GRACE_ENABLE_M1)
+    message(STATUS "Radiation scheme: M1.")
+endif()
+
 # bns_nurates is an optional header-only submodule providing one of the M1
 # EAS providers.  Build fine without it: the provider is compiled out and
 # selecting m1.eas kind "bns_nurates" in a parfile errors at startup.

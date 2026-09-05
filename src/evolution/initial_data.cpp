@@ -43,6 +43,9 @@
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
 #endif
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm.hh>
+#endif
 #include <grace/physics/eos/eos_types.hh>
 
 #include <Kokkos_Core.hpp>
@@ -78,6 +81,10 @@ void set_initial_data_impl() {
     Kokkos::fence() ;
     #ifdef GRACE_ENABLE_M1
     set_m1_initial_data<eos_t>();
+    #endif
+    #ifdef GRACE_ENABLE_LBM
+    // Populations from the moments the M1 initial data just wrote (lbm.hh).
+    grace::lbm::set_initial_data<eos_t>();
     #endif
     Kokkos::Profiling::popRegion() ;
 }

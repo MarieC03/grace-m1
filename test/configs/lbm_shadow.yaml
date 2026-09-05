@@ -1,0 +1,73 @@
+# LBM shadow test (cluster size: 64 quadrants of 32^3, ~30 GB for 302 populations).
+# Beam from x <= -0.25, |y|,|z| < 1/16, travelling +x (m1.id_type shadow = straight_beam ID)
+# into the absorbing sphere r < 3/64 at the origin (kappa_a = 1e6, eas kind "test").
+# dx = 1/128: beam half-width 8 cells, absorber radius 6 cells; t = 0.75 when the front
+# reaches x = 0.5.  Check: scripts/lbm_radial_profile.py FILE shadow 0.1 0.4 gives the
+# transverse E profile behind the sphere -- a clean dark core of radius ~3/64 for LBM.
+# M1 twin: same file without the lbm block, time_stepper imex222, cfl_factor 0.25,
+# final_iteration 385, volume_output_every 385.
+# Build: -DGRACE_RADIATION_SCHEME=LBM -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
+name: "lbm_shadow"
+amr: {
+  npoints_block_x: 32,
+  npoints_block_y: 32,
+  npoints_block_z: 32,
+  xmin: -0.5, xmax: 0.5,
+  ymin: -0.5, ymax: 0.5,
+  zmin: -0.5, zmax: 0.5,
+  n_ghostzones: 4,
+  initial_refinement_level: 2,
+  max_refinement_level: 2,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 10,
+  info_output_max_reductions: ["Erad1"],
+  scalar_output_every: 10,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1"],
+  volume_output_every: 107,
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  volume_output_cell_variables: ["Erad1"],
+  output_extra_quantities: false
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.9,
+  force_unit_wavespeed: true,
+  final_iteration: 107,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+m1: {
+  id_type: "shadow",
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+lbm: {
+  bc_kind: "none"
+}
+checkpoints: { checkpoint_at_termination: false }

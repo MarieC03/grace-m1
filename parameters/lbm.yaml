@@ -1,0 +1,81 @@
+lbm:
+  description: >
+    Lattice-Boltzmann radiation transport (build with
+    -DGRACE_RADIATION_SCHEME=LBM).  The specific intensity along each
+    direction of the compiled-in stencil (GRACE_LBM_STENCIL, direction count
+    GRACE_LBM_NDIR) is carried as an inert evolved variable per species and
+    advanced once per timestep by a semi-Lagrangian streaming sweep followed
+    by an implicit collision step in the fluid frame (Olsen & Rezzolla 2025,
+    arXiv:2502.17552).  Species, opacities (m1.eas), atmosphere floors
+    (m1.atmosphere) and the activation trigger (m1.trigger) are shared with
+    M1; the M1 moments Erad*/Frad* are filled from the quadrature every step.
+  type: schema
+
+  bc_kind:
+    type: keyword
+    allowed: ["none", "outgoing"]
+    default: "none"
+    description: >
+      Physical boundary condition on the intensity populations at the outer
+      boundary.  "none" (default) leaves the outer ghost cells at whatever the
+      initial data put there, which the semi-Lagrangian pull-back then reads
+      as a FIXED INFLOW: the atmosphere floor (no incoming radiation) where the
+      initial data is the floor, or a steady source where a beam / sphere
+      initial data extends to the boundary -- exactly the reference tests'
+      "keep source nodes active".  "outgoing" extrapolates the boundary cell
+      outward each substage instead.
+
+  stencil_dir:
+    type: string
+    default: ""
+    description: >
+      Directory holding the stencil tables.  Empty (default) uses the
+      directory compiled in from the source tree (GRACE_LBM_DATA_DIR).  The
+      table NAME is fixed at configure time by GRACE_LBM_STENCIL and is not a
+      runtime choice, because its direction count sizes the state vector;
+      the loader verifies the file's count against the compiled constant.
+
+  streaming:
+    type: keyword
+    allowed: ["flat_fixed"]
+    default: "flat_fixed"
+    description: >
+      Streaming scheme.  "flat_fixed": straight-line pull-back x - n_d dt with
+      a fixed (unrotated) stencil -- flat spacetime only.  The adaptive
+      (per-cell rotated, ghost-direction) and curved (geodesic) schemes of the
+      reference method are the planned extension points of this keyword.
+
+  lambda_tolerance:
+    type: double
+    default: 1.e-4
+    range: "(0,*)"
+    description: >
+      Relative change of the (E, F^i, P^ij) moments below which the collision
+      step's lambda iteration is considered converged (reference: 1e-4).
+
+  max_lambda_iterations:
+    type: int
+    default: 100
+    range: "[1,*)"
+    description: >
+      Cap on the lambda iteration of the collision step (reference: 100;
+      typical runs need ~4).  Cells that hit the cap are counted and reported
+      per step.
+
+  output_populations:
+    type: bool
+    default: false
+    description: >
+      Also write the raw intensity populations (GRACE_LBM_NDIR datasets per
+      species, named I<s>_<d>) when a cell-output group requests "lbm".
+      Off by default: the moments in the "m1" group and the pressure tensor in
+      the "lbm" group are the intended view; the populations are large.
+
+  report_timings:
+    type: bool
+    default: false
+    description: >
+      Fence after each LBM kernel and accumulate the wall-clock split of the
+      sweep (stream / collide+moments / register copy), printed at
+      termination together with the cell- and population-update rates.  The
+      fences serialise the device streams, so off by default.

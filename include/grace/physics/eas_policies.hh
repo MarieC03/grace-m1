@@ -72,6 +72,7 @@ struct test_eas_op {
         ) ;
         if (_which_test == "straight_beam" or
             _which_test == "curved_beam" or
+            _which_test == "sphere_wave" or
             _which_test == "zero" )              // schema default; rates stay floored
         {
             which_test = ZERO_EAS ;

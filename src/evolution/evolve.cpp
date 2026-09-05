@@ -66,6 +66,9 @@
 #endif
 #endif
 #include <grace/physics/eos/eos_types.hh>
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm.hh>
+#endif
 
 #include <grace/amr/grace_amr.hh>
 
@@ -154,6 +157,14 @@ void evolve_impl() {
     //amr::apply_boundary_conditions(state) ;
     Kokkos::deep_copy(state_p, state) ;
     grace::deep_copy(sstate_p, sstate) ;
+    #ifdef GRACE_ENABLE_LBM
+    // Lattice-Boltzmann radiation: one operator-split sweep per step, BEFORE
+    // the stepper.  Reads I^n from state_p (ghosts fresh from the previous
+    // step's final BC), writes I^{n+1} into state, then copies the LBM block
+    // and the moment slots back into state_p so both y^n registers agree --
+    // the invariant every stepper relies on for inert variables (lbm.hh).
+    grace::lbm::step<eos_t>(state_p, state, aux, dt) ;
+    #endif
     // Reset per-step c2p diagnostics once per timestep. C2P_DENS_ERR_ is a
     // signed mass-error accumulator; C2P_ERR_ holds a packed bit-pattern of
     // c2p failure modes (sticky-OR'd over the RK substages in grmhd.hh's
@@ -522,7 +533,7 @@ void flag_fofc_cells(
     auto excision = get_excision_params() ;
     auto c2p_pars = get_c2p_params() ;
     auto fofc_pars = get_fofc_params() ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     auto m1_atmo  = get_m1_atmo_params() ;   // radiation floor scale for the FOFC positivity test
     bool const m1_on = m1_is_active() ;      // captured by value into the kernel below
     #endif
@@ -691,7 +702,7 @@ void flag_fofc_cells(
         /************************************************************************************/
 
         /************************************************************************************/
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         // Radiation positivity (M1-aware FOFC): per species, predict the
         // tentative cell-centre E,N after the full flux divergence (same dt and
         // divF as add_fluxes_and_source_terms) and tag the 6 touching faces with
@@ -870,7 +881,7 @@ void apply_fofc_correction(
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t>
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     // M1-aware FOFC: recompute flagged faces' radiation fluxes first-order
     // (donor cell + HLLE) per species, gated by the per-species bits packed
     // into the shared face tag (bit 0 = hydro, bit s+1 = species s).  Eface IS
@@ -882,23 +893,23 @@ void apply_fofc_correction(
     #endif
 
     // Flux correction runs when hydro (not frozen) OR M1 needs it.
-    #if !defined(GRACE_FREEZE_HYDRO) || defined(GRACE_ENABLE_M1)
+    #if !defined(GRACE_FREEZE_HYDRO) || defined(GRACE_M1_TRANSPORT)
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_fluxes_fofc")
                 , host_face_cnt(0)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fx(idx) ;
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         // Idle M1: keep only bit 0 (hydro) so every per-species branch below
         // falls through and no radiation flux is recomputed.
         int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & 1 )            // bit 0: recompute hydro only where hydro flagged it
         #endif
         grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
         #endif
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -917,18 +928,18 @@ void apply_fofc_correction(
                 , host_face_cnt(1)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fy(idx) ;
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         // Idle M1: keep only bit 0 (hydro) so every per-species branch below
         // falls through and no radiation flux is recomputed.
         int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & 1 )
         #endif
         grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
         #endif
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -947,18 +958,18 @@ void apply_fofc_correction(
                 , host_face_cnt(2)
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fz(idx) ;
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         // Idle M1: keep only bit 0 (hydro) so every per-species branch below
         // falls through and no radiation flux is recomputed.
         int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
         #endif
         #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & 1 )
         #endif
         grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
         #endif
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -1041,7 +1052,7 @@ void compute_fluxes(
     grmhd_equations_system_t<eos_t>
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
     //**************************************************************************************************/
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     // normalize
     auto m1_norm_policy =
@@ -1195,7 +1206,7 @@ void compute_fluxes(
         grmhd_eq_system.template compute_x_flux<recon_t>(q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact) ;
         #endif
     }) ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     // Idle M1 leaves these flux slots at their allocation zeros, so the divergence
     // in add_fluxes_and_source_terms adds nothing -- the mechanism OPTD*_ already
     // relies on.  Safe only because the trigger latch is one-way.
@@ -1237,7 +1248,7 @@ void compute_fluxes(
         grmhd_eq_system.template compute_y_flux<recon_t>(q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact);
         #endif
     }) ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_y_flux")
                 , flux_y_policy
@@ -1276,7 +1287,7 @@ void compute_fluxes(
         grmhd_eq_system.template compute_z_flux<recon_t>(q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact);
         #endif
     }) ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_z_flux")
                 , flux_z_policy
@@ -1329,7 +1340,7 @@ void compute_fluxes(
     #else
     Kokkos::fence() ;
     #endif
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     // un-normalize
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
@@ -1681,7 +1692,7 @@ void add_fluxes_and_source_terms(
     auto eos = eos::get().get_eos<eos_t>() ;
     grmhd_equations_system_t<eos_t>
         grmhd_eq_system(eos,old_state,old_stag_state,aux) ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     #endif
     //**************************************************************************************************/
@@ -1692,7 +1703,7 @@ void add_fluxes_and_source_terms(
             , {VEC(nx+ngz,ny+ngz,nz+ngz),nq}
         ) ;
     //**************************************************************************************************/
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_sources_M1")
                 , policy
@@ -1965,7 +1976,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     auto& _idx = variable_list::get().getinvspacings() ;
     auto& aux  = variable_list::get().getaux() ;
 
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
 
 #ifndef GRACE_FREEZE_HYDRO
     auto backreaction_params = get_m1_backreaction_params() ;

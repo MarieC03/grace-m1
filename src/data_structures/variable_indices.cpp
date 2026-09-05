@@ -520,6 +520,33 @@ void register_variables() {
     #endif
     #endif
 
+    #ifdef GRACE_ENABLE_LBM
+    // Lattice-Boltzmann intensities (variable_indices.hh): one evolved scalar
+    // per direction per species, "I<s>_<d>", s and d 1- and 0-based.  Scalar
+    // registration is right for translation, exchange and prolongation but
+    // NOT under a reflection symmetry, where I_d must map to the mirrored
+    // direction rather than to itself -- lbm::startup_check() refuses
+    // reflection symmetries for exactly that reason.
+    {
+        auto lbm_bc = detail::get_bc_type(get_param<std::string>("lbm","bc_kind")) ;
+        for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+        for ( int d = 0; d < GRACE_LBM_NDIR; ++d ) {
+            register_evolved_scalar(LBM_I0_ + s*GRACE_LBM_NDIR + d,
+                "I" + std::to_string(s+1) + "_" + std::to_string(d),
+                lbm_bc, "second_order") ;
+        }
+        // Exact pressure tensor from the quadrature and the collision's
+        // lambda-iteration count; output group "lbm".
+        static const char* const pc[6] = {"xx","xy","xz","yy","yz","zz"} ;
+        for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+        for ( int c = 0; c < 6; ++c ) {
+            register_aux_scalar(LBM_P0_ + 6*s + c,
+                std::string("Plbm") + std::to_string(s+1) + "_" + pc[c]) ;
+        }
+        register_aux_scalar(LBM_NITER_, "lbm_niter") ;
+    }
+    #endif
+
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
     auto metric_bc = detail::get_bc_type("none") ;
     register_evolved_tensor({GXX_,GXY_,GXZ_,GYY_,GYZ_,GZZ_}, "gamma", metric_bc, "fourth_order") ;

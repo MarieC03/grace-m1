@@ -12,7 +12,7 @@ m1:
 
   id_type:
     type: keyword
-    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium"]
+    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "sphere_wave", "zero", "curved_beam", "equilibrium"]
     default: "zero"
     description: >
       Initialization prescription for radiation fields.  "equilibrium" sets
@@ -294,6 +294,19 @@ m1:
       default: true
       description: >
         Is background fluid static or moving?
+
+  sphere_wave_test:
+    type: schema
+    description: >
+      Parameters of the sphere-wave test (id_type "sphere_wave"): a unit
+      isotropic energy density inside a sphere on a floor, no opacities.
+
+    radius:
+      type: double
+      default: 0.1
+      range: "(0,*)"
+      description: >
+        Radius of the initially filled sphere [code units].
 
   emitting_sphere_test:
     type: schema

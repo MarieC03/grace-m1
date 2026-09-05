@@ -29,12 +29,18 @@
 #include <grace/system/runtime_functions.hh>
 #include <grace/system/print.hh>
 #include <grace/physics/grace_weakhub_table.hh>
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm.hh>
+#endif
 
 namespace grace {
 
 void grace_finalize() {
 
 GRACE_INFO("Termination sequence initiated, total runtime: {:.3e} s.", grace::get_total_runtime() ) ;
+#ifdef GRACE_ENABLE_LBM
+grace::lbm::report_timings() ;
+#endif
 #ifdef GRACE_ENABLE_M1
 grace::weakhub::finalize_weakhub();
 #endif

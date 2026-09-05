@@ -109,7 +109,7 @@ void compute_auxiliary_quantities(
     // RK substeps (clamp_to_atmo=false) clamp only to the EOS absolute bounds.
     grmhd_eq_system.clamp_to_atmo =
         clamp_to_atmo || grace::get_param<bool>("grmhd","c2p","always_enforce_floors") ;
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     m1_excision_params_t m1_excision_params = get_m1_excision_params() ;
     m1_atmo_params_t m1_atmo_params = get_m1_atmo_params() ;
     m1_backreaction_params_t backreaction_params = get_m1_backreaction_params();
@@ -173,6 +173,7 @@ void compute_auxiliary_quantities(
     #endif
     #endif
     #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     // Closure auxiliaries: a per-species root-find per cell, one of the larger
     // savings while the M1 trigger has not fired.
     if ( m1_is_active() )
@@ -192,6 +193,7 @@ void compute_auxiliary_quantities(
         m1_eq_system.compute_auxiliaries<M1_PHOTON_SPECIES>(VEC(i,j,k), q, dev_coords);
         #endif
     }) ;
+    #endif // GRACE_M1_TRANSPORT -- under LBM the moments come from the populations (lbm.hh)
     // Now fill out the eas.  Still called while M1 is idle: with
     // GRACE_M1_DIAGNOSTICS it runs in a reduced fugacity-only mode so the
     // chemical potentials keep being written (and the rate slots floored);

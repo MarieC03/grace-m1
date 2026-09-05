@@ -365,6 +365,16 @@ void set_m1_initial_data() {
             m1_atmo_params, m1_excision_params, cart_pcoords
         ) ;
         set_m1_initial_data_impl(id) ;
+    } else if ( id_type == "sphere_wave" ) {
+        auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;
+        ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;
+        coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
+        grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
+        sphere_wave_m1_id_t id(
+            m1_atmo_params, m1_excision_params, cart_pcoords,
+            grace::get_param<double>("m1","sphere_wave_test","radius")
+        ) ;
+        set_m1_initial_data_impl(id) ;
     } else if ( id_type == "scattering") {
         auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;
         ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;

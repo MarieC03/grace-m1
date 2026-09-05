@@ -98,7 +98,7 @@ void find_stable_timestep_impl() {
         grmhd_eq_system(eos,state,sstate,aux) ;
     #define GET_CMAX \
     grmhd_eq_system(eigenspeed_kernel_t{}, VEC(i,j,k),q)
-    #ifdef GRACE_ENABLE_M1
+    #ifdef GRACE_M1_TRANSPORT
     m1_equations_system_t m1_eq_system(state,sstate,aux) ;
     #endif
     double dt_local ;
@@ -112,7 +112,7 @@ void find_stable_timestep_impl() {
     {
         #if (GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4)
         double cmax = unit_cmax ? 1.0 : GET_CMAX;
-        #ifdef GRACE_ENABLE_M1
+        #ifdef GRACE_M1_TRANSPORT
         if ( !unit_cmax ) {
         #if GRACE_M1_NU_SPECIES >= 1
         double m1_cmax = m1_eq_system.template compute_max_eigenspeed<0>(VEC(i,j,k), q);
@@ -132,6 +132,11 @@ void find_stable_timestep_impl() {
         #endif
         cmax = Kokkos::fmax(cmax, m1_cmax);
         }
+        #endif
+        #ifdef GRACE_ENABLE_LBM
+        // Radiation streams at c = 1 whatever the fluid does, and the LBM
+        // pull-back must stay within one cell -- so light speed bounds dt too.
+        cmax = Kokkos::fmax(cmax, 1.0) ;
         #endif
         #else
         double cmax = 1 ;

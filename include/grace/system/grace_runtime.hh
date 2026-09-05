@@ -644,6 +644,25 @@ class grace_runtime_impl_t
             , "beta_eq_tscale"
             #endif // GRACE_ENABLE_M1 && GRACE_M1_DIAGNOSTICS
         };
+        // LBM by-products (exact pressure tensor, lambda-iteration count) and,
+        // on request, the raw intensity populations.  Built at runtime: the
+        // population count is a compile-time constant but far too large for a
+        // literal like the lists above.  Output group "lbm".
+        std::vector<std::string> lbm_aux ;
+        std::vector<std::string> lbm_populations ;
+        #ifdef GRACE_ENABLE_LBM
+        {
+            static const char* const pc[6] = {"xx","xy","xz","yy","yz","zz"} ;
+            for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+                for ( int c = 0; c < 6; ++c )
+                    lbm_aux.push_back(std::string("Plbm") + std::to_string(s+1) + "_" + pc[c]) ;
+            lbm_aux.push_back("lbm_niter") ;
+            if ( get_param<bool>("lbm","output_populations") )
+                for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+                    for ( int d = 0; d < GRACE_LBM_NDIR; ++d )
+                        lbm_populations.push_back("I" + std::to_string(s+1) + "_" + std::to_string(d)) ;
+        }
+        #endif
         auto out_cell_vars_volume = get_param<std::vector<std::string>>("IO","volume_output_cell_variables") ;
         auto out_cell_vars_plane_surface = get_param<std::vector<std::string>>("IO","plane_surface_output_cell_variables") ;
         auto out_cell_vars_sphere_surface = get_param<std::vector<std::string>>("IO","sphere_surface_output_cell_variables") ;
@@ -711,6 +730,17 @@ class grace_runtime_impl_t
                     } else {
                         _cell_volume_output_scalar_aux.push_back(vn) ;
                     }
+                }
+            } else if ( x == "lbm" ) {
+                for( auto const& vn: lbm_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_volume_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_volume_output_scalar_aux.push_back(vn) ;
+                    }
+                }
+                for( auto const& vn: lbm_populations ) {
+                    _cell_volume_output_scalar_vars.push_back(vn) ;
                 }
             } else {
                 if(std::find(vnames.begin(), vnames.end(), x) != vnames.end()) {
@@ -787,6 +817,17 @@ class grace_runtime_impl_t
                         _cell_plane_surface_output_scalar_aux.push_back(vn) ;
                     }
                 }
+            } else if ( x == "lbm" ) {
+                for( auto const& vn: lbm_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_plane_surface_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_plane_surface_output_scalar_aux.push_back(vn) ;
+                    }
+                }
+                for( auto const& vn: lbm_populations ) {
+                    _cell_plane_surface_output_scalar_vars.push_back(vn) ;
+                }
             } else {
                 if(std::find(vnames.begin(), vnames.end(), x) != vnames.end()) {
                     if( vprops[x].is_vector ){
@@ -861,6 +902,17 @@ class grace_runtime_impl_t
                     } else {
                         _cell_sphere_surface_output_scalar_aux.push_back(vn) ;
                     }
+                }
+            } else if ( x == "lbm" ) {
+                for( auto const& vn: lbm_aux ) {
+                    if ( auxprops[vn].is_vector ) {
+                        _cell_sphere_surface_output_vector_aux.push_back(auxprops[vn].name) ;
+                    } else {
+                        _cell_sphere_surface_output_scalar_aux.push_back(vn) ;
+                    }
+                }
+                for( auto const& vn: lbm_populations ) {
+                    _cell_sphere_surface_output_scalar_vars.push_back(vn) ;
                 }
             } else {
                 if(std::find(vnames.begin(), vnames.end(), x) != vnames.end()) {
