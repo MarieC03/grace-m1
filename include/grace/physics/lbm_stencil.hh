@@ -44,6 +44,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <array>
 
 namespace grace { namespace lbm {
 
@@ -66,6 +67,8 @@ struct stencil_t {
     Kokkos::View<double**> c ;   //!< unit directions, c(d,0..2)
     Kokkos::View<int**>    mirror ; //!< mirror(d,a): direction with component a of c_d flipped
     Kokkos::View<double**> Y ;      //!< Y(d,i): real spherical harmonics (l <= 2) at direction d
+    int    degree = 0 ;        //!< measured exactness degree L of the quadrature
+    double sigma_max = 0. ;    //!< sharpest von Mises-Fisher the quadrature carries (see quadrature_degree)
 
     double GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE weight(int d) const { return w(d) ; }
     double GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE cx(int d) const { return c(d,0) ; }
@@ -74,6 +77,58 @@ struct stencil_t {
     int    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE mirror_of(int d, int a) const { return mirror(d,a) ; }
     double GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE Ysh(int d, int i) const { return Y(d,i) ; }
 } ;
+
+/**
+ * @brief Exactness degree L of a direction quadrature, measured rather than
+ *        assumed: the largest L with sum_d w_d P_l(n_d . a) = 0 for all
+ *        1 <= l <= L and every probe axis a.  Probe axes are deliberately
+ *        off-symmetry, so the octahedral symmetry of a Lebedev set cannot mask
+ *        a failure.
+ */
+inline int quadrature_degree(std::vector<double> const& w,
+                             std::vector<std::array<double,3>> const& c,
+                             double const tol = 1e-10, int const lmax = 200)
+{
+    // Probe axes: irrational directions, none aligned with a symmetry plane.
+    std::vector<std::array<double,3>> axes ;
+    for ( int k = 1; k <= 5; ++k ) {
+        double const a = 0.7137*k, b = 1.3119*k, g = 2.1013*k ;
+        double const x = std::cos(a)*std::sin(b), y = std::sin(a)*std::sin(b), z = std::cos(b)*std::cos(g/3) ;
+        double const n = std::sqrt(x*x+y*y+z*z) ;
+        axes.push_back({x/n, y/n, z/n}) ;
+    }
+    for ( int l = 1; l <= lmax; ++l ) {
+        for ( auto const& a : axes ) {
+            double sum = 0. ;
+            for ( size_t d = 0; d < w.size(); ++d ) {
+                double const x = c[d][0]*a[0] + c[d][1]*a[1] + c[d][2]*a[2] ;
+                double p0 = 1., p1 = x ;                 // Legendre by recurrence
+                for ( int m = 1; m < l; ++m ) {
+                    double const p2 = ((2*m+1)*x*p1 - m*p0)/(m+1) ;
+                    p0 = p1 ; p1 = p2 ;
+                }
+                sum += w[d] * (l == 0 ? 1. : p1) ;
+            }
+            if ( std::fabs(sum) > tol ) return l - 1 ;
+        }
+    }
+    return lmax ;
+}
+
+/**
+ * @brief Sharpest von Mises-Fisher distribution a degree-L quadrature carries.
+ *
+ * exp(sigma n.f) has Legendre content i_l(sigma)/i_0(sigma) ~ exp(-l(l+1)/2sigma),
+ * so the first degree the rule cannot integrate, L+1 ~ L, is negligible when
+ *   exp(-L(L+1)/(2 sigma)) <= eps   =>   sigma <= L(L+1) / (2 ln(1/eps)).
+ * The beam it seeds then has an opening half-angle of about 1/sqrt(sigma), which
+ * therefore narrows as 1/L: 7.2 deg for Lebedev29, 4.0 deg for Lebedev53.
+ */
+inline double vmf_sigma_max(int const degree, double const eps = 1e-3)
+{
+    if ( degree < 2 ) return 0. ;
+    return double(degree)*double(degree+1) / (2.*std::log(1./eps)) ;
+}
 
 /**
  * @brief A direction quadrature of runtime size: weights (sum 1) and unit
@@ -238,6 +293,14 @@ inline stencil_t load_stencil(std::string const& dir)
     Kokkos::deep_copy(st.c, hc) ;
     Kokkos::deep_copy(st.mirror, hm) ;
     Kokkos::deep_copy(st.Y, hY) ;
+
+    std::vector<std::array<double,3>> cvec(count) ;
+    for ( long d = 0; d < count; ++d ) cvec[d] = { cx[d], cy[d], cz[d] } ;
+    st.degree    = quadrature_degree(w, cvec) ;
+    st.sigma_max = vmf_sigma_max(st.degree) ;
+    if ( st.sigma_max <= 0. )
+        ERROR("LBM: stencil table '" << path << "' integrates no harmonic beyond l = 1 (measured degree "
+              << st.degree << "); it cannot represent a beam.") ;
     return st ;
 }
 

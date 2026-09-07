@@ -177,6 +177,10 @@ void startup_check()
 
     double const cells = double(nx+2*ngz)*double(ny+2*ngz)*double(nz+2*ngz) ;
     double const mb_per_copy = cells * 8.0 * double(GRACE_LBM_NDIR) * double(GRACE_LBM_NSPECIES) / 1048576.0 ;
+    GRACE_INFO("LBM stencil {}: measured exactness degree {}, so the sharpest beam it carries is "
+               "sigma_max = {:.1f} (|F|/E = {:.4f}), an opening half-angle of about {:.1f} degrees.",
+               GRACE_LBM_STENCIL_NAME, st.degree, st.sigma_max, flux_of_sigma(st.sigma_max),
+               180./M_PI/Kokkos::sqrt(st.sigma_max)) ;
     GRACE_INFO("LBM radiation transport: stencil {} ({} directions, sum w = 1), {} species, "
                "{} populations per cell; {:.1f} MB per quadrant per state copy "
                "(three copies live for rk3/rk4/imex222); streaming = {}.",
@@ -369,7 +373,7 @@ void set_initial_data()
                 state(i,j,k,fradx_idx(s)+2,q) * oosg } ;
             auto const Fu = metric.raise(Fd) ;
             double const Fn = Kokkos::sqrt(Kokkos::fmax(0.0, Fu[0]*Fd[0] + Fu[1]*Fd[1] + Fu[2]*Fd[2])) ;
-            double const sigma = sigma_of_relative_flux(Fn / E) ;
+            double const sigma = sigma_of_relative_flux(Fn / E, sys.st.sigma_max) ;
             // Beam axis in the triad frame, where the stencil directions live.
             double const Fuc[3] = {Fu[0], Fu[1], Fu[2]} ;
             double Ft[3] ; tr.to_triad(Fuc, Ft) ;

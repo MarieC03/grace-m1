@@ -200,12 +200,12 @@ flux_of_sigma(double sigma) {
     return (sigma*Kokkos::cosh(sigma) - Kokkos::sinh(sigma)) / (sigma*Kokkos::sinh(sigma)) ;
 }
 
-//! Invert flux_of_sigma by bisection.  f is clamped to flux_of_sigma(60)
-//! ~ 0.983 -- beyond that the distribution is a near-delta the stencil cannot
+//! Invert flux_of_sigma by bisection.  f is clamped to flux_of_sigma(sigma_max),
+//! the sharpest the quadrature carries (lbm_stencil.hh vmf_sigma_max, derived
+//! from the measured exactness degree) -- beyond that it is a near-delta the stencil cannot
 //! resolve anyway.
 double GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-sigma_of_relative_flux(double f) {
-    constexpr double sigma_max = 60.0 ;
+sigma_of_relative_flux(double f, double const sigma_max) {
     if ( !(f > 1e-12) ) return 0.0 ;
     f = Kokkos::fmin(f, flux_of_sigma(sigma_max)) ;
     double lo = 0.0, hi = sigma_max ;
