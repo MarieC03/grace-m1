@@ -187,7 +187,7 @@ endforeach()
 # the volume output.  Not "fast": 10-30 s each, 8 quadrants of 302 populations.
 # Flat-space problems run in every build; the Kerr-Schild ones need the static
 # (Cowling) metric, the TOV and puncture ones the Z4c evolution.
-set(_lbm_runs lbm_beam_smoke lbm_sphere_wave lbm_sphere_wave_amr lbm_sphere_wave_zrefl lbm_sphere_wave_curved_flat lbm_diffusion)
+set(_lbm_runs lbm_beam_smoke lbm_crossed_beams lbm_sphere_wave lbm_sphere_wave_amr lbm_sphere_wave_zrefl lbm_sphere_wave_curved_flat lbm_diffusion)
 if(GRACE_METRIC_EVOL STREQUAL "COWLING")
     list(APPEND _lbm_runs lbm_sphere_wave_ks lbm_curved_beam lbm_tov_cowling)
 else()

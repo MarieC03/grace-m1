@@ -12,7 +12,7 @@ m1:
 
   id_type:
     type: keyword
-    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "sphere_wave", "zero", "curved_beam", "equilibrium"]
+    allowed: ["straight_beam", "crossed_beams", "scattering", "shadow", "emitting_sphere", "sphere_wave", "zero", "curved_beam", "equilibrium"]
     default: "zero"
     description: >
       Initialization prescription for radiation fields.  "equilibrium" sets
@@ -294,6 +294,27 @@ m1:
       default: true
       description: >
         Is background fluid static or moving?
+
+  crossed_beams_test:
+    type: schema
+    description: >
+      Two free-streaming pencils crossing at the origin, one along +x and one
+      along +y (m1.id_type = crossed_beams).  The source patches are disjoint
+      for half_width < |start|.
+
+    half_width:
+      type: double
+      default: 0.125
+      range: "(0,*)"
+      description: >
+        Transverse half-width of each beam.
+
+    start:
+      type: double
+      default: -0.5
+      range: "(*,0)"
+      description: >
+        Each beam's source patch runs from the domain edge to this coordinate.
 
   sphere_wave_test:
     type: schema

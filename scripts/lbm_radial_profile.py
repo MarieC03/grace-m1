@@ -92,6 +92,33 @@ def main():
             sE, sz, szz, sy = bins[k]; x = (k + 0.5)*dxb; zc = sz/sE; zr = math.sqrt(max(szz/sE - zc*zc, 0.0)); zg = z_geo(x)
             print(f"{x:7.3f} {sE:12.4e} {zc:11.4f} {zg:11.4f} {zc-zg:+8.4f} {zr:7.3f} {sy/sE:7.3f}")
         return
+    elif mode == "crossed":
+        # two orthogonal pencils crossing at the origin: profile each beam along its
+        # own axis and report the diagonal quadrant, which only lights up if the
+        # scheme merged them (an M1 closure does).
+        hw = float(sys.argv[3]) if len(sys.argv) > 3 else 0.125
+        dx = float(sys.argv[4]) if len(sys.argv) > 4 else 0.0625
+        ax, ay, diag = {}, {}, [0.0, 0.0, 0.0, 0.0]
+        for (x, y, z), E in zip(centres, d["Erad1"]):
+            if abs(z) > hw: continue
+            if abs(y) <= hw and abs(x) > hw:
+                b = ax.setdefault(int(round(x/dx)), [0, 0.0]); b[0] += 1; b[1] += E
+            if abs(x) <= hw and abs(y) > hw:
+                b = ay.setdefault(int(round(y/dx)), [0, 0.0]); b[0] += 1; b[1] += E
+            if x > 3*hw and y > 3*hw:            # beyond the crossing, off both axes
+                diag[0] += 1; diag[1] += E; diag[2] = max(diag[2], E)
+            if abs(x) <= hw and abs(y) <= hw:    # the crossing region itself
+                diag[3] = max(diag[3], E)
+        print(f"{'s':>8} {'<E> beam x':>12} {'<E> beam y':>12}   (half-width {hw}, dx {dx})")
+        for k in sorted(set(ax) | set(ay)):
+            a = ax.get(k, [1, float('nan')]); b = ay.get(k, [1, float('nan')])
+            print(f"{k*dx:8.4f} {a[1]/a[0]:12.5e} {b[1]/b[0]:12.5e}")
+        print(f"crossing region E_max = {diag[3]:.5e}   (superposition: the sum of the two beams there)")
+        print(f"diagonal quadrant: {diag[0]} cells, <E> = {diag[1]/max(diag[0],1):.3e}, "
+              f"E_max = {diag[2]:.3e}")
+        print("compare with the M1 twin: a two-moment closure merges the beams, so the")
+        print("diagonal carries the energy and the on-axis profiles collapse past the crossing.")
+        return
     elif mode == "shadow":
         x0, x1 = float(sys.argv[3]), float(sys.argv[4]); dr = float(sys.argv[5]) if len(sys.argv) > 5 else 0.015625
         bins = {}
