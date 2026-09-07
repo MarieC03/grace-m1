@@ -35,13 +35,14 @@
 #ifndef GRACE_3D
 #error "The Lattice-Boltzmann radiation module needs a 3-D build: its stencils are 3-D direction sets."
 #endif
-#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_COWLING
-#error "LBM (flat_fixed streaming) is implemented for GRACE_METRIC_EVOL=COWLING only: the pull-back x - n dt is a straight line, which is exact in flat space. Geodesic (curved) streaming is the next milestone."
-#endif
 
 #include <grace/utils/device.h>
 #include <grace/utils/inline.h>
 #include <grace/utils/metric_utils.hh>
+#include <grace/physics/lbm_geometry.hh>
+#include <grace/physics/lbm_geodesic.hh>
+#include <grace/physics/lbm_velocity_mesh.hh>
+#include <grace/coordinates/coordinate_systems.hh>
 #include <grace/config/config_parser.hh>
 #include <grace/data_structures/grace_data_structures.hh>
 #include <grace/physics/grmhd_helpers.hh>
@@ -64,7 +65,10 @@ namespace grace { namespace lbm {
  *   stream  : I_d(x) <- I_d(x - n_d dt), 8-point trilinear pull-back
  *             (reference StreamFlatFixed).  |n_d| dt <= CFL dx_finest, so the
  *             departure point is at most one cell away and the 4 ghost layers
- *             GRACE exchanges are ample.
+ *             GRACE exchanges are ample.  On a curved metric the pull-back
+ *             follows the null geodesic (stream_curved) and, by default, moves
+ *             the Killing energy of each bin with claim-normalised weights so
+ *             that it is conserved (lbm.curved_remap).
  *   collide : implicit in I_d, in the fluid frame (reference Collide()).  This
  *             milestone is static-fluid and isotropic-scattering only, where
  *             the reference's lambda iteration on the moments has an exact
@@ -77,10 +81,11 @@ namespace grace { namespace lbm {
  * Everything else -- species count, opacities from the m1.eas providers,
  * m1.atmosphere floors, the m1.trigger activation gate -- is shared with M1.
  *
- * Frame: in flat space the Eulerian tetrad is the identity, so the stencil
- * frame IS the coordinate frame and the reference's IF<->LF transforms drop
- * out.  The curved-space extension must rotate F^a, P^ab with the tetrad
- * before lowering.
+ * Frame: the stencil directions live in the Eulerian observer's orthonormal
+ * triad (lbm_geometry.hh triad_t; the reference's "IF"), so E is the Eulerian
+ * energy density directly while F^a and P^ab are rotated to coordinate
+ * components with e^i_a before lowering.  The triad is the identity in flat
+ * space, bit-exactly.
  */
 
 //---------------------------------------------------------------------------
@@ -150,6 +155,14 @@ struct params_t {
     int    max_lambda_iter ;  //!< lbm.max_lambda_iterations
     double I_fl ;             //!< isotropic intensity floor = m1.atmosphere.E_fl (sum_d w_d = 1)
     double eps_fl ;           //!< m1.atmosphere.eps_fl, N = E/eps_fl (grey: unit mean energy)
+    int    streaming ;        //!< 0 flat_fixed, 1 curved_fixed (lbm.streaming)
+    bool   no_inflow ;        //!< lbm.bc_kind = outgoing: departure points outside the domain give the floor
+    double dom_lo[3], dom_hi[3] ; //!< physical domain (amr.{x,y,z}{min,max})
+    double geodesic_tol ;     //!< lbm.geodesic_tolerance
+    int    geom_every ;       //!< lbm.geometry_update_every (Z4: rebuild the geodesic map every N steps)
+    bool   conservative ;     //!< lbm.curved_remap = conservative: claim-normalised (Killing-energy conserving) sweep
+    int    lut_nth, lut_nph ; //!< lbm.velocity_lut
+    excision_t ex ;           //!< grmhd.excision (shared with M1)
 } ;
 
 inline params_t get_params() {
@@ -158,6 +171,19 @@ inline params_t get_params() {
     p.max_lambda_iter = grace::get_param<int>   ("lbm","max_lambda_iterations") ;
     p.I_fl            = grace::get_param<double>("m1","atmosphere","E_fl") ;
     p.eps_fl          = grace::get_param<double>("m1","atmosphere","eps_fl") ;
+    p.streaming       = grace::get_param<std::string>("lbm","streaming") == "curved_fixed" ? 1 : 0 ;
+    p.no_inflow       = grace::get_param<std::string>("lbm","bc_kind") == "outgoing" ;
+    p.dom_lo[0] = grace::get_param<double>("amr","xmin") ; p.dom_hi[0] = grace::get_param<double>("amr","xmax") ;
+    p.dom_lo[1] = grace::get_param<double>("amr","ymin") ; p.dom_hi[1] = grace::get_param<double>("amr","ymax") ;
+    p.dom_lo[2] = grace::get_param<double>("amr","zmin") ; p.dom_hi[2] = grace::get_param<double>("amr","zmax") ;
+    p.geodesic_tol    = grace::get_param<double>("lbm","geodesic_tolerance") ;
+    p.geom_every      = grace::get_param<int>("lbm","geometry_update_every") ;
+    p.conservative    = grace::get_param<std::string>("lbm","curved_remap") == "conservative" ;
+    p.lut_nth         = grace::get_param<int>("lbm","velocity_lut","n_theta") ;
+    p.lut_nph         = grace::get_param<int>("lbm","velocity_lut","n_phi") ;
+    p.ex.by_radius    = grace::get_param<std::string>("grmhd","excision","excision_criterion") == "radius" ;
+    p.ex.r_ex         = grace::get_param<double>("grmhd","excision","excision_radius") ;
+    p.ex.alp_ex       = grace::get_param<double>("grmhd","excision","excision_lapse") ;
     return p ;
 }
 
@@ -206,6 +232,181 @@ struct system_t {
     stencil_t   st ;
     scalar_array_t<GRACE_NSPACEDIM> dx ;
     params_t    p ;
+    velocity_interp_t vi ;              //!< off-stencil interpolation (curved streaming)
+    device_coordinate_system coords ;   //!< cell centres (departure-point tests, curved streaming)
+
+    //! Departure point outside the physical domain with lbm.bc_kind = outgoing: nothing comes in.
+    bool GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE no_incoming(double const xd[3]) const
+    {
+        if ( !p.no_inflow ) return false ;
+        for ( int a = 0; a < 3; ++a ) if ( xd[a] < p.dom_lo[a] || xd[a] > p.dom_hi[a] ) return true ;
+        return false ;
+    }
+
+    //! Departure data of one arrival population: corners and trilinear weights
+    //! of the departure point, the three source directions with their
+    //! barycentric weights, the frequency factor S and the interpolated lapse.
+    struct departure_t { int i0[3] ; double w[8] ; int vid[3] ; double lam[3] ; double S, alp_dep ; } ;
+
+    //! Floor of alpha - beta.n in the conservative remap (the Killing energy of a
+    //! photon changes sign inside a horizon; those cells are excised anyway).
+    static constexpr double kappa_min = 1e-2 ;
+
+    /**
+     * @brief Departure of population (i,j,k,d) from the spherical-harmonic map in
+     *        aux.  Returns false when the arrival gets the floor: departure point
+     *        outside the padded block, inside the excision, or outside the domain
+     *        with lbm.bc_kind = outgoing.
+     */
+    bool GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    departure(int const i, int const j, int const k, int64_t const q, int const d,
+              double const (&coef)[sh_nquant][sh_ncoef], double const xc[3], departure_t& dep) const
+    {
+        double Y[sh_ncoef] ;
+        for ( int c = 0; c < sh_ncoef; ++c ) Y[c] = st.Ysh(d,c) ;
+        dep.S = sh_eval(coef[SH_S], Y) ;
+        double const disp[3] = { sh_eval(coef[SH_DX],Y), sh_eval(coef[SH_DY],Y), sh_eval(coef[SH_DZ],Y) } ;
+        double C[3] = { sh_eval(coef[SH_CX],Y), sh_eval(coef[SH_CY],Y), sh_eval(coef[SH_CZ],Y) } ;
+        double const cn = Kokkos::sqrt(C[0]*C[0] + C[1]*C[1] + C[2]*C[2]) ;
+        if ( cn > 1e-300 ) { C[0] /= cn ; C[1] /= cn ; C[2] /= cn ; }
+        else { C[0] = st.cx(d) ; C[1] = st.cy(d) ; C[2] = st.cz(d) ; }
+
+        double const ooh = 1.0 / dx(0,q) ;
+        int const nmax[3] = { static_cast<int>(I_old.extent(0)), static_cast<int>(I_old.extent(1)), static_cast<int>(I_old.extent(2)) } ;
+        double const u[3] = { i + disp[0]*ooh, j + disp[1]*ooh, k + disp[2]*ooh } ;
+        double f[3] ;
+        for ( int a = 0; a < 3; ++a ) {
+            dep.i0[a] = static_cast<int>(Kokkos::floor(u[a])) ;
+            f[a] = u[a] - dep.i0[a] ;
+            if ( dep.i0[a] < 0 || dep.i0[a] + 1 >= nmax[a] ) return false ;   // cannot happen for CFL <= 1
+        }
+        dep.alp_dep = 0. ;
+        for ( int cc = 0; cc < 8; ++cc ) {
+            int const di = (cc>>2)&1, dj = (cc>>1)&1, dk = cc&1 ;
+            dep.w[cc] = (di ? f[0] : 1.-f[0]) * (dj ? f[1] : 1.-f[1]) * (dk ? f[2] : 1.-f[2]) ;
+            dep.alp_dep += dep.w[cc] * I_old(dep.i0[0]+di, dep.i0[1]+dj, dep.i0[2]+dk, ALP_, q) ;
+        }
+        double const xd[3] = { xc[0]+disp[0], xc[1]+disp[1], xc[2]+disp[2] } ;
+        if ( p.ex.inside(xd, dep.alp_dep) || no_incoming(xd) ) return false ;
+        vi.locate(C, dep.vid, dep.lam) ;
+        return true ;
+    }
+
+    /**
+     * @brief Claim pass of the conservative remap: every arrival population adds
+     *        its interpolation weight, times the phase-space volume ratio of the
+     *        bins, S^3 sqrt(gamma_i) w_d / (sqrt(gamma_c) w_d'), to the claim
+     *        weight W of each source bin (aux LBM_WCLAIM_).  By Liouville the
+     *        exact sum is 1; dividing the sources by W makes the discrete Killing
+     *        energy conserved.  Runs over the interior plus a two-cell band of
+     *        ghosts (whose map is exact, see LBM_METRIC_DER_ORDER), in 27
+     *        colours so that no two concurrent arrivals touch the same source.
+     *        Excised arrivals claim too: what they receive is absorbed.
+     */
+    void GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    claim_curved(int const i, int const j, int const k, int64_t const q) const
+    {
+        double coef[sh_nquant][sh_ncoef] ;
+        for ( int f = 0; f < sh_nquant; ++f ) for ( int c = 0; c < sh_ncoef; ++c )
+            coef[f][c] = aux(i,j,k,LBM_SH_ + sh_ncoef*f + c, q) ;
+        double xc[3] ; coords.get_physical_coordinates(i,j,k,q,xc) ;
+        double const sg_i = aux(i,j,k,LBM_SQRTG_,q) ;
+        if ( sg_i <= 0. ) return ;   // outside the band where the geometry is defined
+        for ( int d = 0; d < ndir(); ++d ) {
+            departure_t dep ;
+            if ( !departure(i,j,k,q,d,coef,xc,dep) ) continue ;
+            double const S3wd = dep.S*dep.S*dep.S * sg_i * st.weight(d) ;
+            for ( int cc = 0; cc < 8; ++cc ) {
+                int const ci = dep.i0[0] + ((cc>>2)&1), cj = dep.i0[1] + ((cc>>1)&1), ck = dep.i0[2] + (cc&1) ;
+                double const sg_c = aux(ci,cj,ck,LBM_SQRTG_,q) ;
+                if ( sg_c <= 0. ) continue ;
+                for ( int kk = 0; kk < 3; ++kk ) {
+                    int const dp = dep.vid[kk] ;
+                    aux(ci,cj,ck,LBM_WCLAIM_+dp,q) += dep.w[cc] * dep.lam[kk] * S3wd / (sg_c * st.weight(dp)) ;
+                }
+            }
+        }
+    }
+
+    /**
+     * @brief Streaming along null geodesics (lbm.streaming = curved_fixed).
+     *
+     * Per direction the l <= 2 spherical-harmonic fit stored in aux
+     * (LBM_SH_, from the geometry pass) gives the frequency factor
+     * S = nu_here/nu_dep, the departure displacement and the departure
+     * direction C in the local triad; the corner populations are interpolated
+     * at C in velocity space (exact at stencil directions, so straight rays
+     * reproduce stream()).  Two forms (lbm.curved_remap):
+     *
+     *  conservative: the Killing energy of a bin, sqrt(gamma) w (alpha - beta.n) I,
+     *    is what moves; each source bin is shared out by its claim weight W
+     *    (claim_curved), so the discrete sum over the grid is conserved:
+     *      I_new(d) = S^3 / kappa_d  sum_c w_c sum_k lambda_k kappa_c(d'_k) I_c(d'_k) / W_c(d'_k),
+     *    kappa = alpha - beta_i e^i_a n^a.  In flat space W = 1 to round-off.
+     *  pointwise: the characteristic solution, alpha^4 I interpolated (constant
+     *    along a ray on a stationary background) and scaled by S^4; not
+     *    conservative (first-order loss of Killing energy on a curved metric).
+     *
+     * Excised cells and departure points inside the excision give the floor.
+     */
+    void GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    stream_curved(int const i, int const j, int const k, int64_t const q, double const) const
+    {
+        if ( static_cast<int>(aux(i,j,k,LBM_GEOM_FLAG_,q)) == GEOM_EXCISED ) {
+            for ( int s = 0; s < nspecies(); ++s ) for ( int d = 0; d < ndir(); ++d ) I_new(i,j,k,idx(s,d),q) = p.I_fl ;
+            return ;
+        }
+        double coef[sh_nquant][sh_ncoef] ;
+        for ( int f = 0; f < sh_nquant; ++f ) for ( int c = 0; c < sh_ncoef; ++c )
+            coef[f][c] = aux(i,j,k,LBM_SH_ + sh_ncoef*f + c, q) ;
+        double xc[3] ; coords.get_physical_coordinates(i,j,k,q,xc) ;
+        double const alp_i = I_old(i,j,k,ALP_,q) ;
+        double const bi[3] = { aux(i,j,k,LBM_BTRIAD_,q), aux(i,j,k,LBM_BTRIAD_+1,q), aux(i,j,k,LBM_BTRIAD_+2,q) } ;
+        for ( int d = 0; d < ndir(); ++d ) {
+            departure_t dep ;
+            if ( !departure(i,j,k,q,d,coef,xc,dep) ) {
+                for ( int s = 0; s < nspecies(); ++s ) I_new(i,j,k,idx(s,d),q) = p.I_fl ;
+                continue ;
+            }
+            if ( p.conservative ) {
+                double const kap_i = Kokkos::fmax(alp_i - (bi[0]*st.cx(d) + bi[1]*st.cy(d) + bi[2]*st.cz(d)), kappa_min) ;
+                double const fac = dep.S*dep.S*dep.S / kap_i ;
+                double v[GRACE_LBM_NSPECIES] ;
+                for ( int s = 0; s < nspecies(); ++s ) v[s] = 0. ;
+                for ( int cc = 0; cc < 8; ++cc ) {
+                    int const ci = dep.i0[0] + ((cc>>2)&1), cj = dep.i0[1] + ((cc>>1)&1), ck = dep.i0[2] + (cc&1) ;
+                    double const alp_c = I_old(ci,cj,ck,ALP_,q) ;
+                    double const bc[3] = { aux(ci,cj,ck,LBM_BTRIAD_,q), aux(ci,cj,ck,LBM_BTRIAD_+1,q), aux(ci,cj,ck,LBM_BTRIAD_+2,q) } ;
+                    for ( int kk = 0; kk < 3; ++kk ) {
+                        int const dp = dep.vid[kk] ;
+                        double const kap_c = Kokkos::fmax(alp_c - (bc[0]*st.cx(dp) + bc[1]*st.cy(dp) + bc[2]*st.cz(dp)), kappa_min) ;
+                        double const Wc = Kokkos::fmax(aux(ci,cj,ck,LBM_WCLAIM_+dp,q), 1e-300) ;
+                        double const g = dep.w[cc] * dep.lam[kk] * kap_c / Wc ;
+                        for ( int s = 0; s < nspecies(); ++s ) v[s] += g * I_old(ci,cj,ck,idx(s,dp),q) ;
+                    }
+                }
+                for ( int s = 0; s < nspecies(); ++s ) I_new(i,j,k,idx(s,d),q) = Kokkos::fmax(fac*v[s], p.I_fl) ;
+            } else {
+                double a4[8] ;
+                for ( int cc = 0; cc < 8; ++cc ) {
+                    double const al = I_old(dep.i0[0]+((cc>>2)&1), dep.i0[1]+((cc>>1)&1), dep.i0[2]+(cc&1), ALP_, q) ;
+                    a4[cc] = al*al*al*al ;
+                }
+                double const fac = dep.S*dep.S*dep.S*dep.S / (dep.alp_dep*dep.alp_dep*dep.alp_dep*dep.alp_dep) ;
+                for ( int s = 0; s < nspecies(); ++s ) {
+                    int const iv0 = idx(s,dep.vid[0]), iv1 = idx(s,dep.vid[1]), iv2 = idx(s,dep.vid[2]) ;
+                    double v = 0. ;
+                    for ( int cc = 0; cc < 8; ++cc ) {
+                        int const ci = dep.i0[0] + ((cc>>2)&1), cj = dep.i0[1] + ((cc>>1)&1), ck = dep.i0[2] + (cc&1) ;
+                        v += dep.w[cc]*a4[cc]*( dep.lam[0]*I_old(ci,cj,ck,iv0,q)
+                                              + dep.lam[1]*I_old(ci,cj,ck,iv1,q)
+                                              + dep.lam[2]*I_old(ci,cj,ck,iv2,q) ) ;
+                    }
+                    I_new(i,j,k,idx(s,d),q) = Kokkos::fmax(fac*v, p.I_fl) ;
+                }
+            }
+        }
+    }
 
     /**
      * @brief Streaming: semi-Lagrangian pull-back along straight lines.
@@ -220,8 +421,14 @@ struct system_t {
     stream(int const i, int const j, int const k, int64_t const q, double const dt) const
     {
         double const ooh = 1.0 / dx(0,q) ;
+        double xc[3] = {0.,0.,0.} ;
+        if ( p.no_inflow ) coords.get_physical_coordinates(i,j,k,q,xc) ;
         for ( int s = 0; s < nspecies(); ++s )
         for ( int d = 0; d < ndir(); ++d ) {
+            if ( p.no_inflow ) {
+                double const xd[3] = { xc[0] - st.cx(d)*dt, xc[1] - st.cy(d)*dt, xc[2] - st.cz(d)*dt } ;
+                if ( no_incoming(xd) ) { I_new(i,j,k,idx(s,d),q) = p.I_fl ; continue ; }
+            }
             // displacement of the departure point, in cell units
             double const ux = -st.cx(d) * dt * ooh ;
             double const uy = -st.cy(d) * dt * ooh ;
@@ -287,9 +494,11 @@ struct system_t {
      * provider, the same slots M1's implicit update reads.
      */
     int GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    collide(int const i, int const j, int const k, int64_t const q, double const dt) const
+    collide(int const i, int const j, int const k, int64_t const q, double const dt_coord) const
     {
         int niter = 0 ;
+        // Proper time of the Eulerian observer elapses at the lapse rate (reference: alpha*dt).
+        double const dt = dt_coord * I_new(i,j,k,ALP_,q) ;
         for ( int s = 0; s < nspecies(); ++s ) {
             double const ka  = aux(i,j,k,kappaa_idx(s),q) ;
             double const ks  = aux(i,j,k,kappas_idx(s),q) ;
@@ -317,24 +526,30 @@ struct system_t {
      * Erad = sqrt(gamma) E, Frad_i = sqrt(gamma) gamma_ij F^j -- M1's
      * densitised, lowered convention -- and Nrad = Erad/eps_fl (grey
      * transport has no separate number density; unit mean energy, as the M1
-     * test initial data assume).  Flat space: no tetrad rotation needed.
+     * test initial data assume).  F^a and P^ab come out of the quadrature in
+     * the triad frame and are rotated to coordinate components first; the
+     * "lbm" aux gets P^ij and the Killing energy density.
      */
     void GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     write_moments(int const i, int const j, int const k, int64_t const q) const
     {
         metric_array_t metric ;
         FILL_METRIC_ARRAY(metric, I_new, q, i,j,k) ;
+        triad_t const tr(metric) ;
         double const sg = metric.sqrtg() ;
         for ( int s = 0; s < nspecies(); ++s ) {
-            double E, F[3], P[6] ;
+            double E, F[3], P[6], Fu[3], Pu[6] ;
             moments(I_new, i,j,k,q, s, E, F, P) ;
-            auto const Fd = metric.lower({F[0],F[1],F[2]}) ;
+            tr.to_coord(F, Fu) ;
+            tr.to_coord_sym(P, Pu) ;
+            auto const Fd = metric.lower({Fu[0],Fu[1],Fu[2]}) ;
             I_new(i,j,k,erad_idx(s)   ,q) = sg * E ;
             I_new(i,j,k,nrad_idx(s)   ,q) = sg * E / p.eps_fl ;
             I_new(i,j,k,fradx_idx(s)  ,q) = sg * Fd[0] ;
             I_new(i,j,k,fradx_idx(s)+1,q) = sg * Fd[1] ;
             I_new(i,j,k,fradx_idx(s)+2,q) = sg * Fd[2] ;
-            for ( int c = 0; c < 6; ++c ) aux(i,j,k,pidx(s,c),q) = P[c] ;
+            for ( int c = 0; c < 6; ++c ) aux(i,j,k,pidx(s,c),q) = Pu[c] ;
+            aux(i,j,k,LBM_EKILL0_+s,q) = killing_energy_density(metric, E, Fu) ;
         }
     }
 } ;
@@ -344,14 +559,25 @@ struct system_t {
 //---------------------------------------------------------------------------
 
 /**
- * @brief Validate the configuration and load the stencil.  Called once at
- *        startup, after the M1 trigger check.
- *
- * Refuses reflection symmetries (populations are registered as scalars, but a
- * reflection maps I_d to the mirrored direction -- not yet implemented) and
- * a non-flat background (straight-line streaming).
+ * @brief Validate the configuration and load the stencil (and, for curved
+ *        streaming, the streaming quadrature and the velocity mesh).  Called
+ *        once at startup, after the M1 trigger check.  Reflection symmetries
+ *        are supported through the per-variable partner table of the ghost
+ *        exchange (each population mirrors to the population of the mirrored
+ *        direction).
  */
 void startup_check() ;
+
+/**
+ * @brief Classify the background as flat or curved from the metric on the grid
+ *        and check it against lbm.streaming (a curved background needs
+ *        curved_fixed).  Called after the initial data and, lazily, on restart;
+ *        invalidates the curved-streaming geometry.
+ */
+void prepare_background() ;
+
+/// Invalidate the curved-streaming geometry (aux is reallocated on regrid).
+void on_regrid() ;
 
 /// Print the accumulated stream / collide / copy wall-clock split (lbm.report_timings).
 void report_timings() ;
@@ -374,7 +600,9 @@ void set_initial_data() ;
  * closing copy keeps the invariant every stepper relies on for inert
  * variables: both y^n registers hold I^{n+1} before the first substage, so
  * the stage blends (rk3 linop, rk4 s3 = s2, imex222 copy) reproduce it
- * bit-exactly.  Gated by the M1 activation trigger.
+ * bit-exactly.  Gated by the M1 activation trigger.  Curved streaming reads
+ * the metric of the y^n slice only (the one available here); under Z4 the
+ * geodesic map is rebuilt every lbm.geometry_update_every steps.
  */
 template < typename eos_t >
 void step( var_array_t& I_old, var_array_t& I_new, var_array_t& aux, double dt ) ;

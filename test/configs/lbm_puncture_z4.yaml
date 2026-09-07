@@ -1,0 +1,97 @@
+# LBM curved streaming on a moving-puncture black hole (Schwarzschild, M = 1, isotropic
+# coordinates, grmhd.id_type puncture, Z4c with 1+log / Gamma-driver): the gauge is strongly
+# time dependent for the first ~20 M while the spacetime is stationary.  An isotropic flash
+# fills the ball r < 6 (the horizon region, alpha < 0.3, is excised); the energy escaping through
+# the detector sphere R9 (Lrad_nu1_R9.dat, the flux r^2 dOmega (alpha F^i - beta^i E) n_i) is
+# compared with the analytic Schwarzschild escape fraction of static-frame-isotropic emission
+# by scripts/lbm_escape_fraction.py (needs the iteration-0 volume file).  Octant grid, dx = 0.375,
+# 8 quadrants; the detector sees the flash by t ~ 10, boundary reflections of the gauge pulse
+# return later.
+# Build: -DGRACE_RADIATION_SCHEME=LBM -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=Z4
+name: "lbm_puncture_z4"
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: 0., xmax: 12.,
+  ymin: 0., ymax: 12.,
+  zmin: 0., zmax: 12.,
+  reflection_symmetries: {x: true, y: true, z: true},
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  n_fmr_boxes: 0
+}
+IO: {
+  do_initial_output: true,
+  info_output_every: 1,
+  info_output_max_reductions: ["Erad1", "lbm_geom_flag"],
+  info_output_min_reductions: ["alp"],
+  scalar_output_every: 1,
+  scalar_output_minmax: ["Erad1", "alp"],
+  scalar_output_integral: ["Erad1", "lbm_ekill1"],
+  volume_output_every: 20,
+  volume_output_cell_variables: ["Erad1", "lbm_ekill1", "alp", "lbm_geom_flag"],
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: 1,
+  output_use_hdf5: true,
+  output_extra_quantities: false
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.25,
+  force_unit_wavespeed: true,
+  final_iteration: 170,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "puncture",
+  excision: { excision_criterion: "lapse", excision_lapse: 0.3 },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+z4c: {
+  kappa_1: 0.02,
+  kappa_2: 0.0,
+  eta: 1.0,
+  eps_diss: 0.1,
+  is_vacuum: true
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+m1: {
+  id_type: "sphere_wave",
+  sphere_wave_test: { radius: 6.0, x0: 0., y0: 0., z0: 0. },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+lbm: {
+  bc_kind: "none",
+  streaming: "curved_fixed",
+  report_timings: true
+}
+spherical_surfaces: {
+  n_surfaces: 1,
+  spherical_detectors: [
+    { name: "R9", tracking: "none", radius: 9.0, x_c: 0.0, y_c: 0.0, z_c: 0.0,
+      sampling_policy: "uniform", resolution: 31 }
+  ]
+}
+outflows:       { detector_names: ["R9"] }
+adm_integrals:  { detector_names: [] }
+gw_integrals:   { detector_names: [] }
+bh_diagnostics: { detector_names: [] }
+co_tracker:     { tracker_names: [] }
+checkpoints: { checkpoint_at_startup: false, checkpoint_at_termination: false }

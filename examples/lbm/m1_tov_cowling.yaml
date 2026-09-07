@@ -1,0 +1,73 @@
+# LBM curved streaming on a TOV star (Font A0, ideal gas, from examples/grmhd/A0_z4c_lowres.yaml):
+# isotropic flash from a ball of radius 4 at the star's centre (alpha_c ~ 0.6), octant grid,
+# dx = 0.9375, 8 quadrants.  Check: the volume integral of lbm_ekill1 (Killing energy) is
+# conserved to the discretisation level, and scripts/lbm_compare_scalars.py against the twin run
+# (Cowling vs Z4) agrees to the Z4c truncation error.  force_unit_wavespeed keeps dt identical
+# in both builds (the null coordinate speed is < 1 inside the star).
+# M1 twin of lbm_tov_cowling.yaml (imex222: GRACE M1 needs an IMEX stepper; same grid and dt).
+# Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
+name: "m1_tov_cowling"
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: 0., xmax: 30.,
+  ymin: 0., ymax: 30.,
+  zmin: 0., zmax: 30.,
+  reflection_symmetries: {x: true, y: true, z: true},
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  n_fmr_boxes: 0
+}
+IO: {
+  do_initial_output: false,
+  info_output_every: 1,
+  info_output_max_reductions: ["Erad1", "rho"],
+  info_output_min_reductions: ["alp"],
+  scalar_output_every: 1,
+  scalar_output_minmax: ["Erad1", "alp", "rho"],
+  scalar_output_integral: ["Erad1", "dens"],
+  volume_output_every: 20,
+  volume_output_cell_variables: ["Erad1", "alp", "rho"],
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  output_use_hdf5: true,
+  output_extra_quantities: false
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.25,
+  force_unit_wavespeed: true,
+  final_iteration: 40,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "tov",
+  tov: { rho_c: 1.28e-3, press_floor: 1.6384e-22, dr: 1e-3 },
+  atmosphere: { temp_fl: 1.28e-10, rho_fl: 1.28e-12 },
+  c2p: { tolerance: 1e-10, max_lorentz: 50, use_c2p_entropy_backup: false },
+  B_field_initialization: "none"
+}
+
+eos: {
+  eos_type: "ideal_gas",
+  ideal_gas_eos: { gamma: 2.0, kappa_id: 100 },
+  eps_maximum: 1.e+05
+}
+m1: {
+  id_type: "sphere_wave",
+  sphere_wave_test: { radius: 4.0, x0: 0., y0: 0., z0: 0. },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+checkpoints: { checkpoint_at_startup: false, checkpoint_at_termination: false }

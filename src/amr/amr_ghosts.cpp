@@ -62,6 +62,10 @@
 
 //#define INSERT_FENCE_DEBUG_TASKS_  
 
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm_stencil.hh>   // mirror table for the reflection partner of each population
+#endif
+
 namespace grace {
 
 /***************************************************/
@@ -130,6 +134,24 @@ void amr_ghosts_impl_t::update() {
         }
     }
     deep_copy(var_reflect_parity,var_reflect_parity_h) ; 
+
+    // Partner variable under reflection: itself, except for the LBM populations,
+    // whose mirror image is the population of the mirrored direction (the
+    // Lebedev sets are closed under coordinate reflections; the loader checks).
+    Kokkos::realloc(var_reflect_partner, static_cast<size_t>(nvar)) ;
+    auto var_reflect_partner_h = Kokkos::create_mirror_view(var_reflect_partner) ;
+    for(int ivar=0; ivar<nvar; ++ivar)
+        var_reflect_partner_h(ivar,0) = var_reflect_partner_h(ivar,1) = var_reflect_partner_h(ivar,2) = ivar ;
+    #ifdef GRACE_ENABLE_LBM
+    {
+        auto const mirror = grace::lbm::mirror_table_host(grace::lbm::get_stencil()) ;
+        for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+        for ( int d = 0; d < GRACE_LBM_NDIR; ++d )
+        for ( int a = 0; a < 3; ++a )
+            var_reflect_partner_h(LBM_I0_ + s*GRACE_LBM_NDIR + d, a) = LBM_I0_ + s*GRACE_LBM_NDIR + mirror[3*d+a] ;
+    }
+    #endif
+    deep_copy(var_reflect_partner, var_reflect_partner_h) ;
 
     // initialize weights for 5th order restrict/prolong 
     grace::detail::fill_fifth_order_prolongation_coefficients(ho_prolong_coefficients) ; 
@@ -414,7 +436,7 @@ void amr_ghosts_impl_t::build_task_list(
     auto const deferred_phys_bc_kernels = 
         insert_phys_bc_tasks<stag>(
                 phys_bc_kernels, ghost_layer,
-                dummy, cbuf_view, vbc, var_reflect_parity,
+                dummy, cbuf_view, vbc, var_reflect_parity, var_reflect_partner,
                 phys_bc_stream, VEC(nx,ny,nz),ngz,nv,
                 restrict_tid, task_counter,task_list
         ) ;
@@ -431,7 +453,7 @@ void amr_ghosts_impl_t::build_task_list(
     /***********************************************************************/
     insert_deferred_phys_bc_tasks<stag>(
         deferred_phys_bc_kernels, ghost_layer,
-        dummy, cbuf_view, vbc, var_reflect_parity, phys_bc_stream, 
+        dummy, cbuf_view, vbc, var_reflect_parity, var_reflect_partner, phys_bc_stream, 
         VEC(nx,ny,nz),ngz,nv, task_counter, task_list
     ); 
     /***********************************************************************/
@@ -535,7 +557,7 @@ void amr_ghosts_impl_t::build_task_list_face_stag(
     deferred_phys_bc_kernels[stag] = \
         insert_phys_bc_tasks<stag>( \
                 phys_bc_kernels, ghost_layer,\
-                dummy, cbuf_view, vbc, var_reflect_parity,\
+                dummy, cbuf_view, vbc, var_reflect_parity, var_reflect_partner,\
                 stream, VEC(nx,ny,nz),ngz,nv,\
                 restrict_tid,task_counter,task_list\
         ) ;\
@@ -557,17 +579,17 @@ void amr_ghosts_impl_t::build_task_list_face_stag(
     /***********************************************************************/
     insert_deferred_phys_bc_tasks<STAG_FACEX>(
         deferred_phys_bc_kernels[STAG_FACEX], ghost_layer,
-        dummy, get_coarse_buffers<STAG_FACEX>(), vbc, var_reflect_parity, stream,
+        dummy, get_coarse_buffers<STAG_FACEX>(), vbc, var_reflect_parity, var_reflect_partner, stream,
         VEC(nx,ny,nz),ngz,nv, task_counter, task_list
     ); 
     insert_deferred_phys_bc_tasks<STAG_FACEY>(
         deferred_phys_bc_kernels[STAG_FACEY], ghost_layer,
-        dummy, get_coarse_buffers<STAG_FACEY>(), vbc, var_reflect_parity, stream,
+        dummy, get_coarse_buffers<STAG_FACEY>(), vbc, var_reflect_parity, var_reflect_partner, stream,
         VEC(nx,ny,nz),ngz,nv, task_counter, task_list
     ); 
     insert_deferred_phys_bc_tasks<STAG_FACEZ>(
         deferred_phys_bc_kernels[STAG_FACEZ], ghost_layer,
-        dummy, get_coarse_buffers<STAG_FACEZ>(), vbc, var_reflect_parity, stream,
+        dummy, get_coarse_buffers<STAG_FACEZ>(), vbc, var_reflect_parity, var_reflect_partner, stream,
         VEC(nx,ny,nz),ngz,nv, task_counter, task_list
     ); 
     /***********************************************************************/

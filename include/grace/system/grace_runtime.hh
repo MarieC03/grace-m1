@@ -657,6 +657,8 @@ class grace_runtime_impl_t
                 for ( int c = 0; c < 6; ++c )
                     lbm_aux.push_back(std::string("Plbm") + std::to_string(s+1) + "_" + pc[c]) ;
             lbm_aux.push_back("lbm_niter") ;
+            for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+                lbm_aux.push_back("lbm_ekill" + std::to_string(s+1)) ;
             if ( get_param<bool>("lbm","output_populations") )
                 for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
                     for ( int d = 0; d < GRACE_LBM_NDIR; ++d )

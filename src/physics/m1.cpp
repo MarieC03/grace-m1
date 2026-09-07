@@ -366,13 +366,16 @@ void set_m1_initial_data() {
         ) ;
         set_m1_initial_data_impl(id) ;
     } else if ( id_type == "sphere_wave" ) {
-        auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;
-        ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;
+        // Any hydro/spacetime ID: a radiation ball superposed on a TOV star or a
+        // puncture is the curved-space transport test (LBM milestone 2).
         coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
         grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
         sphere_wave_m1_id_t id(
             m1_atmo_params, m1_excision_params, cart_pcoords,
-            grace::get_param<double>("m1","sphere_wave_test","radius")
+            grace::get_param<double>("m1","sphere_wave_test","radius"),
+            grace::get_param<double>("m1","sphere_wave_test","x0"),
+            grace::get_param<double>("m1","sphere_wave_test","y0"),
+            grace::get_param<double>("m1","sphere_wave_test","z0")
         ) ;
         set_m1_initial_data_impl(id) ;
     } else if ( id_type == "scattering") {
@@ -435,7 +438,9 @@ void set_m1_initial_data() {
         grace::fill_physical_coordinates(sph_pcoords,grace::STAG_CENTER,/*spherical coords*/ false) ;
         auto& state = variable_list::get().getstate() ;
         curved_beam_m1_id_t id(
-            m1_atmo_params, m1_excision_params, sph_pcoords, state
+            m1_atmo_params, m1_excision_params, sph_pcoords, state,
+            grace::get_param<double>("m1","curved_beam_test","z_min"),
+            grace::get_param<double>("m1","curved_beam_test","z_max")
         ) ;
         set_m1_initial_data_impl(id) ;
     } else if ( id_type == "equilibrium" ) {

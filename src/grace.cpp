@@ -50,6 +50,9 @@
 #include <grace/physics/m1_trigger.hh>
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1.hh>   // report_betaeq_failures
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm.hh>  // on_regrid
+#endif
 #endif
 #include <grace/system/nan_check.hh>
 #include <grace/physics/b_field_injection.hh>
@@ -154,6 +157,9 @@ int main(int argc, char* argv[])
                 /*                               Recompute aux                                             */
                 //******************************************************************************************/
                 grace::compute_auxiliary_quantities() ;
+                #ifdef GRACE_ENABLE_LBM
+                grace::lbm::on_regrid() ;   // the geometry of curved streaming lives in aux
+                #endif
                 //******************************************************************************************/
                 /*                               Update particles                                          */
                 //******************************************************************************************/

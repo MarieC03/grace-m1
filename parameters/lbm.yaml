@@ -22,8 +22,10 @@ lbm:
       as a FIXED INFLOW: the atmosphere floor (no incoming radiation) where the
       initial data is the floor, or a steady source where a beam / sphere
       initial data extends to the boundary -- exactly the reference tests'
-      "keep source nodes active".  "outgoing" extrapolates the boundary cell
-      outward each substage instead.
+      "keep source nodes active".  "outgoing": no incoming radiation -- a
+      population whose departure point lies outside the physical domain is set
+      to the floor, whatever the ghost cells hold (a copy/extrapolation BC
+      would re-inject a beam that touches the boundary).
 
   stencil_dir:
     type: string
@@ -37,13 +39,84 @@ lbm:
 
   streaming:
     type: keyword
-    allowed: ["flat_fixed"]
+    allowed: ["flat_fixed", "curved_fixed"]
     default: "flat_fixed"
     description: >
-      Streaming scheme.  "flat_fixed": straight-line pull-back x - n_d dt with
-      a fixed (unrotated) stencil -- flat spacetime only.  The adaptive
-      (per-cell rotated, ghost-direction) and curved (geodesic) schemes of the
-      reference method are the planned extension points of this keyword.
+      Streaming scheme with a fixed (unrotated) stencil.  "flat_fixed":
+      straight-line pull-back x - n_d dt, flat spacetime only (refused on a
+      curved background).  "curved_fixed": null-geodesic pull-back with the
+      frequency shift, from a spherical-harmonic fit of the geodesic map
+      sampled on the streaming stencil.  The map is computed once on a
+      Cowling background; under Z4 it is rebuilt from the current slice
+      every geometry_update_every steps (the slice is frozen over the step,
+      first order in time).  Reproduces flat_fixed to round-off in flat
+      space.  The adaptive (per-cell rotated) stencil is the next extension.
+
+  streaming_stencil:
+    type: string
+    default: "Lebedev5"
+    description: >
+      Table (in the stencil directory) of the low-order quadrature whose
+      directions sample the geodesic map for the spherical-harmonic fit of
+      curved_fixed streaming.  Lebedev5 (14 directions) integrates the l <= 2
+      basis exactly, as in the reference method.
+
+  geodesic_tolerance:
+    type: double
+    default: 1.e-8
+    range: "(0,*)"
+    description: >
+      Absolute and relative tolerance of the adaptive RK45 integration of the
+      backward null geodesics in the curved_fixed geometry pass.  On a
+      dynamical (Z4) metric the frozen-slice error dominates, so 1e-6 is
+      plenty there.
+
+  curved_remap:
+    type: keyword
+    allowed: ["conservative", "pointwise"]
+    default: "conservative"
+    description: >
+      Form of the curved_fixed sweep.  "conservative": the Killing energy of
+      every (cell, direction) bin, sqrt(gamma) w (alpha - beta.n) I, is shared
+      out by the bin's claim weight (the adjoint sum of the interpolation
+      weights over all arrivals, 1 by Liouville's theorem), so the discrete
+      Killing energy is conserved to round-off on a uniform grid; costs a claim
+      pass (~ the streaming sweep) and GRACE_LBM_NDIR + 4 aux slots.
+      "pointwise": the characteristic solution alone (alpha^4 I interpolated,
+      scaled by S^4), which loses Killing energy at first order in dx on a
+      curved metric (12% over 9 M on a TOV star at dx = R/10).
+
+  geometry_update_every:
+    type: int
+    default: 1
+    range: "[1,*)"
+    description: >
+      Z4 only: rebuild the curved_fixed geodesic map every this many steps
+      (1 = every step).  N > 1 freezes the map for N steps, an error of order
+      N dt d_t(metric) in the departure points; the map is also rebuilt
+      whenever dt or the grid changes.  Ignored under Cowling, where the
+      metric is static and the map is computed once.
+
+  velocity_lut:
+    type: schema
+    description: >
+      Size of the (theta, phi) lookup table that seeds the barycentric
+      interpolation of the populations at off-stencil directions (curved
+      streaming).  A coarse table only costs extra triangle walks.
+
+    n_theta:
+      type: int
+      default: 250
+      range: "[8,*)"
+      description: >
+        Polar nodes of the lookup table.
+
+    n_phi:
+      type: int
+      default: 500
+      range: "[8,*)"
+      description: >
+        Azimuthal nodes of the lookup table.
 
   lambda_tolerance:
     type: double

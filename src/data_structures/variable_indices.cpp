@@ -523,12 +523,14 @@ void register_variables() {
     #ifdef GRACE_ENABLE_LBM
     // Lattice-Boltzmann intensities (variable_indices.hh): one evolved scalar
     // per direction per species, "I<s>_<d>", s and d 1- and 0-based.  Scalar
-    // registration is right for translation, exchange and prolongation but
-    // NOT under a reflection symmetry, where I_d must map to the mirrored
-    // direction rather than to itself -- lbm::startup_check() refuses
-    // reflection symmetries for exactly that reason.
+    // registration covers translation, exchange and prolongation; under a
+    // reflection symmetry the ghost exchange reads the mirrored direction's
+    // population instead (var_reflect_partner in amr_ghosts.cpp).
     {
-        auto lbm_bc = detail::get_bc_type(get_param<std::string>("lbm","bc_kind")) ;
+        // The outer ghosts are either the initial data (bc_kind none: fixed inflow) or
+        // never read (bc_kind outgoing: the streaming kernel floors departure points
+        // outside the domain), so no ghost-filling BC is registered.
+        auto lbm_bc = detail::get_bc_type("none") ;
         for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
         for ( int d = 0; d < GRACE_LBM_NDIR; ++d ) {
             register_evolved_scalar(LBM_I0_ + s*GRACE_LBM_NDIR + d,
@@ -544,6 +546,25 @@ void register_variables() {
                 std::string("Plbm") + std::to_string(s+1) + "_" + pc[c]) ;
         }
         register_aux_scalar(LBM_NITER_, "lbm_niter") ;
+        for ( int s = 0; s < GRACE_LBM_NSPECIES; ++s )
+            register_aux_scalar(LBM_EKILL0_ + s, "lbm_ekill" + std::to_string(s+1)) ;
+        // geometry of curved streaming (requestable by name, not in the "lbm" group)
+        {
+            char const* ax[3] = {"x","y","z"} ;
+            char const* sym[6] = {"xx","xy","xz","yy","yz","zz"} ;
+            char const* qn[7]  = {"S","dx","dy","dz","Cx","Cy","Cz"} ;
+            for ( int a = 0; a < 3; ++a ) register_aux_scalar(LBM_DALP_ + a, std::string("lbm_dalp_") + ax[a]) ;
+            for ( int a = 0; a < 3; ++a ) for ( int i = 0; i < 3; ++i )
+                register_aux_scalar(LBM_DBETA_ + 3*a + i, std::string("lbm_dbeta_") + ax[a] + "_" + ax[i]) ;
+            for ( int a = 0; a < 3; ++a ) for ( int c = 0; c < 6; ++c )
+                register_aux_scalar(LBM_DGAMMA_ + 6*a + c, std::string("lbm_dgamma_") + ax[a] + "_" + sym[c]) ;
+            for ( int f = 0; f < 7; ++f ) for ( int i = 0; i < 9; ++i )
+                register_aux_scalar(LBM_SH_ + 9*f + i, std::string("lbm_sh_") + qn[f] + "_" + std::to_string(i)) ;
+            register_aux_scalar(LBM_GEOM_FLAG_, "lbm_geom_flag") ;
+            register_aux_scalar(LBM_SQRTG_, "lbm_sqrtg") ;
+            for ( int a = 0; a < 3; ++a ) register_aux_scalar(LBM_BTRIAD_ + a, std::string("lbm_btriad_") + ax[a]) ;
+            for ( int d = 0; d < GRACE_LBM_NDIR; ++d ) register_aux_scalar(LBM_WCLAIM_ + d, "lbm_wclaim_" + std::to_string(d)) ;
+        }
     }
     #endif
 

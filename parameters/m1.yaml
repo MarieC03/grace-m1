@@ -308,6 +308,48 @@ m1:
       description: >
         Radius of the initially filled sphere [code units].
 
+    x0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (x) [code units]; off-centre placements test a
+        curved background away from the excision.
+    y0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (y) [code units].
+    z0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (z) [code units].
+
+  curved_beam_test:
+    type: schema
+    description: >
+      Parameters of the curved-beam test (id_type "curved_beam", Kerr-Schild
+      coordinates): a beam launched along +x from the x = 0 plane at
+      z_min <= z <= z_max, |y| < 0.25, at the causal limit.  The defaults are
+      the FIL test (impact parameter below the photon-capture radius); z ~ 6-7
+      gives an escaping, bending beam.
+
+    z_min:
+      type: double
+      default: 3.0
+      range: "(*,*)"
+      description: >
+        Lower edge of the beam in z at the launch plane [code units].
+    z_max:
+      type: double
+      default: 3.5
+      range: "(*,*)"
+      description: >
+        Upper edge of the beam in z at the launch plane [code units].
+
   emitting_sphere_test:
     type: schema
     description: >

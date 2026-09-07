@@ -83,6 +83,7 @@ make_gpu_phys_bc_task(
     std::unordered_set<task_id_t> const& deps,
     Kokkos::View<bc_t*> var_bc,
     Kokkos::View<double*[3]> var_refl,
+    Kokkos::View<int*[3]> var_partner,
     device_stream_t& stream,
     task_id_t& task_counter,
     grace::var_array_t data_array,
@@ -197,7 +198,7 @@ make_gpu_phys_bc_task(
 
     amr::phys_bc_op<elem_kind,bc_kind,decltype(data_array)> functor{
        data_array, data_array, idx, coords, qid_d, eid_d, dir_d,
-       ext_d, off_d, var_refl, var_bc,
+       ext_d, off_d, var_refl, var_partner, var_bc,
        VEC(snx, sny, snz), ngz, nv, is_cbuf, stag, rx, ry, rz
     } ;
     functor.bnd_lmin    = bnd_lmin_d ;
@@ -414,6 +415,7 @@ make_gpu_phys_bc_face_ext_task(
     std::unordered_set<task_id_t> const& deps,
     Kokkos::View<bc_t*> var_bc,
     Kokkos::View<double*[3]> var_refl,
+    Kokkos::View<int*[3]> var_partner,
     device_stream_t& stream,
     task_id_t& task_counter,
     grace::var_array_t data_array,
@@ -491,7 +493,7 @@ make_gpu_phys_bc_face_ext_task(
     gpu_task_t task{} ;
     amr::phys_bc_op<amr::element_kind_t::FACE,amr::element_kind_t::FACE,decltype(data_array),true> functor{
        data_array, data_array, idx, coords, qid_d, eid_d, dir_d,
-       ext_d, off_d, var_refl, var_bc,
+       ext_d, off_d, var_refl, var_partner, var_bc,
        VEC(snx, sny, snz), ngz, nv,
        /*is_cbuf*/ false, stag, rx, ry, rz,
        guard_d
@@ -750,6 +752,7 @@ bucket_t insert_phys_bc_tasks(
     grace::var_array_t coarse_buffers,
     Kokkos::View<bc_t*> var_bc, 
     Kokkos::View<double*[3]> var_parities,
+    Kokkos::View<int*[3]> var_partners,
     device_stream_t& stream, 
     VEC(size_t nx, size_t ny, size_t nz), size_t ngz, size_t nv,
     task_id_t restrict_tid,
@@ -947,7 +950,7 @@ bucket_t insert_phys_bc_tasks(
         tid = make_gpu_phys_bc_face_ext_task<stag>(
             fused_qid, fused_eid, fused_dir, fused_guard,
             fused_deps,
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state, nx, ny, nz, nv, ngz, task_list
         ) ;
         // write back tid to face, absorbed edges, absorbed corners
@@ -982,7 +985,7 @@ bucket_t insert_phys_bc_tasks(
             eid[FACE][FACE],
             dir[FACE][FACE],
             dependencies[FACE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -997,7 +1000,7 @@ bucket_t insert_phys_bc_tasks(
             eid[EDGE][FACE],
             dir[EDGE][FACE],
             dependencies[EDGE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1011,7 +1014,7 @@ bucket_t insert_phys_bc_tasks(
             eid[CORNER][FACE],
             dir[CORNER][FACE],
             dependencies[CORNER][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1025,7 +1028,7 @@ bucket_t insert_phys_bc_tasks(
             eid[EDGE][EDGE],
             dir[EDGE][EDGE],
             dependencies[EDGE][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ;
         // write back tid 
@@ -1039,7 +1042,7 @@ bucket_t insert_phys_bc_tasks(
             eid[CORNER][CORNER],
             dir[CORNER][CORNER],
             dependencies[CORNER][CORNER],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ;
         // write back tid 
@@ -1055,7 +1058,7 @@ bucket_t insert_phys_bc_tasks(
             eid[CORNER][EDGE],
             dir[CORNER][EDGE],
             dependencies[CORNER][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1070,7 +1073,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[FACE][FACE],
             dir_cbuf[FACE][FACE],
             dependencies_cbuf[FACE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1084,7 +1087,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[EDGE][FACE],
             dir_cbuf[EDGE][FACE],
             dependencies_cbuf[EDGE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1100,7 +1103,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[CORNER][FACE],
             dir_cbuf[CORNER][FACE],
             dependencies_cbuf[CORNER][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1114,7 +1117,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[EDGE][EDGE],
             dir_cbuf[EDGE][EDGE],
             dependencies_cbuf[EDGE][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1128,7 +1131,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[CORNER][CORNER],
             dir_cbuf[CORNER][CORNER],
             dependencies_cbuf[CORNER][CORNER],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1141,7 +1144,7 @@ bucket_t insert_phys_bc_tasks(
             eid_cbuf[CORNER][EDGE],
             dir_cbuf[CORNER][EDGE],
             dependencies_cbuf[CORNER][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             coarse_buffers,nx/2,ny/2,nz/2,nv,ngz,task_list,true
         ) ; 
         // write back tid 
@@ -1163,6 +1166,7 @@ void insert_deferred_phys_bc_tasks(
     grace::var_array_t coarse_buffers,
     Kokkos::View<bc_t*> var_bc, 
     Kokkos::View<double*[3]> var_parities,
+    Kokkos::View<int*[3]> var_partners,
     device_stream_t& stream, 
     VEC(size_t nx, size_t ny, size_t nz), size_t ngz, size_t nv,
     task_id_t& task_counter,
@@ -1233,7 +1237,7 @@ void insert_deferred_phys_bc_tasks(
             eid[FACE][FACE],
             dir[FACE][FACE],
             dependencies[FACE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1246,7 +1250,7 @@ void insert_deferred_phys_bc_tasks(
             eid[EDGE][FACE],
             dir[EDGE][FACE],
             dependencies[EDGE][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         dependencies[CORNER][EDGE].insert(tid) ;
@@ -1259,7 +1263,7 @@ void insert_deferred_phys_bc_tasks(
             eid[CORNER][FACE],
             dir[CORNER][FACE],
             dependencies[CORNER][FACE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1271,7 +1275,7 @@ void insert_deferred_phys_bc_tasks(
             eid[EDGE][EDGE],
             dir[EDGE][EDGE],
             dependencies[EDGE][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1284,7 +1288,7 @@ void insert_deferred_phys_bc_tasks(
             eid[CORNER][CORNER],
             dir[CORNER][CORNER],
             dependencies[CORNER][CORNER],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 
@@ -1296,7 +1300,7 @@ void insert_deferred_phys_bc_tasks(
             eid[CORNER][EDGE],
             dir[CORNER][EDGE],
             dependencies[CORNER][EDGE],
-            var_bc, var_parities, stream, task_counter,
+            var_bc, var_parities, var_partners, stream, task_counter,
             state,nx,ny,nz,nv,ngz,task_list
         ) ; 
         // write back tid 

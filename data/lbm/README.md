@@ -6,6 +6,7 @@ Header: line 1 `# count`, line 2 the number of directions, line 3 the column nam
 
 | order | directions |
 |---|---|
+| 5 | 14 (streaming stencil: samples the geodesic map for the spherical-harmonic fit) |
 | 23 | 194 |
 | 29 | 302 |
 | 31 | 350 |

@@ -475,8 +475,8 @@ struct sphere_wave_m1_id_t {
         m1_atmo_params_t _atmo,
         m1_excision_params_t _excision,
         coord_array_t<GRACE_NSPACEDIM> _pcoords,
-        double _radius
-    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), radius(_radius)
+        double _radius, double _x0 = 0., double _y0 = 0., double _z0 = 0.
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), radius(_radius), x0(_x0), y0(_y0), z0(_z0)
     {}
 
     m1_id_t KOKKOS_INLINE_FUNCTION
@@ -490,7 +490,7 @@ struct sphere_wave_m1_id_t {
             pcoords(VEC(i,j,k),1,q),
             pcoords(VEC(i,j,k),2,q)
         };
-        double const r = sqrt(SQR(xyz[0]) + SQR(xyz[1]) + SQR(xyz[2])) ;
+        double const r = sqrt(SQR(xyz[0]-x0) + SQR(xyz[1]-y0) + SQR(xyz[2]-z0)) ;
 
         id.erad1 = ( r < radius ) ? 1.0 : atmo.E_fl ;
         id.fradx1 = id.frady1 = id.fradz1 = 0. ;
@@ -518,7 +518,7 @@ struct sphere_wave_m1_id_t {
     m1_atmo_params_t atmo ;
     m1_excision_params_t excision ;
     coord_array_t<GRACE_NSPACEDIM> pcoords ;
-    double radius ;
+    double radius, x0, y0, z0 ;
 } ;
 
 struct emitting_sphere_m1_id_t {
@@ -592,8 +592,9 @@ struct curved_beam_m1_id_t {
         m1_atmo_params_t _atmo,
         m1_excision_params_t _excision,
         coord_array_t<GRACE_NSPACEDIM> _pcoords,
-        var_array_t _state
-    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), state(_state)
+        var_array_t _state,
+        double _z_min = 3.0, double _z_max = 3.5
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), state(_state), z_min(_z_min), z_max(_z_max)
     {}
 
     m1_id_t KOKKOS_INLINE_FUNCTION
@@ -613,7 +614,7 @@ struct curved_beam_m1_id_t {
 
         if ( xyz[0] <= 0.015625 and
             xyz[1] < 0.25 and xyz[1] > - 0.25 and
-            xyz[2] <= 3.5 and xyz[2] >= 3.0 ) {
+            xyz[2] <= z_max and xyz[2] >= z_min ) {
             id.erad1 = 1.0 ;
             // F_i F^i = E * E
             metric_array_t metric ;
@@ -658,6 +659,7 @@ struct curved_beam_m1_id_t {
     m1_atmo_params_t atmo ;
     m1_excision_params_t excision ;
     var_array_t state ;
+    double z_min, z_max ;
     coord_array_t<GRACE_NSPACEDIM> pcoords ;
 } ;
 

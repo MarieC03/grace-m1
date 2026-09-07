@@ -1,0 +1,77 @@
+# LBM curved-beam pulse on the Schwarzschild background (M = 1, Kerr-Schild coordinates):
+# the M1 curved_beam initial data -- a packet launched along +x from x <= 0, |y| < 0.25,
+# z_min <= z <= z_max, F^2 = 0.9999 E^2 -- with the height chosen so the impact parameter
+# b = z0/sqrt(1-2M/z0) ~ 7.4-8.1 lets it escape; it bends by ~4M/b.  Outflow ghosts, so
+# the packet is not refilled and the same file runs the M1 twin (drop the lbm block,
+# time_stepper imex222, cfl 0.25, 4x the iterations and output cadence).  Check
+# (scripts/lbm_radial_profile.py FILE blob 6.375): the packet's E-weighted centroid and
+# its peak follow the null geodesic of the central impact parameter within ~a cell.
+# 32 quadrants of 12^3, dx = 0.375, ~2.5 GB.
+name: "lbm_curved_beam_hr"
+amr: {
+  npoints_block_x: 12,
+  npoints_block_y: 12,
+  npoints_block_z: 12,
+  xmin: -0.75, xmax: 8.25,
+  ymin: -9., ymax: 9.,
+  zmin: -9., zmax: 9.,
+  n_ghostzones: 4,
+  initial_refinement_level: 2,
+  max_refinement_level: 2,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 1,
+  info_output_max_reductions: ["Erad1", "lbm_geom_flag"],
+  scalar_output_every: 1,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1", "lbm_ekill1"],
+  volume_output_every: 12,
+  plane_surface_output_every: -1,
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  volume_output_cell_variables: ["Erad1", "lbm_ekill1", "alp"],
+  output_extra_quantities: false
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.9,
+  force_unit_wavespeed: false,
+  final_iteration: 48,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  excision: { excision_criterion: "radius", excision_radius: 1.8 },
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+m1: {
+  id_type: "curved_beam",
+  curved_beam_test: { z_min: 6.0, z_max: 6.75 },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+lbm: {
+  bc_kind: "outgoing",
+  streaming: "curved_fixed"
+}
+coordinate_system: { is_kerr_schild: true, bh_spin: 0.0 }
+checkpoints: { checkpoint_at_termination: false }

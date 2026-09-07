@@ -175,7 +175,7 @@ if( GRACE_ENABLE_LBM )
 # intensities ansatz, the streaming kernel on a hand-built quadrant and the
 # closed-form collision on one cell.  No grid, no table beyond the compiled-in
 # stencil (loaded from the source tree via GRACE_LBM_DATA_DIR).
-foreach(_t lbm_stencil lbm_moments lbm_streaming lbm_collision)
+foreach(_t lbm_stencil lbm_moments lbm_streaming lbm_collision lbm_triad lbm_sh lbm_velocity_mesh lbm_geodesic)
     add_kokkos_test(${_t}_test test_${_t}.cpp)
     add_test(NAME ${_t}_test COMMAND mpirun -n 1 ./${_t}_test)
     set_tests_properties(${_t}_test PROPERTIES
@@ -185,11 +185,19 @@ endforeach()
 # Integration runs of the grace binary on the flat-space test problems.  Each
 # parfile header states the analytic check; scripts/lbm_radial_profile.py reads
 # the volume output.  Not "fast": 10-30 s each, 8 quadrants of 302 populations.
-foreach(_c lbm_beam_smoke lbm_sphere_wave lbm_sphere_wave_amr lbm_diffusion)
+# Flat-space problems run in every build; the Kerr-Schild ones need the static
+# (Cowling) metric, the TOV and puncture ones the Z4c evolution.
+set(_lbm_runs lbm_beam_smoke lbm_sphere_wave lbm_sphere_wave_amr lbm_sphere_wave_zrefl lbm_sphere_wave_curved_flat lbm_diffusion)
+if(GRACE_METRIC_EVOL STREQUAL "COWLING")
+    list(APPEND _lbm_runs lbm_sphere_wave_ks lbm_curved_beam lbm_tov_cowling)
+else()
+    list(APPEND _lbm_runs lbm_tov_z4 lbm_puncture_z4)
+endif()
+foreach(_c ${_lbm_runs})
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
+    # GRACE appends to existing scalar files, so start each run from a clean directory
     add_test(NAME ${_c}_run
-        COMMAND mpirun -n 1 $<TARGET_FILE:grace>
-                --grace-parfile ${CMAKE_CURRENT_BINARY_DIR}/configs/${_c}.yaml
+        COMMAND sh -c "rm -rf output_scalar output_volume output_surface logs && exec mpirun -n 1 $<TARGET_FILE:grace> --grace-parfile ${CMAKE_CURRENT_BINARY_DIR}/configs/${_c}.yaml"
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
     set_tests_properties(${_c}_run PROPERTIES LABELS "lbm;integration" TIMEOUT 900)
 endforeach()
@@ -308,10 +316,8 @@ set_tests_properties(bc_test_unigrid_cartesian bc_test_cartesian
 # three axes.  Catches the reflect_bc_t::apply int8-overflow / uninit-ijk
 # class of bugs that fault on discrete CUDA but go silent on unified-memory
 # APUs (see commit history May-2026).  Covers centered scalars, vectors,
-# symmetric tensors, and the three face-staggered B components.
-# Reflection symmetries are refused at startup by the LBM module (the intensity
-# populations have no reflection parity yet), so these two are M1/hydro-only.
-if(NOT GRACE_ENABLE_LBM)
+# symmetric tensors, and the three face-staggered B components.  In LBM builds
+# it also covers the direction-permutation partner of every population.
 add_test(NAME reflect_bc_test_unigrid COMMAND
         mpirun -n 1 ./reflect_bc_test --grace-parfile ./configs/reflect_bc_unigrid.yaml )
 set_tests_properties(reflect_bc_test_unigrid PROPERTIES LABELS "fast;bc;reflection")
@@ -321,7 +327,6 @@ set_tests_properties(reflect_bc_test_unigrid PROPERTIES LABELS "fast;bc;reflecti
 add_test(NAME reflect_bc_test_fmr COMMAND
         mpirun -n 1 ./reflect_bc_test --grace-parfile ./configs/reflect_bc_fmr.yaml )
 set_tests_properties(reflect_bc_test_fmr PROPERTIES LABELS "fast;bc;reflection;amr")
-endif()
 
 # BC + ghost-zone test on a deeper FMR layout (4 boxes, 7 levels max, ngz=4):
 # exercises the FMR ghost-fill P/R path (polynomial cell-centered + B = curl A
@@ -449,7 +454,9 @@ add_test(NAME hdf5_output_test COMMAND
 set_tests_properties(hdf5_output_test PROPERTIES LABELS "mpi;io")
 
 # ----- Z4c-only tests (gated on GRACE_METRIC_EVOL=Z4) ----------------------
-if(GRACE_METRIC_EVOL STREQUAL "Z4")
+# Not in LBM builds: the puncture grid of adm_integrals_test.yaml (~770 FMR
+# quadrants) would carry 302 populations per cell, ~77 GB of state.
+if(GRACE_METRIC_EVOL STREQUAL "Z4" AND NOT GRACE_ENABLE_LBM)
     add_test(NAME adm_integrals_test COMMAND
             mpirun -n 1 ./adm_integrals_test --grace-parfile ./configs/adm_integrals_test.yaml )
     set_tests_properties(adm_integrals_test PROPERTIES LABELS "fast;physics")

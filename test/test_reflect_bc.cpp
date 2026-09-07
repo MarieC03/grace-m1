@@ -1,5 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <Kokkos_Core.hpp>
+#include <functional>
+#include <grace_config.h>
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm_stencil.hh>
+#endif
 #include <grace/amr/grace_amr.hh>
 #include <grace/coordinates/coordinate_systems.hh>
 #include <grace/config/config_parser.hh>
@@ -198,6 +203,29 @@ void nan_poison_ghosts(
     Kokkos::deep_copy(view, h);
 }
 
+// Variable whose polynomial the mirror cell of `var_id` holds: itself, unless
+// a module registers a reflection partner (LBM populations mirror to the
+// population of the mirrored stencil direction, per reflected axis).
+inline int identity_source(int var_id, bool, bool, bool) { return var_id; }
+
+inline int centered_source(int var_id, bool fx, bool fy, bool fz)
+{
+#ifdef GRACE_ENABLE_LBM
+    static std::vector<int> const mirror = grace::lbm::mirror_table_host(grace::lbm::get_stencil());
+    bool const refl[3] = {fx, fy, fz};
+    for (int a = 0; a < 3; ++a) {
+        if (refl[a] && var_id >= LBM_I0_ && var_id <= LBM_IEND_) {
+            int const s = (var_id - LBM_I0_) / GRACE_LBM_NDIR;
+            int const d = (var_id - LBM_I0_) % GRACE_LBM_NDIR;
+            var_id = LBM_I0_ + s * GRACE_LBM_NDIR + mirror[3 * d + a];
+        }
+    }
+#else
+    (void)fx; (void)fy; (void)fz;
+#endif
+    return var_id;
+}
+
 // Check that every reflection ghost cell (p[axis] < domain_min on at
 // least one axis, and no axis has p > domain_max) holds the expected
 // value parity_product * h_func(reflected_coords).
@@ -216,7 +244,8 @@ size_t check_reflection_ghosts(
     CoordSysT&                                              cs,
     double xmin, double ymin, double zmin,
     double xmax, double ymax, double zmax,
-    long Nx, long Ny, long Nz, long nq)
+    long Nx, long Ny, long Nz, long nq,
+    std::function<int(int,bool,bool,bool)> const&           source_id = identity_source)
 {
     auto h = Kokkos::create_mirror_view(view);
     Kokkos::deep_copy(h, view);
@@ -258,7 +287,9 @@ size_t check_reflection_ghosts(
         double const zr = refl_z ? (2.0 * zmin - p[2]) : p[2];
 
         double const sign     = parity_product(parity, refl_x, refl_y, refl_z);
-        double const expected = sign * h_func_for_var(var_id, xr, yr, zr);
+        // The mirror cell may belong to another variable (LBM populations
+        // mirror to the mirrored direction), so evaluate that variable's polynomial.
+        double const expected = sign * h_func_for_var(source_id(var_id, refl_x, refl_y, refl_z), xr, yr, zr);
         double const got      = h(VEC(i, j, k), var_idx, q);
 
         ++n_checked;
@@ -429,7 +460,7 @@ TEST_CASE("Reflection BC: octant ghost-zone fill (bit-exact across all "
             {VEC(0.5, 0.5, 0.5)}, iv, /*var_id*/ iv,
             parity_for_centered_var(iv), tol, cs,
             xmin, ymin, zmin, xmax, ymax, zmax,
-            Nx, Ny, Nz, nq);
+            Nx, Ny, Nz, nq, centered_source);
     }
 
     std::cout << "[reflection BC test] Face-staggered B" << std::endl;

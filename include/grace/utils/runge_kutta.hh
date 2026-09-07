@@ -152,7 +152,7 @@ advance_step(F&& rhs) {
 
     double dt_max = domain[1]-t ;
     do{
-      dt = std::min(dt, dt_max) ;
+      dt = Kokkos::min(dt, dt_max) ;
       k = compute_k(std::forward<F>(rhs)) ;
       double const err = compute_error(k);
       double ynorm = 0 ;

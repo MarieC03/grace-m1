@@ -58,6 +58,18 @@ struct reflect_bc_t
       {
         view(i,j,k) = f*view(is,js,ks) ;
       }
+    // Same, reading the mirror cell from another variable's slab (LBM
+    // populations: the mirrored direction's population).
+    template< typename view_t >
+      void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+      apply (
+            view_t dst, view_t src,
+            VEC( size_t i, size_t j, size_t k),
+            VEC( int is, int js, int ks), double f
+      ) const
+      {
+        dst(i,j,k) = f*src(is,js,ks) ;
+      }
 } ;
 
 template< size_t order >
@@ -218,6 +230,7 @@ struct phys_bc_op {
     readonly_view_t<uint8_t> eid       ;
     readonly_twod_view_t<int8_t,3> dir ;
     readonly_twod_view_t<double,3> var_refl_fact ;
+    readonly_twod_view_t<int,3> var_refl_partner ; //!< variable read at the mirror cell (identity except LBM populations)
 
     readonly_view_t<bc_t> var_bcs      ;
 
@@ -289,10 +302,11 @@ struct phys_bc_op {
         Kokkos::View<int*[3]> _ext,
         Kokkos::View<int*[3]> _off_l,
         Kokkos::View<double*[3]> _var_rfact,
+        Kokkos::View<int*[3]> _var_partner,
         Kokkos::View<bc_t*> _var_bcs,
          VEC(size_t _nx, size_t _ny, size_t _nz), size_t _ngz, size_t _nv, bool _is_cbuf, var_staggering_t _stag, bool _rx, bool _ry, bool _rz,
         Kokkos::View<uint8_t*> _guard_mask = Kokkos::View<uint8_t*>{}
-    ) : qid(_qid),  eid(_eid), dir(_dir), var_refl_fact(_var_rfact), var_bcs(_var_bcs), exloop(_ext), offloop(_off_l),
+    ) : qid(_qid),  eid(_eid), dir(_dir), var_refl_fact(_var_rfact), var_refl_partner(_var_partner), var_bcs(_var_bcs), exloop(_ext), offloop(_off_l),
         guard_mask(_guard_mask), dx(_dx), coords(_coords),
         data(_data), data_p(_data_p),
         nx(_nx), ny(_ny), nz(_nz), ngz(_ngz), nv(_nv), is_cbuf(_is_cbuf), stag(_stag), rx(_rx), ry(_ry), rz(_rz)
@@ -368,6 +382,7 @@ struct phys_bc_op {
         bool do_reflection = false ; 
         double fact = 1.0;
         int ijk_s[3] = {ijk[0],ijk[1],ijk[2]}; 
+        int iv_s = iv ;   // variable read at the mirror cell; permuted per reflected axis for LBM populations
         // first we detect reflections
         if ( rx or ry or rz ) {
             double parities[3] = {1.,1.,1.} ; 
@@ -392,6 +407,7 @@ struct phys_bc_op {
                 ijk_s[0] = ngz + (ngz-1-ijk[0]) ; 
                 ijk_s[0] += stag==STAG_FACEX ? 1 : 0; 
                 fact *= parities[0] ; 
+                if ( stag == STAG_CENTER ) iv_s = var_refl_partner(iv_s,0) ;
                 do_reflection = true ; 
             }
 
@@ -399,6 +415,7 @@ struct phys_bc_op {
                 ijk_s[1] = ngz + (ngz-1-ijk[1]) ; 
                 ijk_s[1] += stag==STAG_FACEY ? 1 : 0; 
                 fact *= parities[1] ; 
+                if ( stag == STAG_CENTER ) iv_s = var_refl_partner(iv_s,1) ;
                 do_reflection = true ; 
             }
 
@@ -406,11 +423,22 @@ struct phys_bc_op {
                 ijk_s[2] = ngz + (ngz-1-ijk[2]) ; 
                 ijk_s[2] += stag==STAG_FACEZ ? 1 : 0; 
                 fact *= parities[2] ; 
+                if ( stag == STAG_CENTER ) iv_s = var_refl_partner(iv_s,2) ;
                 do_reflection = true ; 
             }
         }
         if (do_reflection) {
-            reflect_kernel.template apply<decltype(sv)>(sv,ijk[0],ijk[1],ijk[2],ijk_s[0],ijk_s[1],ijk_s[2],fact) ;
+            // The mirror cell is interior along every reflected axis and, along a
+            // non-reflected axis, a lower-class ghost already filled for every
+            // variable by the FACE->EDGE->CORNER task order; reading slab iv_s
+            // instead of iv changes the slot, never the region.  The axis
+            // mirrors commute, so the composition order is irrelevant.
+            auto sv_s = Kokkos::subview(
+                data, 
+                VEC(Kokkos::ALL(), Kokkos::ALL(), Kokkos::ALL()),
+                static_cast<size_t>(iv_s), qid 
+            ) ;
+            reflect_kernel.template apply<decltype(sv)>(sv,sv_s,ijk[0],ijk[1],ijk[2],ijk_s[0],ijk_s[1],ijk_s[2],fact) ;
         } else {
             auto _bc_kind = var_bcs(iv) ;       
             switch (_bc_kind) {

@@ -460,6 +460,28 @@ enum aux_var_idx : int {
     LBM_P0_,
     LBM_PEND_ = LBM_P0_ + 6 * GRACE_LBM_NSPECIES - 1,
     LBM_NITER_,
+    // Killing energy density sqrt(gamma)(alpha E - beta_i F^i) per species: its
+    // volume integral is the conserved radiation energy on a stationary background.
+    LBM_EKILL0_,
+    LBM_EKILL_END_ = LBM_EKILL0_ + GRACE_LBM_NSPECIES - 1,
+    // Geometry of curved streaming (lbm.streaming = curved_fixed), computed once
+    // per background: cell-centred metric derivatives in the fill_deriv_* layouts
+    // (d_a alpha; d_a beta^i at 3a+i; d_a gamma_c at 6a+c), the l <= 2 real
+    // spherical-harmonic coefficients of the geodesic map (7 quantities x 9: 1/s,
+    // departure displacement, departure direction in the local triad) and a flag
+    // (0 valid, 1 excised cell, 2 a ray was truncated).
+    LBM_DALP_,   LBM_DALP_END_   = LBM_DALP_ + 2,
+    LBM_DBETA_,  LBM_DBETA_END_  = LBM_DBETA_ + 8,
+    LBM_DGAMMA_, LBM_DGAMMA_END_ = LBM_DGAMMA_ + 17,
+    LBM_SH_,     LBM_SH_END_     = LBM_SH_ + 62,
+    LBM_GEOM_FLAG_,
+    // Conservative remap of curved streaming (lbm.curved_remap): sqrt(gamma),
+    // the shift in the triad beta_i e^i_a (3), and the claim weight W of every
+    // source (cell, direction) bin -- the adjoint sum of the interpolation
+    // weights, 1 in flat space, by which the source's Killing energy is divided.
+    LBM_SQRTG_,
+    LBM_BTRIAD_, LBM_BTRIAD_END_ = LBM_BTRIAD_ + 2,
+    LBM_WCLAIM_, LBM_WCLAIM_END_ = LBM_WCLAIM_ + GRACE_LBM_NDIR - 1,
     #endif
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
     PSI4RE_,

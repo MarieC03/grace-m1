@@ -45,6 +45,9 @@
 #include <grace/physics/eos/eos_types.hh>
 
 #include <Kokkos_Core.hpp>
+#ifdef GRACE_ENABLE_LBM
+#include <grace/physics/lbm_geometry.hh>
+#endif
 
 namespace grace {
 
@@ -134,12 +137,27 @@ void find_stable_timestep_impl() {
         }
         #endif
         #ifdef GRACE_ENABLE_LBM
-        // Radiation streams at c = 1 whatever the fluid does, and the LBM
-        // pull-back must stay within one cell -- so light speed bounds dt too.
-        cmax = Kokkos::fmax(cmax, 1.0) ;
+        // Radiation streams at light speed whatever the fluid does, and the
+        // LBM pull-back must stay within one cell: the largest coordinate
+        // speed of a null ray, max_i(alpha sqrt(gamma^ii) + |beta^i|), bounds dt.
+        {
+            metric_array_t lbm_metric ;
+            FILL_METRIC_ARRAY(lbm_metric, state, q, VEC(i,j,k)) ;
+            cmax = Kokkos::fmax(cmax, grace::lbm::null_coordinate_speed(lbm_metric)) ;
+        }
         #endif
         #else
         double cmax = 1 ;
+        #ifdef GRACE_ENABLE_LBM
+        // Z4 runs at the unit coordinate speed; the LBM pull-back must still stay
+        // within one cell, so fold in the largest null coordinate speed (>= 1 only
+        // where alpha sqrt(gamma^ii) + |beta^i| exceeds 1).
+        {
+            metric_array_t lbm_metric ;
+            FILL_METRIC_ARRAY(lbm_metric, state, q, VEC(i,j,k)) ;
+            cmax = Kokkos::fmax(cmax, grace::lbm::null_coordinate_speed(lbm_metric)) ;
+        }
+        #endif
         #endif
         double L = dx(0,q);
         dtmax = dtmax > CFL/cmax*L ? CFL/cmax*L : dtmax ;

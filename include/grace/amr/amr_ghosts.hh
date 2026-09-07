@@ -509,6 +509,7 @@ struct amr_ghosts_impl_t {
     grace::staggered_variable_arrays_t _stag_coarse_buffers ; 
     Kokkos::View<bc_t*> var_bc_kind, var_bc_kind_f ; //!< Boundary condition per-variable
     Kokkos::View<double*[3]> var_reflect_parity; //!< Parity under reflection
+    Kokkos::View<int*[3]> var_reflect_partner;   //!< Variable read at the mirror cell (identity, or the mirrored LBM direction)
     //**************************************************************************************************
     //! For prolongation/restriction, store indices of variables needing high or low order operators 
     std::vector<size_t> high_order_interp_varlist, low_order_interp_varlist;
@@ -638,6 +639,7 @@ struct amr_ghosts_impl_t {
         var_bc_kind_f = Kokkos::View<bc_t*>("var_bc_kind_face_stag",1) ;
 
         var_reflect_parity = Kokkos::View<double*[3]>("var_reflect_parity",1) ; 
+        var_reflect_partner = Kokkos::View<int*[3]>("var_reflect_partner",1) ;
 
         high_order_interp_varlist.clear() ; 
         low_order_interp_varlist.clear() ;

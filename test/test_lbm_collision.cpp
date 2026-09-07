@@ -49,6 +49,13 @@ struct cell {
         auto c = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, st.c) ;
         auto h = Kokkos::create_mirror_view(I) ;
         for ( int d = 0; d < st.ndir; ++d ) h(C,C,C, lbm::idx(0,d), 0) = f(c(d,0),c(d,1),c(d,2)) ;
+        // flat metric: the collision runs at the lapse rate (alpha dt)
+        h(C,C,C, ALP_, 0) = 1.0 ;
+        #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+        h(C,C,C, GXX_, 0) = h(C,C,C, GYY_, 0) = h(C,C,C, GZZ_, 0) = 1.0 ;
+        #else
+        h(C,C,C, CHI_, 0) = h(C,C,C, GTXX_, 0) = h(C,C,C, GTYY_, 0) = h(C,C,C, GTZZ_, 0) = 1.0 ;
+        #endif
         Kokkos::deep_copy(I, h) ;
     }
     int collide(double dt) {
