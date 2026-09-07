@@ -275,6 +275,18 @@ m1_outflows::compute_local_fluxes(
         double const betax = ivals(i, loc_var_idx_t::BETAXL);
         double const betay = ivals(i, loc_var_idx_t::BETAYL);
         double const betaz = ivals(i, loc_var_idx_t::BETAZL);
+        // FRAD*_ hold sqrt(gamma) F_i (lowered): the 3-metric raises the index below.
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+        metric_array_t const metric{
+            { ivals(i, loc_var_idx_t::GXXL), ivals(i, loc_var_idx_t::GXYL), ivals(i, loc_var_idx_t::GXZL),
+              ivals(i, loc_var_idx_t::GYYL), ivals(i, loc_var_idx_t::GYZL), ivals(i, loc_var_idx_t::GZZL) },
+            { betax, betay, betaz }, alp };
+#else
+        metric_array_t const metric{
+            { ivals(i, loc_var_idx_t::GTXXL), ivals(i, loc_var_idx_t::GTXYL), ivals(i, loc_var_idx_t::GTXZL),
+              ivals(i, loc_var_idx_t::GTYYL), ivals(i, loc_var_idx_t::GTYZL), ivals(i, loc_var_idx_t::GTZZL) },
+            ivals(i, loc_var_idx_t::CHIL), { betax, betay, betaz }, alp };
+#endif
 
 #if GRACE_M1_NU_SPECIES >= 1
         // Species 0 (nu_e / single-species)
@@ -284,10 +296,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY1L);
             double const Fz = ivals(i, loc_var_idx_t::FZ1L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[0] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -302,10 +315,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY2L);
             double const Fz = ivals(i, loc_var_idx_t::FZ2L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[1] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -317,10 +331,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY3L);
             double const Fz = ivals(i, loc_var_idx_t::FZ3L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[2] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -335,10 +350,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY4L);
             double const Fz = ivals(i, loc_var_idx_t::FZ4L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[3] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -350,10 +366,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY5L);
             double const Fz = ivals(i, loc_var_idx_t::FZ5L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[4] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -367,10 +384,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FYPHL);
             double const Fz = ivals(i, loc_var_idx_t::FZPHL);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[n_fluxes-1] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
