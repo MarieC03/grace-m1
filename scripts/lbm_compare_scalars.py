@@ -18,7 +18,10 @@ def main():
     a, b = sys.argv[1], sys.argv[2]
     tol = float(sys.argv[3]) if len(sys.argv) > 3 else 1e-12
     bad = False
-    for fa in sorted(glob.glob(os.path.join(a, "*.dat"))):
+    files = sorted(glob.glob(os.path.join(a, "*.dat")))
+    if not files:
+        print(f"no .dat files in {a} -- nothing compared"); sys.exit(2)
+    for fa in files:
         fb = os.path.join(b, os.path.basename(fa))
         if not os.path.exists(fb):
             print(f"{os.path.basename(fa):32s} missing in {b}"); bad = True; continue
