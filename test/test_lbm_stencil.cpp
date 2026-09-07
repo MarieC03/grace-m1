@@ -23,14 +23,23 @@
 #include <grace/physics/lbm_stencil.hh>
 
 #include <cmath>
+#include <utility>
 
 using Catch::Matchers::WithinAbs;
 
 namespace {
+template < class V >
+using host_copy_t = decltype(Kokkos::create_mirror_view_and_copy(
+        Kokkos::HostSpace{}, std::declval<V const&>())) ;
+
 struct host_stencil {
     int n ;
-    Kokkos::View<double*,  Kokkos::HostSpace> w ;
-    Kokkos::View<double**, Kokkos::HostSpace> c ;
+    // Not View<...,HostSpace>: that takes its layout from the host execution
+    // space (LayoutRight), while a mirror keeps the device layout (LayoutLeft on
+    // HIP/CUDA), and the two do not assign.  Kokkos 5 dropped View::HostMirror,
+    // so name the mirror type through the function that produces it.
+    host_copy_t<Kokkos::View<double*>>  w ;
+    host_copy_t<Kokkos::View<double**>> c ;
     host_stencil() {
         auto st = grace::lbm::load_stencil(GRACE_LBM_DATA_DIR) ;
         n = st.ndir ;
