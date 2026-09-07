@@ -71,7 +71,8 @@ m1: {
 }
 lbm: {
   bc_kind: "none",
-  streaming: "curved_fixed"
+  streaming: "curved_fixed",
+  report_timings: true
 }
 coordinate_system: { is_kerr_schild: true, bh_spin: 0.0 }
 checkpoints: { checkpoint_at_termination: false }
