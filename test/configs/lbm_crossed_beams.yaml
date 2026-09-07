@@ -33,7 +33,8 @@ IO: {
   scalar_output_integral: ["Erad1"],
   volume_output_every: 40,
   volume_output_cell_variables: ["Erad1"],
-  plane_surface_output_every: -1,
+  plane_surface_output_every: 4,
+  plane_surface_output_cell_variables: ["Erad1"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
   output_extra_quantities: false
