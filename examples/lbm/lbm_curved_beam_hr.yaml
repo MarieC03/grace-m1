@@ -1,6 +1,6 @@
 # LBM curved streaming: a radiation pulse launched tangentially near a Schwarzschild
 # black hole (Kerr-Schild, M = 1), dx = 0.09375 -- twice the resolution of the laptop test.
-# Check: scripts/lbm_radial_profile.py FILE blob 7.7 puts the E-weighted centroid on the
+# Check: scripts/lbm_radial_profile.py FILE beam 6.4 puts the E-weighted centroid on the
 # analytic null geodesic of impact parameter b ~ 7.7, within a cell.
 # 24^3 blocks with 4 ghost zones are 32^3 padded, 367 MB per quadrant; 12^3 blocks
 # cost 2.4x that per useful cell.  One MI300A node (4 ranks, 512 GB) holds ~512 of them.
@@ -29,11 +29,11 @@ IO: {
   scalar_output_integral: ["Erad1", "lbm_ekill1"],
   volume_output_every: 24,
   plane_surface_output_every: 8,
-  plane_surface_output_cell_variables: ["Erad1", "lbm_ekill1", "alp"],
+  plane_surface_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
-  volume_output_cell_variables: ["Erad1", "lbm_ekill1", "alp"],
-  output_extra_quantities: false
+  volume_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
+  output_extra_quantities: true
 }
 system: {
   console_log_level: "info",
@@ -70,7 +70,7 @@ m1: {
   backreaction: { enabled: false }
 }
 lbm: {
-  bc_kind: "outgoing",
+  bc_kind: "none",
   streaming: "curved_fixed",
   report_timings: true
 }

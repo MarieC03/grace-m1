@@ -31,13 +31,13 @@ IO: {
   scalar_output_minmax: ["Erad1", "alp", "rho"],
   scalar_output_integral: ["Erad1", "dens"],
   volume_output_every: 20,
-  volume_output_cell_variables: ["Erad1", "alp", "rho"],
+  volume_output_cell_variables: ["m1", "rates", "alp", "rho"],
   plane_surface_output_every: 4,
-  plane_surface_output_cell_variables: ["Erad1", "alp", "rho"],
+  plane_surface_output_cell_variables: ["m1", "rates", "alp", "rho"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
   output_use_hdf5: true,
-  output_extra_quantities: false
+  output_extra_quantities: true
 }
 system: {
   console_log_level: "info",

@@ -32,11 +32,11 @@ IO: {
   scalar_output_integral: ["Erad1"],
   volume_output_every: 40,
   plane_surface_output_every: 16,
-  plane_surface_output_cell_variables: ["Erad1"],
+  plane_surface_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
-  volume_output_cell_variables: ["Erad1"],
-  output_extra_quantities: false
+  volume_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
+  output_extra_quantities: true
 }
 system: {
   console_log_level: "info",

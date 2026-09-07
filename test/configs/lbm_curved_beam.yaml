@@ -30,11 +30,11 @@ IO: {
   scalar_output_integral: ["Erad1", "lbm_ekill1"],
   volume_output_every: 6,
   plane_surface_output_every: 2,
-  plane_surface_output_cell_variables: ["Erad1", "lbm_ekill1", "alp"],
+  plane_surface_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
-  volume_output_cell_variables: ["Erad1", "lbm_ekill1", "alp"],
-  output_extra_quantities: false
+  volume_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
+  output_extra_quantities: true
 }
 system: {
   console_log_level: "info",
@@ -71,7 +71,7 @@ m1: {
   backreaction: { enabled: false }
 }
 lbm: {
-  bc_kind: "outgoing",
+  bc_kind: "none",
   streaming: "curved_fixed"
 }
 coordinate_system: { is_kerr_schild: true, bh_spin: 0.0 }
