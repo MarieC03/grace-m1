@@ -69,7 +69,12 @@ params_t const& params()
     static params_t const p = get_params() ;
     return p ;
 }
-constexpr int QMAX = 64 ;   // compile-time cap on the streaming quadrature (per-thread arrays)
+// Compile-time cap on the streaming quadrature.  This sizes seven per-thread
+// arrays in the geometry kernel (7*QMAX doubles), which on a GPU is private
+// memory and sets the occupancy of that kernel: 16 costs 0.9 kB per thread,
+// 64 costs 3.6 kB.  Lebedev5, the default, needs 14.  Raise it here if a
+// larger streaming stencil is ever wanted, and re-measure the geometry pass.
+constexpr int QMAX = 16 ;
 }
 
 stencil_t const& get_stencil()
@@ -83,7 +88,8 @@ quadrature_t const& get_streaming_quadrature()
 {
     static quadrature_t const qd = [] {
         auto q = load_quadrature(stencil_dir() + "/" + grace::get_param<std::string>("lbm","streaming_stencil")) ;
-        if ( q.n > QMAX ) ERROR("LBM: streaming stencil has " << q.n << " directions, more than the compiled cap " << QMAX << ".") ;
+        if ( q.n > QMAX ) ERROR("LBM: streaming stencil has " << q.n << " directions, more than the compiled cap QMAX = "
+                                << QMAX << " (src/physics/lbm.cpp; it sizes the geometry kernel's per-thread arrays).") ;
         auto w = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, q.w) ;
         auto c = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, q.c) ;
         double G[sh_ncoef][sh_ncoef] = {} ;
