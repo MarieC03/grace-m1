@@ -29,11 +29,14 @@ function(add_kokkos_test target_name source_file)
     target_include_directories(${target_name} PRIVATE "${HEADER_DIR}")
     target_compile_options(${target_name} PRIVATE -g)
 
-    # Common linking libraries
+    # Common linking libraries.  MPI::MPI_CXX is here for its INCLUDE path, not
+    # its library: p4est's sc.h includes <mpi.h>, and kokkos_tests_main links MPI
+    # PRIVATE, so nothing else hands these sources the MPI include directory.
     target_link_libraries(${target_name} PRIVATE 
     kokkos_tests_main
     Catch2::Catch2
     Kokkos::kokkos
+    MPI::MPI_CXX
     p4est::sc 
     spdlog::spdlog 
     ZLIB::ZLIB
