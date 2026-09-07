@@ -121,9 +121,12 @@ struct outflows:
  * @brief Radiation energy and number luminosity through spherical detectors.
  *
  * For each registered detector sphere the diagnostic integrates
- *   L_E^(s) = ∫ (FRADX_s * x/r + FRADY_s * y/r + FRADZ_s * z/r) r² dΩ
- * per neutrino species s.  The conserved flux variables FRADX/Y/Z already
- * carry the factor sqrt(g), so the integral is in code-unit energy flux.
+ *   L_E^(s) = ∮ (alpha F^i - beta^i E) n_i r² dΩ,   F^i = gamma^ij F_j,
+ * per neutrino species s.  The conserved variables ERAD/FRADX/Y/Z carry the
+ * factor sqrt(gamma) and FRAD holds the LOWERED flux, so the 3-metric is
+ * interpolated on the sphere to raise the index before the projection on the
+ * coordinate normal n_i = x_i/r.  On a stationary metric this is the flux of
+ * the conserved Killing energy.
  *
  * Uses the same "outflows" parameter block (detector_names) as the mass
  * outflow diagnostic.
@@ -137,7 +140,12 @@ struct m1_outflows :
     // Local index into ivals (state variables interpolated to sphere)
     enum loc_var_idx_t : int {
         // Metric
-        BETAXL=0, BETAYL, BETAZL, ALPL,
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+        GXXL=0, GXYL, GXZL, GYYL, GYZL, GZZL,
+#else
+        GTXXL=0, GTXYL, GTXZL, GTYYL, GTYZL, GTZZL, CHIL,
+#endif
+        BETAXL, BETAYL, BETAZL, ALPL,
 #if GRACE_M1_NU_SPECIES >= 1
         E1L, FX1L, FY1L, FZ1L,
 #endif
@@ -181,6 +189,11 @@ struct m1_outflows :
     {
         // Radiation flux components per species (state array indices)
         this->var_interp_idx = {
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+            GXX_, GXY_, GXZ_, GYY_, GYZ_, GZZ_,
+#else
+            GTXX_, GTXY_, GTXZ_, GTYY_, GTYZ_, GTZZ_, CHI_,
+#endif
             BETAX_, BETAY_, BETAZ_, ALP_
 #if GRACE_M1_NU_SPECIES >= 1
             , ERAD1_, FRADX1_, FRADY1_, FRADZ1_
