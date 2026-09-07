@@ -20,15 +20,26 @@ split by metric mode in `test/CMakeLists.txt`); the M1 build keeps its usual sui
 
 ## Runs
 
-| parfile | build | quadrants | check (laptop result at the coarser twin) |
+Submit them with `examples/lbm/submit_lbm_hunter.sh`, which runs `ctest -L lbm` as a gate and
+then the parfiles below on one MI300A node (4 ranks, one per APU).  `qsub -v WHICH=z4,RUN_CTEST=0`
+selects a subset.
+
+All the high-resolution parfiles use **24^3 blocks**: with 4 ghost zones those are 32^3 padded,
+367 MB per quadrant, against 90 MB for a 12^3 block that holds only a fifth of the useful cells.
+Per interior cell that is 22 kB versus 52 kB.  512 quadrants is ~188 GB, comfortable on one node.
+
+| parfile | build | grid | check (laptop result at coarser resolution) |
 |---|---|---|---|
-| `lbm_sphere_wave_ks_hr.yaml` | Cowling | 512 x 12^3, dx 0.1875, ~40 GB | `∫lbm_ekill1` (Killing energy) constant to round-off (1.6e-10 by t = 2 at dx 0.375 on 64 quadrants) until the shell reaches the excision or the boundary |
-| `lbm_curved_beam_hr.yaml` | Cowling | 512 x 12^3, ~40 GB | `scripts/lbm_radial_profile.py FILE blob 7.7`: pulse centroid on the analytic null geodesic within 1 cell |
-| `lbm_tov_cowling_hr.yaml`, `lbm_tov_z4_hr.yaml` | Cowling, Z4 | 64 x 16^3, dx 0.47, ~8.6 GB | `scripts/lbm_compare_scalars.py A/output_scalar B/output_scalar 1e-3`: the two agree to the Z4c truncation error (1.4e-4 at dx 0.94, 3e-5 at dx 0.625); `∫lbm_ekill1` constant to round-off (7e-13 at dx 0.94) in Cowling (conservative remap) |
-| `m1_crossed_beams.yaml` | M1 | 8 x 16^3 | M1 twin of `test/configs/lbm_crossed_beams.yaml` (imex222 at cfl 0.25, same end time). Two orthogonal free-streaming pencils cross at the origin: the LBM lets them through (on-axis E decays smoothly, no feature at the crossing), M1 merges them (on-axis E collapses 100x within three cells of the crossing and the energy moves into the diagonal quadrant, where M1 carries 3x the LBM's). `scripts/lbm_radial_profile.py FILE crossed 0.125 0.0625` |
-| `m1_tov_cowling.yaml` | M1 | 8 x 16^3 | M1 twin of the Cowling TOV flash (imex222, same grid and dt); M1 keeps `∫alpha Erad1 dV` (the Killing energy, beta = 0) constant to 2e-5. The LBM's default conservative remap (`lbm.curved_remap`) keeps `∫lbm_ekill1` to 7e-13 over 9 M; the pointwise sweep loses 12% at this resolution (first order in dx) |
-| `lbm_puncture_z4_hr.yaml` | Z4 | 64 x 16^3, dx 0.1875, ~8.6 GB | `scripts/lbm_escape_fraction.py output_volume/volume_out_000000.h5 output_scalar/Lrad_nu1_R9.dat`: energy escaping through R9 vs the analytic Schwarzschild escape fraction; measured/predicted = 1.03 at dx 0.375 by t = 32 |
-| `test/configs/lbm_shadow.yaml` | Cowling | cluster size | shadow contrast (`lbm_radial_profile.py FILE shadow 0.1 0.4`); the fixed stencil spreads the beam to ~10 deg |
+| `lbm_crossed_beams_hr.yaml` | Cowling | 192^3, dx 0.0104 | two orthogonal beams cross and pass through each other, 24 cells across each beam. `lbm_radial_profile.py FILE crossed 0.125 0.0104`. M1 merges them into one diagonal beam (`m1_crossed_beams.yaml`): on-axis E collapses 100x within three cells of the crossing |
+| `lbm_shadow_hr.yaml` | Cowling | 192^3, dx 0.0052 | the geometric shadow behind an opaque sphere stays dark; core was 40-50x dimmer than the rim at dx 1/128 |
+| `lbm_sphere_wave_ks_hr.yaml` | Cowling | 192^3, dx 0.09375 | `∫lbm_ekill1` constant to round-off (5.7e-12 over 11 steps measured on GPU) until the shell reaches the excision at t = 2.2, then a smooth absorption ramp |
+| `lbm_curved_beam_hr.yaml` | Cowling | dx 0.09375 | `lbm_radial_profile.py FILE blob 7.7`: pulse centroid on the analytic null geodesic within a cell |
+| `lbm_tov_cowling_hr.yaml`, `lbm_tov_z4_hr.yaml` | Cowling, Z4 | dx 0.15625 | `lbm_compare_scalars.py A B 1e-3`: the pair differs only by Z4c truncation error (8.6e-6 at dx 0.47). `∫lbm_ekill1` conserved to round-off in both (4.5e-13 on GPU) |
+| `lbm_puncture_z4_hr.yaml` | Z4 | dx 0.125, to t = 32 | `lbm_escape_fraction.py output_volume/volume_out_000000.h5 output_scalar/Lrad_nu1_R9.dat`: energy through the r = 9 detector against the analytic Schwarzschild escape fraction, 1.04 at dx 0.375 |
+| `m1_crossed_beams.yaml`, `m1_tov_cowling.yaml` | M1 | as their twins | M1 comparisons: the crossed beams merge, and M1 conserves the TOV Killing energy where the pointwise LBM sweep would have lost 12 % |
+
+Each run writes the xy, xz and yz slices into `output_surface` at ~10 frames, a few MB per run,
+which is what to download rather than the volume files.
 
 The puncture and TOV Z4 runs report the geometry-pass cost at the end (`lbm.report_timings`): on
 the laptop the per-step geodesic map (rays, fit and claim weights) costs about 2.5x the LBM sweep

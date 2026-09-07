@@ -1,23 +1,22 @@
-# LBM curved streaming on a TOV star (Font A0, ideal gas, from examples/grmhd/A0_z4c_lowres.yaml):
-# isotropic flash from a ball of radius 4 at the star's centre (alpha_c ~ 0.6), octant grid,
-# dx = 0.9375, 8 quadrants.  Check: the volume integral of lbm_ekill1 (Killing energy) is
-# conserved to the discretisation level, and scripts/lbm_compare_scalars.py against the twin run
-# (Cowling vs Z4) agrees to the Z4c truncation error.  force_unit_wavespeed keeps dt identical
-# in both builds (the null coordinate speed is < 1 inside the star).
-# Cowling reference for lbm_tov_z4.yaml (identical apart from the z4c block).
+# LBM curved streaming on a TOV star (Font A0), dx = 0.15625, octant grid.
+# An isotropic flash from a ball of radius 4 at the centre.  Run the Cowling and the
+# Z4c twin and compare with scripts/lbm_compare_scalars.py A B 1e-3: they differ
+# only by the Z4c truncation error.  lbm_ekill1 is conserved to round-off in both.
+# 24^3 blocks with 4 ghost zones are 32^3 padded, 367 MB per quadrant; 12^3 blocks
+# cost 2.4x that per useful cell.  One MI300A node (4 ranks, 512 GB) holds ~512 of them.
 # Build: -DGRACE_RADIATION_SCHEME=LBM -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
 name: "lbm_tov_cowling_hr"
 amr: {
-  npoints_block_x: 16,
-  npoints_block_y: 16,
-  npoints_block_z: 16,
+  npoints_block_x: 24,
+  npoints_block_y: 24,
+  npoints_block_z: 24,
   xmin: 0., xmax: 30.,
   ymin: 0., ymax: 30.,
   zmin: 0., zmax: 30.,
   reflection_symmetries: {x: true, y: true, z: true},
   n_ghostzones: 4,
-  initial_refinement_level: 2,
-  max_refinement_level: 2,
+  initial_refinement_level: 3,
+  max_refinement_level: 3,
   regrid_every: -1,
   regrid_at_postinitial: false,
   n_fmr_boxes: 0
@@ -30,9 +29,9 @@ IO: {
   scalar_output_every: 1,
   scalar_output_minmax: ["Erad1", "alp", "rho"],
   scalar_output_integral: ["Erad1", "lbm_ekill1", "dens"],
-  volume_output_every: 40,
+  volume_output_every: 60,
   volume_output_cell_variables: ["Erad1", "lbm_ekill1", "alp", "rho"],
-  plane_surface_output_every: 8,
+  plane_surface_output_every: 24,
   plane_surface_output_cell_variables: ["Erad1", "lbm_ekill1", "alp", "rho"],
   sphere_surface_output_every: -1,
   diagnostic_output_every: -1,
@@ -49,7 +48,7 @@ evolution: {
   time_stepper: "rk3",
   cfl_factor: 0.25,
   force_unit_wavespeed: true,
-  final_iteration: 80,
+  final_iteration: 240,
   termination_condition: "iteration"
 }
 grmhd: {

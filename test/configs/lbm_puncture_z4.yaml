@@ -94,5 +94,5 @@ outflows:       { detector_names: ["R9"] }
 adm_integrals:  { detector_names: [] }
 gw_integrals:   { detector_names: [] }
 bh_diagnostics: { detector_names: [] }
-co_tracker:     { tracker_names: [] }
+co_tracker:     { n_cos: 0 }
 checkpoints: { checkpoint_at_startup: false, checkpoint_at_termination: false }
