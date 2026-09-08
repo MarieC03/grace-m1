@@ -1,0 +1,80 @@
+# BISECTION RUN, not a physics test: lbm_curved_beam_hr with the conservative remap
+# turned off.  The conservative sweep shares each source bin out by its claim weight,
+# and those weights are gathered per block, so an inconsistency at a quadrant face
+# shows up as a block-shaped patch -- which a delta-seeded beam cannot average away.
+# "pointwise" removes that machinery entirely and keeps only the characteristic
+# solution, at the cost of not conserving the Killing energy.
+# If the blocks vanish here, they come from the claim weights; if they survive, they
+# come from the geodesic map or the seeding.
+name: "lbm_curved_beam_hr_pointwise"
+amr: {
+  npoints_block_x: 24,
+  npoints_block_y: 24,
+  npoints_block_z: 24,
+  xmin: -0.75, xmax: 8.25,
+  ymin: -9., ymax: 9.,
+  zmin: -9., zmax: 9.,
+  n_ghostzones: 4,
+  initial_refinement_level: 2,
+  max_refinement_level: 2,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 1,
+  info_output_max_reductions: ["Erad1", "lbm_geom_flag"],
+  scalar_output_every: 1,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1", "lbm_ekill1"],
+  volume_output_every: 24,
+  plane_surface_output_every: 8,
+  plane_surface_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  volume_output_cell_variables: ["m1", "rates", "lbm", "alp", "rho"],
+  output_extra_quantities: true
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.9,
+  force_unit_wavespeed: false,
+  final_iteration: 96,
+  termination_condition: "iteration"
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  excision: { excision_criterion: "radius", excision_radius: 1.8 },
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+m1: {
+  id_type: "curved_beam",
+  curved_beam_test: { z_min: 6.0, z_max: 6.75 },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+lbm: {
+  bc_kind: "none",
+  initial_data: "intensities",
+  streaming: "curved_fixed",
+  curved_remap: "pointwise",
+  report_timings: true
+}
+coordinate_system: { is_kerr_schild: true, bh_spin: 0.0 }
+checkpoints: { checkpoint_at_termination: false }
