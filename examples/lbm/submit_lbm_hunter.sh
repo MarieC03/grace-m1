@@ -53,6 +53,7 @@ if [ "${RUN_CTEST}" = "1" ]; then
 fi
 
 if [ "${WHICH}" = "cowling" ] || [ "${WHICH}" = "all" ]; then
+    launch "${BUILD_COWLING}" lbm_straight_beam_hr
     launch "${BUILD_COWLING}" lbm_crossed_beams_hr
     launch "${BUILD_COWLING}" lbm_shadow_hr
     launch "${BUILD_COWLING}" lbm_sphere_wave_ks_hr

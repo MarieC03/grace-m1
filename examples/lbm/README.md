@@ -24,12 +24,18 @@ Submit them with `examples/lbm/submit_lbm_hunter.sh`, which runs `ctest -L lbm` 
 then the parfiles below on one MI300A node (4 ranks, one per APU).  `qsub -v WHICH=z4,RUN_CTEST=0`
 selects a subset.
 
+With `-DGRACE_LBM_STENCIL=Lebedev53` every run costs 3.2x the memory (974 directions
+against 302), so 512 quadrants of 24^3 goes from ~188 GB to ~550 GB: use two nodes, or drop
+to `initial_refinement_level: 2`.  The direction count is a compile-time constant, so this is
+a full rebuild and old checkpoints will not load.
+
 All the high-resolution parfiles use **24^3 blocks**: with 4 ghost zones those are 32^3 padded,
 367 MB per quadrant, against 90 MB for a 12^3 block that holds only a fifth of the useful cells.
 Per interior cell that is 22 kB versus 52 kB.  512 quadrants is ~188 GB, comfortable on one node.
 
 | parfile | build | grid | check (laptop result at coarser resolution) |
 |---|---|---|---|
+| `lbm_straight_beam_hr.yaml` | Cowling | 192^3, dx 0.0104 | a single pencil must stay collimated; the transverse rms grows linearly at the stencil's opening half-angle (7.2 deg for Lebedev29, 4.0 for Lebedev53, printed in the startup banner) and `\|F\|/E` on the axis holds at 0.984. The cleanest measurement of the angular error |
 | `lbm_crossed_beams_hr.yaml` | Cowling | 192^3, dx 0.0104 | two orthogonal beams cross and pass through each other, 24 cells across each beam. `lbm_radial_profile.py FILE crossed 0.125 0.0104`. M1 merges them into one diagonal beam (`m1_crossed_beams.yaml`): on-axis E collapses 100x within three cells of the crossing |
 | `lbm_shadow_hr.yaml` | Cowling | 192^3, dx 0.0052 | the geometric shadow behind an opaque sphere stays dark; core was 40-50x dimmer than the rim at dx 1/128 |
 | `lbm_sphere_wave_ks_hr.yaml` | Cowling | 192^3, dx 0.09375 | `∫lbm_ekill1` constant to round-off (5.7e-12 over 11 steps measured on GPU) until the shell reaches the excision at t = 2.2, then a smooth absorption ramp |
