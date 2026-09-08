@@ -146,6 +146,15 @@ endif()
 # tables for the adaptive scheme are just more files.
 set(GRACE_LBM_STENCIL "Lebedev29" CACHE STRING
     "LBM direction stencil: table file under data/lbm/ (e.g. Lebedev29 = 302 directions)")
+# Offer the tables that actually exist, so ccmake and cmake-gui give a list to
+# pick from rather than a free-text field.
+file(GLOB _lbm_tables RELATIVE "${CMAKE_SOURCE_DIR}/data/lbm" "${CMAKE_SOURCE_DIR}/data/lbm/*")
+list(FILTER _lbm_tables EXCLUDE REGEX "\\.(md|txt)$")
+list(SORT _lbm_tables)
+if(_lbm_tables)
+    set_property(CACHE GRACE_LBM_STENCIL PROPERTY STRINGS ${_lbm_tables})
+endif()
+unset(_lbm_tables)
 set(GRACE_LBM_NDIR 0)
 if(GRACE_ENABLE_LBM)
     set(_lbm_table "${CMAKE_SOURCE_DIR}/data/lbm/${GRACE_LBM_STENCIL}")
