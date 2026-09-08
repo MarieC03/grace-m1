@@ -321,7 +321,12 @@ inline void compute_metric_derivatives(var_array_t const& state, var_array_t& au
         metric_array_t m ; FILL_METRIC_ARRAY(m, state, q, i,j,k) ;
         triad_t const tr(m) ;
         auto const bl = m.lower(m._beta) ;
-        aux(i,j,k,LBM_SQRTG_,q) = m.sqrtg() ;
+        // sqrt(gamma) <= 0 marks a cell the conservative remap must not touch:
+        // it neither claims nor is claimed from.  The metric is singular at a
+        // puncture and merely garbage inside an excision, and an unguarded
+        // NaN here would survive the `<= 0` test and poison the claim weights.
+        double const sg = m.sqrtg() ;
+        aux(i,j,k,LBM_SQRTG_,q) = Kokkos::isfinite(sg) ? sg : 0.0 ;
         for ( int a = 0; a < 3; ++a ) {
             double const ba = bl[0]*tr.e[0][a] + bl[1]*tr.e[1][a] + bl[2]*tr.e[2][a] ;
             aux(i,j,k,LBM_BTRIAD_+a,q) = Kokkos::isfinite(ba) ? ba : 0.0 ;

@@ -311,7 +311,7 @@ struct system_t {
             coef[f][c] = aux(i,j,k,LBM_SH_ + sh_ncoef*f + c, q) ;
         double xc[3] ; coords.get_physical_coordinates(i,j,k,q,xc) ;
         double const sg_i = aux(i,j,k,LBM_SQRTG_,q) ;
-        if ( sg_i <= 0. ) return ;   // outside the band where the geometry is defined
+        if ( !(sg_i > 0.) ) return ;   // no usable geometry here (see compute_metric_derivatives)
         for ( int d = 0; d < ndir(); ++d ) {
             departure_t dep ;
             if ( !departure(i,j,k,q,d,coef,xc,dep) ) continue ;
@@ -319,7 +319,7 @@ struct system_t {
             for ( int cc = 0; cc < 8; ++cc ) {
                 int const ci = dep.i0[0] + ((cc>>2)&1), cj = dep.i0[1] + ((cc>>1)&1), ck = dep.i0[2] + (cc&1) ;
                 double const sg_c = aux(ci,cj,ck,LBM_SQRTG_,q) ;
-                if ( sg_c <= 0. ) continue ;
+                if ( !(sg_c > 0.) ) continue ;
                 for ( int kk = 0; kk < 3; ++kk ) {
                     int const dp = dep.vid[kk] ;
                     aux(ci,cj,ck,LBM_WCLAIM_+dp,q) += dep.w[cc] * dep.lam[kk] * S3wd / (sg_c * st.weight(dp)) ;
@@ -380,7 +380,11 @@ struct system_t {
                     for ( int kk = 0; kk < 3; ++kk ) {
                         int const dp = dep.vid[kk] ;
                         double const kap_c = Kokkos::fmax(alp_c - (bc[0]*st.cx(dp) + bc[1]*st.cy(dp) + bc[2]*st.cz(dp)), kappa_min) ;
-                        double const Wc = Kokkos::fmax(aux(ci,cj,ck,LBM_WCLAIM_+dp,q), 1e-300) ;
+                        // A source nothing claimed, or one whose weight is not finite,
+                        // contributes nothing: fmax() would silently turn a NaN into
+                        // 1e-300 and hand back an intensity of order 1e300.
+                        double const Wc = aux(ci,cj,ck,LBM_WCLAIM_+dp,q) ;
+                        if ( !(Wc > 1e-300) ) continue ;
                         double const g = dep.w[cc] * dep.lam[kk] * kap_c / Wc ;
                         for ( int s = 0; s < nspecies(); ++s ) v[s] += g * I_old(ci,cj,ck,idx(s,dp),q) ;
                     }
