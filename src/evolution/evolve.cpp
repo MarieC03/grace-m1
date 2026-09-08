@@ -1185,7 +1185,6 @@ void compute_fluxes(
     //**************************************************************************************************/
     //**************************************************************************************************/
     // compute x flux
-    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_x_flux")
                 , flux_x_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1194,6 +1193,7 @@ void compute_fluxes(
         #endif
     }) ;
     #ifdef GRACE_ENABLE_M1
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_x_flux")
                 , flux_x_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1224,7 +1224,6 @@ void compute_fluxes(
     }) ;
     #endif
     //**************************************************************************************************/
-    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_y_flux")
                 , flux_y_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1233,6 +1232,7 @@ void compute_fluxes(
         #endif
     }) ;
     #ifdef GRACE_ENABLE_M1
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_y_flux")
                 , flux_y_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1263,7 +1263,6 @@ void compute_fluxes(
     }) ;
     #endif
     //**************************************************************************************************/
-    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_grmhd_z_flux")
                 , flux_z_policy_mhd
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1272,6 +1271,7 @@ void compute_fluxes(
         #endif
     }) ;
     #ifdef GRACE_ENABLE_M1
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_z_flux")
                 , flux_z_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1597,7 +1597,6 @@ void compute_emfs(
     } ) ;
     //**************************************************************************************************/
     // compute EMF -- z (stag xy)
-    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "EMF_Z")
                 , emf_policy_z
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
@@ -1688,6 +1687,9 @@ void add_fluxes_and_source_terms(
         ) ;
     //**************************************************************************************************/
     #ifdef GRACE_ENABLE_M1
+    // Gated with the M1 fluxes above: applying the geometric sources without
+    // them would drift the radiation the trigger is supposed to keep frozen.
+    if ( m1_is_active() )   // M1 activation trigger
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_sources_M1")
                 , policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
