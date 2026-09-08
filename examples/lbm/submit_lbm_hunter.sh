@@ -29,6 +29,10 @@ RUN_ROOT=/lustre/hpe/ws13/ws13.a/ws/xfpmiler-BHNS/lbm-runs/${PBS_JOBID:-interact
 
 WHICH=${WHICH:-all}
 RUN_CTEST=${RUN_CTEST:-1}
+# RUNS overrides WHICH: a space-separated list of parfile names to run, e.g.
+#   qsub -v RUNS=lbm_curved_beam_hr,RUN_CTEST=0 examples/lbm/submit_lbm_hunter.sh
+# Names containing z4 use BUILD_Z4, the rest BUILD_COWLING.
+RUNS=${RUNS:-}
 
 # One rank per APU: 4 chips, cores 0-23/24-47/48-71/72-95, GPUs 0-3.
 launch () {   # launch <build> <parfile-name>
@@ -50,6 +54,17 @@ if [ "${RUN_CTEST}" = "1" ]; then
         ( cd "${b}" && MPICH_GPU_SUPPORT_ENABLED=0 ctest -L lbm --output-on-failure ) \
             || { echo "REGRESSION FAILED in ${b} -- stopping before the big runs"; exit 1; }
     done
+fi
+
+if [ -n "${RUNS}" ]; then
+    for name in ${RUNS}; do
+        case "${name}" in
+            *z4*) launch "${BUILD_Z4}" "${name}" ;;
+            *)    launch "${BUILD_COWLING}" "${name}" ;;
+        esac
+    done
+    echo "=== done ($(date +%H:%M:%S)); output under ${RUN_ROOT}"
+    exit 0
 fi
 
 if [ "${WHICH}" = "cowling" ] || [ "${WHICH}" = "all" ]; then
