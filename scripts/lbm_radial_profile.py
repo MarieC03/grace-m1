@@ -7,7 +7,7 @@ the angular RMS scatter and the analytic reference for the LBM test problems.
 
 usage: lbm_radial_profile.py FILE.h5 {sphere R t | diffusion ks t0 t dx | shadow x0 x1 | beam z0 [M] [dx] | blob z0 [M]}
 """
-import subprocess, sys, math
+import re, subprocess, sys, math
 
 def _h5dump(path, dset):
     out = subprocess.run(["h5dump", "-d", dset, "-y", "-w", "100000", path],
@@ -15,21 +15,37 @@ def _h5dump(path, dset):
     body = out.split("DATA {", 1)[1].split("}", 1)[0]
     return [float(v) for v in body.replace("\n", " ").split(",") if v.strip()]
 
+def _cells_nvert(path):
+    """Nodes per cell, from the /Cells dataspace in the h5dump header."""
+    hdr = subprocess.run(["h5dump", "-H", "-d", "/Cells", path],
+                         capture_output=True, text=True, check=True).stdout
+    m = re.search(r"DATASPACE\s+SIMPLE \{ \( \d+, (\d+) \)", hdr)
+    return int(m.group(1)) if m else 8
+
 def read(path, names):
+    """Cell centres and the requested cell data.
+
+    /Cells is 8 nodes per cell in the volume output and 4 in the plane slices, so
+    the node count is taken from the file rather than assumed -- getting it wrong
+    mis-groups every cell and produces plausible-looking nonsense.
+    """
     try:
         import h5py
         with h5py.File(path, "r") as f:
             pts = f["/Points"][...].reshape(-1, 3).tolist()
-            cells = f["/Cells"][...].reshape(-1, 8).tolist()
+            nvert = f["/Cells"].shape[1]
+            cells = f["/Cells"][...].reshape(-1, nvert).tolist()
             data = {n: f["/" + n][...].ravel().tolist() for n in names if "/" + n in f}
     except ImportError:
         p = _h5dump(path, "/Points"); pts = [p[i:i+3] for i in range(0, len(p), 3)]
-        c = _h5dump(path, "/Cells");  cells = [[int(v) for v in c[i:i+8]] for i in range(0, len(c), 8)]
+        c = _h5dump(path, "/Cells")
+        nvert = _cells_nvert(path)
+        cells = [[int(v) for v in c[i:i+nvert]] for i in range(0, len(c), nvert)]
         data = {}
         for n in names:
             try: data[n] = _h5dump(path, "/" + n)
             except subprocess.CalledProcessError: pass   # not written by this run
-    centres = [[sum(pts[k][a] for k in cell) / 8.0 for a in range(3)] for cell in cells]
+    centres = [[sum(pts[k][a] for k in cell) / float(len(cell)) for a in range(3)] for cell in cells]
     return centres, data
 
 def main():

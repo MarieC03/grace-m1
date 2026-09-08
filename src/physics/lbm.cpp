@@ -353,6 +353,8 @@ void set_initial_data()
     auto& aux   = grace::variable_list::get().getaux() ;
     system_t sys{ state, state, aux, get_stencil(),
                   grace::variable_list::get().getspacings(), get_params() } ;
+    // Above this |F|/E the ansatz is saturated and carries no more information.
+    double const flux_max = flux_of_sigma(get_stencil().sigma_max) ;
 
     // Full padded extent: the outer ghosts get the isotropic floor, i.e. no
     // incoming radiation, which the streaming pull-back then respects.
@@ -379,9 +381,24 @@ void set_initial_data()
             double Ft[3] ; tr.to_triad(Fuc, Ft) ;
             double fh[3] = {0.,0.,1.} ;
             if ( Fn > 1e-300 ) { fh[0] = Ft[0]/Fn ; fh[1] = Ft[1]/Fn ; fh[2] = Ft[2]/Fn ; }
-            for ( int d = 0; d < ndir(); ++d ) {
-                double const ndotf = sys.st.cx(d)*fh[0] + sys.st.cy(d)*fh[1] + sys.st.cz(d)*fh[2] ;
-                state(i,j,k,idx(s,d),q) = Kokkos::fmax(vmf_intensity(sigma, E, ndotf), sys.p.I_fl) ;
+            // A beam wants a delta in direction space, which no von Mises-Fisher can
+            // be: the ansatz saturates at sigma_max and seeds a cone that then spreads
+            // at its own opening angle.  Put such a cell's energy in the nearest
+            // stencil direction instead -- exact under the quadrature, and streamed
+            // without spreading (lbm.initial_data).
+            if ( sys.p.seed_intensities && Fn > flux_max*E ) {
+                int d0 = 0 ; double best = -2. ;
+                for ( int d = 0; d < ndir(); ++d ) {
+                    double const nd = sys.st.cx(d)*fh[0] + sys.st.cy(d)*fh[1] + sys.st.cz(d)*fh[2] ;
+                    if ( nd > best ) { best = nd ; d0 = d ; }
+                }
+                for ( int d = 0; d < ndir(); ++d ) state(i,j,k,idx(s,d),q) = sys.p.I_fl ;
+                state(i,j,k,idx(s,d0),q) = E / sys.st.weight(d0) ;
+            } else {
+                for ( int d = 0; d < ndir(); ++d ) {
+                    double const ndotf = sys.st.cx(d)*fh[0] + sys.st.cy(d)*fh[1] + sys.st.cz(d)*fh[2] ;
+                    state(i,j,k,idx(s,d),q) = Kokkos::fmax(vmf_intensity(sigma, E, ndotf), sys.p.I_fl) ;
+                }
             }
         }
         // Moment slots consistent with the quadrature from t = 0.

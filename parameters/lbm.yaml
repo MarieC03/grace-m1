@@ -71,6 +71,25 @@ lbm:
       dynamical (Z4) metric the frozen-slice error dominates, so 1e-6 is
       plenty there.
 
+  initial_data:
+    type: keyword
+    allowed: ["moments", "intensities"]
+    default: "moments"
+    description: >
+      How the populations are seeded from the M1 initial-data moments.
+      "moments": invert a von Mises-Fisher ansatz for every direction.  Exact for
+      an isotropic field and right for any physical initial data, but its
+      sharpness is capped at the quadrature's sigma_max, so a free-streaming beam
+      (|F|/E -> 1) comes out as a cone of half-angle 1/sqrt(sigma_max), about 7
+      degrees for Lebedev29, and spreads at that angle for the rest of the run.
+      "intensities": a cell whose |F|/E exceeds what the ansatz can represent gets
+      all of its E in the single nearest stencil direction instead, which the
+      quadrature reproduces exactly and semi-Lagrangian streaming carries without
+      spreading (the reference does this for its flat beam test).  Cells below
+      that threshold still take the ansatz, so a diffuse region is unaffected.
+      Exact only when the beam axis is a stencil direction; a tilted beam is
+      mispointed by up to half the direction spacing.
+
   curved_remap:
     type: keyword
     allowed: ["conservative", "pointwise"]

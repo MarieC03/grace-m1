@@ -75,6 +75,7 @@ m1: {
   backreaction: { enabled: false }
 }
 lbm: {
-  bc_kind: "none"
+  bc_kind: "none",
+  initial_data: "intensities"
 }
 checkpoints: { checkpoint_at_termination: false }

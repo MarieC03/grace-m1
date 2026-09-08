@@ -161,6 +161,7 @@ struct params_t {
     double geodesic_tol ;     //!< lbm.geodesic_tolerance
     int    geom_every ;       //!< lbm.geometry_update_every (Z4: rebuild the geodesic map every N steps)
     bool   conservative ;     //!< lbm.curved_remap = conservative: claim-normalised (Killing-energy conserving) sweep
+    bool   seed_intensities ; //!< lbm.initial_data = intensities: beam cells get a single-direction seed
     int    lut_nth, lut_nph ; //!< lbm.velocity_lut
     excision_t ex ;           //!< grmhd.excision (shared with M1)
 } ;
@@ -179,6 +180,7 @@ inline params_t get_params() {
     p.geodesic_tol    = grace::get_param<double>("lbm","geodesic_tolerance") ;
     p.geom_every      = grace::get_param<int>("lbm","geometry_update_every") ;
     p.conservative    = grace::get_param<std::string>("lbm","curved_remap") == "conservative" ;
+    p.seed_intensities = grace::get_param<std::string>("lbm","initial_data") == "intensities" ;
     p.lut_nth         = grace::get_param<int>("lbm","velocity_lut","n_theta") ;
     p.lut_nph         = grace::get_param<int>("lbm","velocity_lut","n_phi") ;
     p.ex.by_radius    = grace::get_param<std::string>("grmhd","excision","excision_criterion") == "radius" ;

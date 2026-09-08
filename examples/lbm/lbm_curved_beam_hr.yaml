@@ -71,6 +71,7 @@ m1: {
 }
 lbm: {
   bc_kind: "none",
+  initial_data: "intensities",
   streaming: "curved_fixed",
   report_timings: true
 }
