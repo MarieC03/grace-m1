@@ -595,6 +595,16 @@ class grace_runtime_impl_t
             #ifdef GRACE_M1_PHOTONS
             , "Erad_ph", "Nrad_ph", "Frad_ph[0]"
             #endif
+            #ifdef GRACE_M1_OPTICAL_DEPTH
+            // Also in "cons", where they live as evolved scalars; repeated here
+            // because they are read as an M1 quantity (the eikonal tau policy),
+            // and a run that plots the rates wants the depth that shaped them.
+            // Electron flavours only -- see variable_indices.hh.
+            , "optd1"
+            #if GRACE_M1_NU_SPECIES >= 3
+            , "optd2"
+            #endif
+            #endif // GRACE_M1_OPTICAL_DEPTH
             #endif // GRACE_ENABLE_M1
         };
 
