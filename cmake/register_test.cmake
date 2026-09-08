@@ -94,6 +94,9 @@ function(add_grace_test target_name source_file)
     $<$<BOOL:${GRACE_ENABLE_PROFILING}>:GRACE_GPUProfiling>
     $<$<BOOL:${GRACE_ENABLE_VTK}>:VTK::VTK>
     $<$<BOOL:${GRACE_ENABLE_LORENE}>:LORENE::LORENE>
+    # grace_objects carries import_kadath.cpp whenever FUKA is on, so the tests
+    # need the same Kadath link the grace target has (CMakeLists.txt).
+    $<$<BOOL:${GRACE_ENABLE_FUKA}>:Kadath::kadath>
     $<$<BOOL:${GRACE_ENABLE_TWO_PUNCTURES}>:TwoPunctures::TwoPunctures>
     )
     if ( GRACE_ENABLE_VTK )
