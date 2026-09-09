@@ -337,6 +337,88 @@ struct straight_beam_m1_id_t {
     coord_array_t<GRACE_NSPACEDIM> pcoords ;
 } ;
 
+/**
+ * @brief Two free-streaming beams that cross at the origin.
+ *
+ * One pencil enters from -x travelling along +x, the other from -y travelling
+ * along +y, each of half-width hw in the two transverse directions and starting
+ * at `start` (negative), so the source patches are disjoint for hw < |start| and
+ * the ghost zones keep feeding them under lbm.bc_kind = none.  Both carry
+ * F^i = E n^i, the free-streaming limit.
+ *
+ * The point of the test: where they overlap, |F|/E = 1/sqrt(2), which a
+ * two-moment closure reads as a broad distribution and transports along the
+ * diagonal, merging the beams; a transport scheme that resolves direction space
+ * lets them cross and emerge unchanged.  The reference (Olsen & Rezzolla 2025,
+ * BeamCrossing) crosses at 37 degrees, which needs the adaptive stencil to
+ * separate; orthogonal beams are resolvable with the fixed one.
+ */
+struct crossed_beams_m1_id_t {
+    crossed_beams_m1_id_t(
+        m1_atmo_params_t _atmo,
+        m1_excision_params_t _excision,
+        coord_array_t<GRACE_NSPACEDIM> _pcoords,
+        double _hw, double _start
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), hw(_hw), start(_start)
+    {}
+
+    m1_id_t KOKKOS_INLINE_FUNCTION
+    operator() (
+        VEC(int const i, int const j, int const k),
+        int const q) const
+    {
+        m1_id_t id ;
+        double xyz[3] = {
+            pcoords(VEC(i,j,k),0,q),
+            pcoords(VEC(i,j,k),1,q),
+            pcoords(VEC(i,j,k),2,q)
+        };
+
+        id.erad1 = atmo.E_fl ;
+        id.fradx1 = id.frady1 = id.fradz1 = 0. ;
+
+        bool const in_z = Kokkos::fabs(xyz[2]) <= hw ;
+        if ( in_z && xyz[0] <= start && Kokkos::fabs(xyz[1]) <= hw ) {
+            id.erad1 = 1.0 ; id.fradx1 = 1.0 ;
+        }
+        if ( in_z && xyz[1] <= start && Kokkos::fabs(xyz[0]) <= hw ) {
+            id.erad1 = 1.0 ; id.frady1 = 1.0 ;
+        }
+        // Unit mean energy: N tracks E (beams and atmosphere alike).
+        id.nrad1 = id.erad1 ;
+        limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
+
+        #if GRACE_M1_NU_SPECIES >= 3
+            id.erad2 = id.erad1 ;
+            id.nrad2 = id.nrad1 ;
+            id.fradx2 = id.fradx1 ; id.frady2 = id.frady1 ; id.fradz2 = id.fradz1 ;
+            id.erad3 = id.erad1 ;
+            id.nrad3 = id.nrad1 ;
+            id.fradx3 = id.fradx1 ; id.frady3 = id.frady1 ; id.fradz3 = id.fradz1 ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+            id.erad4 = id.erad1 ;
+            id.nrad4 = id.nrad1 ;
+            id.fradx4 = id.fradx1 ; id.frady4 = id.frady1 ; id.fradz4 = id.fradz1 ;
+            id.erad5 = id.erad1 ;
+            id.nrad5 = id.nrad1 ;
+            id.fradx5 = id.fradx1 ; id.frady5 = id.frady1 ; id.fradz5 = id.fradz1 ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+            id.eradph = id.erad1 ;
+            id.nradph = id.nrad1 ;
+            id.fradxph = id.fradx1 ; id.fradyph = id.frady1 ; id.fradzph = id.fradz1 ;
+        #endif
+
+        return id ;
+    }
+
+    m1_atmo_params_t atmo ;
+    m1_excision_params_t excision ;
+    coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    double hw, start ;
+} ;
+
 struct scattering_diffusion_m1_id_t {
     scattering_diffusion_m1_id_t(
         m1_atmo_params_t _atmo,
@@ -537,8 +619,10 @@ struct curved_beam_m1_id_t {
         m1_atmo_params_t _atmo,
         m1_excision_params_t _excision,
         coord_array_t<GRACE_NSPACEDIM> _pcoords,
-        var_array_t _state
-    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), state(_state)
+        var_array_t _state,
+        double _z_min = 3.0, double _z_max = 3.5
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), state(_state),
+        z_min(_z_min), z_max(_z_max)
     {}
 
     m1_id_t KOKKOS_INLINE_FUNCTION
@@ -558,7 +642,7 @@ struct curved_beam_m1_id_t {
 
         if ( xyz[0] <= 0.015625 and
             xyz[1] < 0.25 and xyz[1] > - 0.25 and
-            xyz[2] <= 3.5 and xyz[2] >= 3.0 ) {
+            xyz[2] <= z_max and xyz[2] >= z_min ) {
             id.erad1 = 1.0 ;
             // F_i F^i = E * E
             metric_array_t metric ;
@@ -574,6 +658,13 @@ struct curved_beam_m1_id_t {
             auto Fd = metric.lower({FX,FY,FZ}) ;
             id.fradx1 = Fd[0] ; id.frady1 = Fd[1] ; id.fradz1 = Fd[2] ;
         }
+        // Unit mean energy: N tracks E, as in every other beam ID here.  Without
+        // this the packet keeps the ATMOSPHERE number density while E is set to 1,
+        // i.e. a mean energy E/N of 1/E_fl = 1e14 -- Nrad is then meaningless, and
+        // anything that reads it (the T_nu spectral correction, number-lepton
+        // backreaction) sees the packet as atmosphere.  Harmless for the vacuum
+        // trajectory test itself, since with no opacities E and N decouple.
+        id.nrad1 = id.erad1 ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;
@@ -603,6 +694,10 @@ struct curved_beam_m1_id_t {
     m1_atmo_params_t atmo ;
     m1_excision_params_t excision ;
     var_array_t state ;
+    //! Source patch height.  The impact parameter b = z0/sqrt(1-2M/z0) must stay
+    //! clear of b_crit = 3*sqrt(3) = 5.196 or the packet is captured: z0 = 3.25
+    //! gives b = 5.24, marginal.  z0 ~ 6.4 gives b ~ 7.7 and a clean escape.
+    double z_min, z_max ;
     coord_array_t<GRACE_NSPACEDIM> pcoords ;
 } ;
 

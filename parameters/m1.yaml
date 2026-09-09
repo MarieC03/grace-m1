@@ -12,7 +12,7 @@ m1:
 
   id_type:
     type: keyword
-    allowed: ["straight_beam", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium"]
+    allowed: ["straight_beam", "crossed_beams", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium"]
     default: "zero"
     description: >
       Initialization prescription for radiation fields.  "equilibrium" sets
@@ -269,6 +269,59 @@ m1:
         Ye, and Ymu for up to 6 neutrino species.
 
 
+
+  crossed_beams_test:
+    type: schema
+    description: >
+      Two free-streaming pencils crossing at the origin, one entering from -x
+      along +x and one from -y along +y (m1.id_type = crossed_beams).  The
+      source patches are disjoint for half_width < |start|.
+
+      Where the beams overlap |F|/E = 1/sqrt(2), which a two-moment closure
+      reads as a broad distribution and transports along the diagonal: the two
+      beams MERGE.  That failure is the point of the test -- it is the standard
+      demonstration that a two-moment closure cannot represent crossing
+      radiation, and the reason for a direction-resolved scheme.
+
+    half_width:
+      type: double
+      default: 0.125
+      range: "(0,*)"
+      description: >
+        Transverse half-width of each beam.
+
+    start:
+      type: double
+      default: -0.5
+      range: "(*,0)"
+      description: >
+        Each beam's source patch runs from the domain edge to this coordinate.
+
+  curved_beam_test:
+    type: schema
+    description: >
+      Height of the source patch of the curved-beam test (m1.id_type =
+      curved_beam) on the Schwarzschild background in Kerr-Schild coordinates.
+
+      The packet is launched along +x at height z0 ~ (z_min+z_max)/2, so its
+      impact parameter is b = z0 / sqrt(1 - 2M/z0).  This must stay clear of
+      b_crit = 3 sqrt(3) = 5.196 or the packet is captured rather than bent:
+      z0 = 3.25 gives b = 5.24, marginal.  The defaults keep the historical
+      3.0-3.5 patch; z_min 6.0 / z_max 6.75 gives b = 7.7 and a clean escape.
+
+    z_min:
+      type: double
+      default: 3.0
+      range: "(0,*)"
+      description: >
+        Lower edge of the source patch [code units].
+
+    z_max:
+      type: double
+      default: 3.5
+      range: "(0,*)"
+      description: >
+        Upper edge of the source patch [code units].
 
   scattering_test:
     type: schema

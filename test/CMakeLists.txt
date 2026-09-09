@@ -365,6 +365,34 @@ set_tests_properties(metric_test PROPERTIES LABELS "fast;coords")
 # shrinking argc; it does NOT rewrite argv, and Catch2 reads the first argc
 # entries of the original array.  So any Catch2 tag filter MUST come first and
 # --grace-parfile MUST come last, otherwise Catch2 sees "--grace-parfile" and
+# ---------------------------------------------------------------------------
+# M1 transport test problems -- the two-moment twins of the LBM suite, so the
+# two schemes can be compared on identical grids and end times.  Each parfile
+# header states what to look at; several are EXPECTED to show the closure
+# failing (crossed beams merge, the shadow fills in), which is the point.
+#   straight_beam  free streaming, closure exact          -> M1 should pass
+#   diffusion      optically thick, closure exact         -> M1 should pass
+#   crossed_beams  two beams overlap, closure ill-posed   -> beams merge
+#   shadow         beam into an absorber                  -> umbra fills in
+#   curved_beam    null geodesic on Schwarzschild (needs Kerr-Schild coords)
+# Run-only: they assert the binary completes.  The quantitative comparison is
+# in the headers and is done against the LBM twin of the same name.
+if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES GREATER_EQUAL 1)
+    set(_m1_runs m1_straight_beam m1_crossed_beams m1_diffusion m1_shadow)
+    # The curved beam needs a static Kerr-Schild background.
+    if(GRACE_METRIC_EVOL STREQUAL "COWLING")
+        list(APPEND _m1_runs m1_curved_beam)
+    endif()
+    foreach(_c ${_m1_runs})
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
+        # GRACE appends to existing scalar files, so start each run from a clean directory
+        add_test(NAME ${_c}_run
+            COMMAND sh -c "rm -rf output_scalar output_volume output_surface logs && exec mpirun -n 1 $<TARGET_FILE:grace> --grace-parfile ${CMAKE_CURRENT_BINARY_DIR}/configs/${_c}.yaml"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
+        set_tests_properties(${_c}_run PROPERTIES LABELS "m1;integration" TIMEOUT 900)
+    endforeach()
+endif()
+
 # errors.  "~[leptonic]" excludes the leptonic case (which needs eos_type =
 # leptonic + a 5-species build); it is a no-op tag in non-5-species builds
 # where that test case is compiled out.

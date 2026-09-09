@@ -1,0 +1,74 @@
+# M1 shadow: the straight beam driven into an absorbing sphere r < 3/64 at the origin
+# (kappa_a = 1e6, eas kind "test" SHADOW_CAST), casting a shadow downstream.
+# M1 transports along the flux direction, so where the beam wraps around the absorber
+# the fluxes converge and the umbra closes from the sides -- a direction-resolved
+# scheme keeps a sharp dark core instead.  Check: the transverse E profile behind the
+# sphere, and how fast the dark core fills in with distance.
+# 8 quadrants of 32^3 over [-0.5,0.5]^3, dx = 1/64: beam half-width 4 cells, absorber
+# radius 3 cells; t = 0.75 (192 steps at cfl 0.25) when the front reaches x = 0.5.
+# The LBM twin test/configs/lbm_shadow.yaml is the CLUSTER-sized version of the same
+# problem (level 2, dx = 1/128, ~30 GB) and is deliberately not registered as a ctest;
+# raise initial/max_refinement_level to 2 and final_iteration to 385 to match it.
+# Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
+name: "m1_shadow"
+amr: {
+  npoints_block_x: 32,
+  npoints_block_y: 32,
+  npoints_block_z: 32,
+  xmin: -0.5, xmax: 0.5,
+  ymin: -0.5, ymax: 0.5,
+  zmin: -0.5, zmax: 0.5,
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 32,
+  info_output_max_reductions: ["Erad1"],
+  scalar_output_every: 32,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1"],
+  volume_output_every: 192,
+  volume_output_cell_variables: ["m1", "rates"],
+  plane_surface_output_every: 192,
+  plane_surface_output_cell_variables: ["m1", "rates"],
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  output_extra_quantities: true
+}
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.25,
+  force_unit_wavespeed: true,
+  final_iteration: 192,
+  termination_condition: "iteration"
+}
+m1: {
+  id_type: "shadow",
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+checkpoints: { checkpoint_at_termination: false }
