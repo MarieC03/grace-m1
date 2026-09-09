@@ -290,7 +290,7 @@ write_leptonic_cold_table(
     const std::string& filename,
     const Kokkos::View<double**, Kokkos::HostSpace>& h_data,
     const Kokkos::View<double*,  Kokkos::HostSpace>& h_rho,
-    double T_cold)
+    double T_cold, double energy_shift, double baryon_mass)
 {
     int const nrho  = static_cast<int>(h_rho .extent(0)) ;
     int const ncols = static_cast<int>(h_data.extent(1)) ;
@@ -308,6 +308,16 @@ write_leptonic_cold_table(
         << "  ncols=" << ncols + 1   // +1 because reader expects rho prepended
         << "  col0=log(rho)  col1=log(T)  col2=Ye  col3=Ymu"
            "  col4=log(P)  col5=log(eps+shift)  col6=cs2  col7=entropy\n" ;
+
+    // Metadata in the reader's "key = value" form (read_eos_table.cpp), so the
+    // table is self-describing: col5 is log(eps + energy_shift), and rho is a
+    // rest-mass density built with THIS baryon mass -- both are needed to
+    // recover a physical eps, and to convert n_B <-> rho consistently.
+    out << std::scientific << std::setprecision(17)
+        << "# energy_shift = " << energy_shift << "\n"
+        << "# baryon_mass = "  << baryon_mass  << "\n"
+        << "# npoints = "      << nrho         << "\n" ;
+    out << std::defaultfloat ;
 
     // Line 2: number of rows
     out << nrho << "\n" ;
@@ -462,7 +472,8 @@ void generate_leptonic_cold_table(
 
     // ---- Optional .grace dump ----
     if (!output_filename.empty() && parallel::mpi_comm_rank() == 0) {
-        write_leptonic_cold_table(output_filename, h_data, h_rho, T_cold) ;
+        write_leptonic_cold_table(output_filename, h_data, h_rho, T_cold,
+                                  eos.energy_shift, eos.get_baryon_mass()) ;
     }
 }
 
