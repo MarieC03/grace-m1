@@ -5,8 +5,13 @@
 # b = z0/sqrt(1-2M/z0) ~ 7.7 here, bending by ~4M/b.
 # NB b_crit = 3 sqrt(3) = 5.196: the schema default patch (z 3.0-3.5, z0 = 3.25) gives
 # b = 5.24 and is marginally captured, which is why this file sets 6.0-6.75.
-# Check: the E-weighted centroid of the packet against the analytic null geodesic.
-# Outflow ghosts, so the packet is not refilled.
+# Check: the E-weighted centroid of the bent beam against the analytic null geodesic.
+# int(Erad1) RISES as the domain fills with beam -- that is the injection, not a
+# conservation failure; it should plateau once the beam reaches the far boundary.
+# NB Erad and Nrad diverge by construction: the geometric source terms act on E
+# and F only (m1.hh compute_source_terms), never on N, because neutrino NUMBER is
+# conserved along the flow while its ENERGY redshifts.  MEASURED E-weighted mean
+# E/N over the beam at t = 9.19: 1.36.  E/N = 1 everywhere at t = 0.
 # LBM twin: test/configs/lbm_curved_beam.yaml (same grid, rk3 at cfl 0.9, 24 iterations).
 # 32 quadrants of 12^3, dx = 0.375.
 # Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
@@ -49,6 +54,12 @@ evolution: {
 }
 m1: {
   id_type: "curved_beam",
+  # Fixed ghosts (the ID), i.e. the beam is CONTINUOUSLY INJECTED at the -x face
+  # and the test runs toward a steady bent beam -- the standard form of this
+  # problem, and what the LBM twin does.  The default "outgoing" is wrong here:
+  # the source patch abuts xmin, so a zeroth-order outflow extrapolation feeds
+  # the beam back in anyway, just less controllably.
+  bc_kind: "none",
   curved_beam_test: { z_min: 6.0, z_max: 6.75 },
   eas: { kinds: ["test"] },
   backreaction: { enabled: false }
