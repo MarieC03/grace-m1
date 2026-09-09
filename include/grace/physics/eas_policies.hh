@@ -971,16 +971,19 @@ struct neutrinos_eas_op
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
             #if GRACE_M1_NU_SPECIES >= 1
             eps_rad[0] = fluid_frame_eps_mev<0>(VEC(i,j,k), q, metric) ;
-            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
+            #endif
+            // Species index 1 exists only from 3 species on: at 1 species
+            // m1_erad_idx<1>() is N_HRSC_CC, i.e. the first metric slot.
             #if GRACE_M1_NU_SPECIES >= 5
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
             eps_rad[2] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             eps_rad[3] = fluid_frame_eps_mev<3>(VEC(i,j,k), q, metric) ;
             eps_rad[4] = fluid_frame_eps_mev<4>(VEC(i,j,k), q, metric) ;
-            #else
+            #elif GRACE_M1_NU_SPECIES >= 3
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
             // 3-species: evolved index 2 is NUX -> rates slot NUX (4).
             eps_rad[NUX] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             #endif
-            #endif // GRACE_M1_NU_SPECIES >= 1
         }
 
         // The rate source (weakhub table vs analytic) and the tau policy are
