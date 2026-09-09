@@ -878,24 +878,36 @@ void apply_fofc_correction(
     bool const m1_on = m1_is_active() ;   // captured by value into the kernels below
     #endif
 
-    // Flux correction runs when hydro (not frozen) OR M1 needs it.
-    #if !defined(GRACE_FREEZE_HYDRO) || defined(GRACE_ENABLE_M1)
+    // Hydro and M1 recomputes are SEPARATE launches, mirroring the main flux
+    // pass.  Fused into one lambda, the inlined hydro flux (4D EOS with muons)
+    // plus every species' M1 flux overran the register budget and spilled past
+    // the scratch aperture on MI300A (HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION
+    // with muons and >= 3 species).  The hydro launch takes the same
+    // LaunchBounds<256,2> as compute_grmhd_*_flux, for the same reason.
+    #ifdef GRACE_NO_LB
+    using fofc_face_policy_t = Kokkos::RangePolicy<> ;
+    #else
+    using fofc_face_policy_t = Kokkos::RangePolicy<Kokkos::LaunchBounds<256, 2>> ;
+    #endif
+    #ifndef GRACE_FREEZE_HYDRO
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_fluxes_fofc")
-                , host_face_cnt(0)
+                , fofc_face_policy_t(0, host_face_cnt(0))
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fx(idx) ;
         #ifdef GRACE_ENABLE_M1
-        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
-        // falls through and no radiation flux is recomputed.
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
-        #endif
-        #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
-        if ( m & 1 )            // bit 0: recompute hydro only where hydro flagged it
+        // bit 0: recompute hydro only where hydro flagged it
+        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & 1) ) return ;
         #endif
         grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
-        #endif
-        #ifdef GRACE_ENABLE_M1
+    }) ;
+    #endif
+    #ifdef GRACE_ENABLE_M1
+    if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_M1_fluxes_fofc")
+                , host_face_cnt(0)
+                , KOKKOS_LAMBDA (int idx) {
+        auto qijk = fofc_fx(idx) ;
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;   // bit s+1 = species s
         if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -908,24 +920,27 @@ void apply_fofc_correction(
         #ifdef GRACE_M1_PHOTONS
         if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
-        #endif
     }) ;
+    #endif
+    #ifndef GRACE_FREEZE_HYDRO
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_fluxes_fofc")
-                , host_face_cnt(1)
+                , fofc_face_policy_t(0, host_face_cnt(1))
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fy(idx) ;
         #ifdef GRACE_ENABLE_M1
-        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
-        // falls through and no radiation flux is recomputed.
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
-        #endif
-        #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
-        if ( m & 1 )
+        // bit 0: recompute hydro only where hydro flagged it
+        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),1,qijk.q) & 1) ) return ;
         #endif
         grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
-        #endif
-        #ifdef GRACE_ENABLE_M1
+    }) ;
+    #endif
+    #ifdef GRACE_ENABLE_M1
+    if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_M1_fluxes_fofc")
+                , host_face_cnt(1)
+                , KOKKOS_LAMBDA (int idx) {
+        auto qijk = fofc_fy(idx) ;
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),1,qijk.q) ;   // bit s+1 = species s
         if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -938,24 +953,27 @@ void apply_fofc_correction(
         #ifdef GRACE_M1_PHOTONS
         if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
-        #endif
     }) ;
+    #endif
+    #ifndef GRACE_FREEZE_HYDRO
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_fluxes_fofc")
-                , host_face_cnt(2)
+                , fofc_face_policy_t(0, host_face_cnt(2))
                 , KOKKOS_LAMBDA (int idx) {
         auto qijk = fofc_fz(idx) ;
         #ifdef GRACE_ENABLE_M1
-        // Idle M1: keep only bit 0 (hydro) so every per-species branch below
-        // falls through and no radiation flux is recomputed.
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & (m1_on ? ~0 : 1) ;
-        #endif
-        #ifndef GRACE_FREEZE_HYDRO
-        #ifdef GRACE_ENABLE_M1
-        if ( m & 1 )
+        // bit 0: recompute hydro only where hydro flagged it
+        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),2,qijk.q) & 1) ) return ;
         #endif
         grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
-        #endif
-        #ifdef GRACE_ENABLE_M1
+    }) ;
+    #endif
+    #ifdef GRACE_ENABLE_M1
+    if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_M1_fluxes_fofc")
+                , host_face_cnt(2)
+                , KOKKOS_LAMBDA (int idx) {
+        auto qijk = fofc_fz(idx) ;
+        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),2,qijk.q) ;   // bit s+1 = species s
         if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
         if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
@@ -967,7 +985,6 @@ void apply_fofc_correction(
         #endif
         #ifdef GRACE_M1_PHOTONS
         if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        #endif
         #endif
     }) ;
     #endif
