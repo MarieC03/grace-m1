@@ -100,7 +100,13 @@ grmhd: {
     filename: "BNS_HEAD_ON.sfho_good.50.0.0.2.48169.q1.0.0.11",
     id_dir: "/mnt/rafast/miler/codes/fuka_old/codes/FUKA/BNS_headon/bin/Release",
     fuka_id_type: "BNS",
-    set_shift_to_zero: true
+    set_shift_to_zero: true,
+    # FUKA solved this star COLD (eostype Cold_Table): it has no temperature.
+    # Rebuild eps/p at temp_fl rather than asking the EOS which T reproduces
+    # FUKA's eps -- that inversion amplifies table interpolation noise by
+    # ~m_u/(2 a T), giving a temperature bimodal between the 0.1 MeV floor and
+    # a spurious ~2 MeV root, and negative pressures in the crust.
+    reset_eps: true
   },
 
   atmosphere: {

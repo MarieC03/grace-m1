@@ -643,6 +643,28 @@ grmhd:
       default: true
       description: >
         set the initial shift to zero (recommended)
+    reset_eps:
+      type: bool
+      default: false
+      description: >
+        Discard FUKA's specific internal energy and rebuild the thermodynamic
+        state at fixed temperature grmhd.atmosphere.temp_fl, keeping only rho
+        and the velocities from the ID.
+
+        FUKA solves a COLD, barotropic star (eostype Cold_Table): it carries no
+        temperature.  With false (the default, and the behaviour before this
+        parameter existed) GRACE recovers one by inverting eps against the
+        finite-temperature EOS.  That inversion is ill conditioned at nuclear
+        density -- eps_thermal ~ a T^2 / m_u, so dT/deps ~ m_u/(2 a T) and a
+        1e-5 difference in eps, i.e. table interpolation noise, is worth ~1 MeV.
+        The recovered temperature is then noise, bimodal between the T floor
+        (where no root exists) and a spurious hot root, and the pressure can
+        come out negative where the EOS extrapolates below its floor.
+
+        Set true whenever the ID is cold and the EOS is tabulated.  The star is
+        then thermodynamically consistent with GRACE's own EOS at temp_fl,
+        which is what FUKA solved for; it is no longer in exact equilibrium
+        with FUKA's pressure, so expect a small initial ring-down.
 
   two_punctures:
     type: schema

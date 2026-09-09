@@ -67,6 +67,7 @@ struct fuka_id_t {
 
         atmo_params = get_atmo_params() ;
         zero_shift = get_param<bool>("grmhd","fuka","set_shift_to_zero") ;
+        reset_eps  = get_param<bool>("grmhd","fuka","reset_eps") ;
 
         // FUKA exports rho using the atomic mass unit (m_u) convention.
         // If a tabulated EOS is in use the user should be aware that if
@@ -150,7 +151,6 @@ struct fuka_id_t {
     {
         grmhd_id_t id ;
         eos_err_t eos_err ;
-        bool reset_eps{false} ; // fixme
         // FUKA's rho and eps are imported directly (slots 16 and 20 in _data);
         // see import_kadath.cpp for the layout.
         double e = _data(16,i,j,k,q) ;
@@ -183,13 +183,14 @@ struct fuka_id_t {
             id.vy =  _data(18,VEC(i,j,k),q) ;
             id.vz =  _data(19,VEC(i,j,k),q) ;
             if (reset_eps) {
-                // assume "zero" temperature
-                // for ideal gas t_atmo **must** be
-                // K rho_atmo^(Gamma-1) with K from the
-                // ID for this to be self-consistent.
-                double h, csnd2 ;
+                // Cold ID: rebuild (eps, p, s) at temp_fl instead of asking the
+                // EOS which temperature reproduces FUKA's eps -- that inversion
+                // amplifies table noise by ~m_u/(2 a T), see grmhd.yaml.
+                // For an ideal gas temp_fl **must** be K rho_atmo^(Gamma-1)
+                // with K from the ID for this to be self-consistent.
+                double csnd2 ;
                 id.temp = temp_atm ;
-                id.press = _eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                id.press = _eos.press_eps_csnd2_entropy__temp_rho_ye_ymu(
                     id.eps, csnd2, id.entropy, id.temp, id.rho, id.ye, id.ymu, eos_err
                 ) ;
             } else {
@@ -240,6 +241,7 @@ struct fuka_id_t {
     vview_t _data ;
 
     bool zero_shift ;
+    bool reset_eps  ;   //!< rebuild eps/p at temp_fl instead of inverting FUKA's eps for T
 
 } ;
 
