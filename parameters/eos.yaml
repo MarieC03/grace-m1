@@ -209,8 +209,23 @@ eos:
       default: -1
       range: "[-1,*)"
       description: >
-        Temperature [MeV] of the cold slice GRACE generates; values below the
-        EOS table minimum are raised to it. Always replaces cold_table_filename.
+        Working temperature floor [MeV].  One number, used for three things
+        that must agree: the EOS temperature clamp (limit_temp), the cold
+        slice GRACE generates, and therefore the temperature the FUKA/TOV
+        importers write into the initial data.  Always replaces
+        cold_table_filename, which is not read.
+
+        Leave unset (-1) to have it chosen automatically as
+        (1+1e-2)*T_table_min -- the same margin tabulated_eos uses.  Set it
+        explicitly to pin a floor; a value at or below the table minimum
+        cannot be represented and is raised to the automatic one, with a
+        warning.
+
+        Do NOT expect the raw table minimum to work: a state sitting exactly
+        on it has eps equal to the table's smallest representable eps, so the
+        `eps <= eps_lo` bracket test raises EOS_EPS_TOO_LOW on every c2p call
+        and c2p rewrites tau and S_i in every cell.  Keep
+        grmhd.atmosphere.temp_fl at or above this floor.
 
     cold_table_output_filename:
       type: string

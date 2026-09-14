@@ -755,12 +755,18 @@ TEST_CASE("c2p leptonic: temp_fl below the table min never fires T_FLOORED; "
         auto const r = leptonic_c2p_single(
             eos, atmo, excision, c2p_pars,
             rho, t_min, ye0, ymu0, W, cons_mutate_none{}) ;
-        INFO("T=" << r[LEP_TEMP] << " (table min " << t_min << ")") ;
+        INFO("T=" << r[LEP_TEMP] << " (table min " << t_min
+             << ", EOS floor " << eos.temperature_floor() << ")") ;
         REQUIRE(r[LEP_BIT_TFLOOR] == 0.0) ;
         REQUIRE(r[LEP_BIT_ATMO]   == 0.0) ;
         REQUIRE(r[LEP_FLOORED]    == 0.0) ;
-        // Recovered T sits at the table minimum, not at the floor.
-        REQUIRE_THAT(r[LEP_TEMP], Catch::Matchers::WithinRel(t_min, 1e-8)) ;
+        // Recovered T sits at the EOS's working temperature floor, not at
+        // atmo.temp_fl -- and not on the raw table boundary, which is where
+        // eps equals the table's smallest representable value and every c2p
+        // call would raise EOS_EPS_TOO_LOW (see limit_temp).
+        REQUIRE_THAT(r[LEP_TEMP],
+                     Catch::Matchers::WithinRel(eos.temperature_floor(), 1e-8)) ;
+        REQUIRE(eos.temperature_floor() > t_min) ;
     }
 
     SECTION("temp_fl above exp(ltempmin): T-floor branch fires, velocity kept") {

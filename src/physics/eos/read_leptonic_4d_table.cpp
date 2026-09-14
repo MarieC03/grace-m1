@@ -626,7 +626,14 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     auto const cold_fname = grace::get_param<std::string>("eos","leptonic","cold_table_filename") ;
 
     GRACE_INFO("Reading 4D leptonic EOS table: {}", fname) ;
-    GRACE_INFO("Leptonic cold table:           {}", cold_fname) ;
+    // NB eos.leptonic.cold_table_filename is NOT read: the cold slice is
+    // regenerated from the 4D tables at the temperature floor in step 8 and
+    // replaces whatever a file would have supplied.  Saying so beats parsing
+    // a file and silently discarding it, which is what this used to do.
+    if ( !cold_fname.empty() ) {
+        GRACE_INFO("Leptonic cold table:           generated at the temperature "
+                   "floor; '{}' is ignored.", cold_fname) ;
+    }
 
     hid_t file = H5Fopen(fname.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT) ;
     ASSERT(file >= 0, "Could not open leptonic HDF5: " << fname) ;
@@ -776,11 +783,11 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     Kokkos::deep_copy(v_ymu, h_ymu) ;
 
     // -------------------------------------------------------
-    //  5) Cold slice.
+    //  5) Cold slice placeholder.  The real slice is generated in step 8
+    //     at the temperature floor; the ctor just needs well-formed views.
     // -------------------------------------------------------
-    Kokkos::View<double**, grace::default_execution_space> cold_tabs ;
-    Kokkos::View<double*,  grace::default_execution_space> cold_lrho ;
-    read_leptonic_cold_table(cold_fname, cold_tabs, cold_lrho,leptonic_eos_4d_t::COLD_VIDX::N_CTAB_VARS+1) ;
+    Kokkos::View<double**, grace::default_execution_space> cold_tabs("cold_tabs_placeholder", 0, 0) ;
+    Kokkos::View<double*,  grace::default_execution_space> cold_lrho("cold_lrho_placeholder", 0) ;
 
     // -------------------------------------------------------
     //  6) Limits.  rho/T/Y_e/eps/h/atmosphere come from the
@@ -878,11 +885,44 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     ) ;
 
     // -------------------------------------------------------
-    //  8) Generate cold slice via beta equilibrium and patch in.
+    //  8) Resolve the working temperature floor, then generate the cold
+    //     slice AT THAT SAME TEMPERATURE.
+    //
+    //     One number drives three things that must agree: the EOS clamp
+    //     (limit_temp), the cold slice the FUKA/TOV importers invert
+    //     against, and the temperature those importers write into the ID.
+    //     They used to be set independently -- cold_table_temperature for
+    //     the slice, the raw table boundary for the clamp -- which let a
+    //     cold star be initialised exactly on ltempmin, where eps equals
+    //     the table's own minimum and every c2p call raises
+    //     EOS_EPS_TOO_LOW -> C2P_RESET_TAU/STILDE.
+    //
+    //     Unset (<= 0) means "use the table minimum" (FIL parity).
     // -------------------------------------------------------
-    double T_cold = grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
-    if ( T_cold < std::exp(eos.ltempmin) ) {
-        T_cold = std::exp(eos.ltempmin) ;
+    double const T_requested =
+        grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
+    double const T_cold = eos.set_temperature_floor(T_requested) ;
+    double const T_tab_min = std::exp(eos.ltempmin) ;
+
+    if ( T_requested > 0. && T_requested <= T_tab_min ) {
+        GRACE_WARN("eos.leptonic.cold_table_temperature = {} is below the table "
+                   "minimum {}; the interpolator has nothing there.  Using {}.",
+                   T_requested, T_tab_min, T_cold) ;
+    } else if ( T_requested <= 0. ) {
+        GRACE_INFO("Temperature floor = the table minimum, {:.6g} MeV (FIL "
+                   "parity).  Set eos.leptonic.cold_table_temperature to raise "
+                   "it.", T_cold) ;
+    } else {
+        GRACE_INFO("Temperature floor set to {:.6g} MeV (table minimum {:.6g}); "
+                   "used for the EOS clamp and the cold slice alike.",
+                   T_cold, T_tab_min) ;
+    }
+    if ( temp_atm < T_cold ) {
+        GRACE_WARN("grmhd.atmosphere.temp_fl = {} is below the EOS temperature "
+                   "floor {}; EOS lookups clamp up to the floor, so the "
+                   "atmosphere and any ID written at temp_fl will not be "
+                   "thermodynamically consistent with it.  Set temp_fl >= {}.",
+                   temp_atm, T_cold, T_cold) ;
     }
 
     std::string cold_out_fname = "" ;

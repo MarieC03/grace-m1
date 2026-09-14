@@ -38,7 +38,14 @@
  *             leptonic mu_e is unreliable in that corner) and mu_mu falls
  *             back to the muon rest mass -- which then goes through the
  *             dilute-Ymu ramp like any other raw value (see mumu_core).
- *           - sound speed comes from the baryon table alone.
+ *           - sound speed comes from the baryon table when it carries the
+ *             electrons (add_ele_contribution = false, FIL parity); with an
+ *             electron-free baryon table it is rebuilt from the additive
+ *             P and eps, because TABCSND2 is then baryons-only and goes
+ *             NEGATIVE across the spinodal.  See total_csnd2.
+ *           - Y_mu at or below the dilute threshold contributes nothing to
+ *             P/eps/entropy and its table lookup is skipped entirely
+ *             (GMUNU dilute-Ymu prescription).  See muons_resolved.
  *           - the Y_le axis is linear; the Y_mu axis is log-spaced
  *             (ymu_table in the HDF5 stores log(Ymu)).
  *
@@ -222,7 +229,35 @@ class leptonic_eos_4d_t
     {
         lrhomin  = bar_logrho[0] ; lrhomax  = bar_logrho[bar_logrho.size()-1] ;
         ltempmin = bar_logT[0]   ; ltempmax = bar_logT[bar_logT.size()-1]    ;
+        // Default until the loader resolves the requested floor; never the
+        // bare table boundary (see limit_temp).
+        set_temperature_floor(-1.) ;
     }
+
+    /**
+     * @brief Resolve the working temperature floor.
+     *
+     * @param requested  explicit floor [MeV], or <= 0 to choose automatically.
+     * @return the floor actually adopted.
+     *
+     * Automatic = the table minimum exactly, matching FIL
+     * (leptonic_eos_implementation.hh:133, `xtemp = eos_tempmin`).  Sitting
+     * on the boundary is safe because the eps and press brackets clamp
+     * silently there -- see ltemp__eps_lrho_ye_ymu and
+     * docs/leptonic-eos-fil-parity.md.  An explicit value below the table
+     * minimum cannot be honoured (the interpolator has nothing there) and is
+     * raised to it; the caller reports that.
+     */
+    double set_temperature_floor(double requested) {
+        double const tmin = Kokkos::exp(ltempmin) ;
+        double const tmax = Kokkos::exp(ltempmax) ;
+        temp_floor_ = ( requested > tmin ) ? requested : tmin ;
+        temp_ceil_  = tmax ;
+        if ( temp_floor_ > temp_ceil_ ) temp_floor_ = temp_ceil_ ;
+        return temp_floor_ ;
+    }
+
+    double GRACE_HOST_DEVICE temperature_floor() const { return temp_floor_ ; }
 
     // ===========================================================
     //  CRTP _impl methods
@@ -312,7 +347,7 @@ class leptonic_eos_4d_t
         double const lrho  = Kokkos::log(rho) ;
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         double const press = total_press(lrho, ltemp, ye, ymu) ;
-        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press/rho ;
         return press ;
     }
@@ -330,7 +365,7 @@ class leptonic_eos_4d_t
         double const ltemp = Kokkos::log(temp) ;
         double const press = total_press(lrho, ltemp, ye, ymu) ;
         double const eps   = total_eps  (lrho, ltemp, ye, ymu) ;
-        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press/rho ;
         return press ;
     }
@@ -348,7 +383,7 @@ class leptonic_eos_4d_t
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
         eps   = total_eps  (lrho, ltemp, ye, ymu) ;
-        csnd2 = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
         return total_press(lrho, ltemp, ye, ymu) ;
     }
 
@@ -364,7 +399,7 @@ class leptonic_eos_4d_t
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
         double const press = total_press(lrho, ltemp, ye, ymu) ;
-        csnd2   = baryon_csnd2(lrho, ltemp, ye, ymu) ;
+        csnd2   = total_csnd2 (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         h = 1. + eps + press / rho ;
         return press ;
@@ -381,7 +416,7 @@ class leptonic_eos_4d_t
         limit_temp(temp, err) ;
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
-        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        csnd2   = total_csnd2  (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         return total_eps(lrho, ltemp, ye, ymu) ;
     }
@@ -398,7 +433,7 @@ class leptonic_eos_4d_t
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
         eps     = total_eps    (lrho, ltemp, ye, ymu) ;
-        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        csnd2   = total_csnd2  (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         return total_press(lrho, ltemp, ye, ymu) ;
     }
@@ -418,7 +453,7 @@ class leptonic_eos_4d_t
         temp = Kokkos::exp(ltemp) ;
         double const press = total_press   (lrho, ltemp, ye, ymu) ;
         eps   = total_eps    (lrho, ltemp, ye, ymu) ;
-        csnd2 = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        csnd2 = total_csnd2  (lrho, ltemp, ye, ymu) ;
         h     = 1. + eps + press / rho ;
         return press ;
     }
@@ -446,7 +481,7 @@ class leptonic_eos_4d_t
         double const ltemp = ltemp__press_lrho_ye_ymu(press, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
         double const eps = total_eps(lrho, ltemp, ye, ymu) ;
-        csnd2   = baryon_csnd2 (lrho, ltemp, ye, ymu) ;
+        csnd2   = total_csnd2  (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         h = 1. + eps + press / rho ;
         return eps ;
@@ -698,6 +733,14 @@ class leptonic_eos_4d_t
 
     int nrho, nT, nye, nymu ;
     double energy_shift ;
+
+    // Working temperature bounds, strictly inside [exp(ltempmin), exp(ltempmax)].
+    // Set by set_temperature_floor() at load time from eos.leptonic.
+    // temperature_floor: explicit when the user gives one, otherwise
+    // (1+1e-2)*T_table_min to match tabulated_eos.  The SAME value generates
+    // the cold slice, so the ID, the atmosphere and the EOS clamp all agree.
+    double temp_floor_{0.} ;
+    double temp_ceil_ {0.} ;
     double lrhomin, lrhomax ;
     double ltempmin, ltempmax ;
     // If true, add electronic pressure/eps/entropy on top of the
@@ -741,6 +784,12 @@ class leptonic_eos_4d_t
     static constexpr double dilute_ymu0_ = 6.0e-4 ;
     static constexpr double dilute_dymu_ = 5.0e-5 ;
 
+    // Relative width of the "you are merely sitting on the table boundary"
+    // band in the eps and press brackets.  Inside it the clamp is silent
+    // (FIL parity); outside it the shortfall/excess is a real signal and is
+    // flagged.  Round-off is ~1e-16 and any physical deficit is >> 1e-8.
+    static constexpr double eps_bracket_tol_ = 1.0e-8 ;
+
     // Ramp the raw tabulated mu_mu smoothly to zero below Y_mu,0 instead of
     // carrying it through: at the Y_mu floor the raw table value sits near
     // the muon rest mass (105.66 MeV -- see [[muon-table-low-ymu-numbers]]),
@@ -751,17 +800,26 @@ class leptonic_eos_4d_t
     //   mu_mu^used = 0                                    Y_mu <= Y_mu,0
     //              = mu_mu^tab * tanh[(Y_mu-Y_mu,0)/dY_mu]  Y_mu >  Y_mu,0
     //
-    // Deliberately blocks ONLY mu_mu -- NOT the muon P/eps/entropy terms in
-    // total_press/total_eps/total_entropy, which stay exact: measured that at
-    // this same Y_mu floor the muon PAIR population can carry real thermal
-    // energy (eps_mu up to ~14 at rho=1e11, T=50 MeV) even while the NET Y_mu
-    // sits at the floor -- only the net chemical potential is pathological
-    // there, not the thermodynamics.
+    // Below Y_mu,0 the muon P/eps/entropy contributions are ZEROED and the
+    // table lookup skipped (muons_resolved), per the GMUNU dilute-Ymu
+    // prescription: an unresolved Y_mu represents physical zero, so it must
+    // not be handed to the EOS as resolved matter.  Above the threshold the
+    // tabulated P/eps/s are used raw -- the tanh ramp applies to mu_mu ONLY.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     block_mumu(double ymu, double mm_raw) const {
         return ( ymu <= dilute_ymu0_ ) ? 0.0
              : mm_raw * Kokkos::tanh((ymu - dilute_ymu0_) / dilute_dymu_) ;
     }
+
+    // Is the evolved Y_mu a resolved muon population, or numerical noise at
+    // the table floor?  Single predicate so the chemical potential
+    // (block_mumu) and the thermodynamics (total_press/_eps/_entropy) can
+    // never disagree on where the dilute band ends.  Skipping the lookup is
+    // also the cheap path: three fewer 3D interpolations plus a log() per
+    // total_* call everywhere Y_mu sits at the floor, which is most of a
+    // cold star's envelope and all of the atmosphere.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE bool
+    muons_resolved(double ymu) const { return ymu > dilute_ymu0_ ; }
 
     // Full mu_mu accessor: table lookup + atmosphere/saturation fallback +
     // dilute-Ymu blocking, all in one place so mue_mumu_mup_mun_... and
@@ -808,57 +866,131 @@ class leptonic_eos_4d_t
     total_press(double lrho, double ltemp, double ye, double ymu) const
     {
         double const yp   = table_yp(ye, ymu) ;
-        double const lymu = Kokkos::log(ymu) ;
         // The baryon table is loaded with linear_pressure=true (read_leptonic),
         // so TABPRESS is the SIGNED linear pressure — not log(P).  It is
         // negative in the nuclear spinodal (sub-saturation); the (positive)
         // lepton pressures below make the additive total positive.
         double const pb   = baryon_table.interp(lrho, ltemp, yp, TABPRESS) ;
-        double const pmm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_MINUS) ;
-        double const pmp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_PLUS)  ;
+        double       pmu  = 0.0 ;
+        if ( muons_resolved(ymu) ) {   // dilute-Ymu: skip the lookup entirely
+            double const lymu = Kokkos::log(ymu) ;
+            pmu = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_MINUS)
+                + muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_PLUS) ;
+        }
         double const pe   = add_ele_contribution
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_PLUS)
             : 0.0 ;
-        return pb + pmm + pmp + pe ;
+        return pb + pmu + pe ;
     }
 
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_eps(double lrho, double ltemp, double ye, double ymu) const
     {
         double const yp   = table_yp(ye, ymu) ;
-        double const lymu = Kokkos::log(ymu) ;
         double const eb   = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABEPS)) - energy_shift ;
-        double const emm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_MINUS) ;
-        double const emp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_PLUS)  ;
+        double       emu  = 0.0 ;
+        if ( muons_resolved(ymu) ) {   // dilute-Ymu: skip the lookup entirely
+            double const lymu = Kokkos::log(ymu) ;
+            emu = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_MINUS)
+                + muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABEPS_MU_PLUS) ;
+        }
         double const ee   = add_ele_contribution
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_PLUS)
             : 0.0 ;
-        return eb + emm + emp + ee ;
+        return eb + emu + ee ;
     }
 
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_entropy(double lrho, double ltemp, double ye, double ymu) const
     {
         double const yp   = table_yp(ye, ymu) ;
-        double const lymu = Kokkos::log(ymu) ;
         double const sb   = baryon_table.interp(lrho, ltemp, yp, TABENTROPY) ;
-        double const smm  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_MINUS) ;
-        double const smp  = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_PLUS)  ;
+        double       smu  = 0.0 ;
+        if ( muons_resolved(ymu) ) {   // dilute-Ymu: skip the lookup entirely
+            double const lymu = Kokkos::log(ymu) ;
+            smu = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_MINUS)
+                + muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABS_MU_PLUS) ;
+        }
         double const se   = add_ele_contribution
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_PLUS)
             : 0.0 ;
-        return sb + smm + smp + se ;
+        return sb + smu + se ;
     }
 
+    // TOTAL sound speed.
+    //
+    // add_ele_contribution = false: the baryon table already carries the
+    // electrons and photons, so its TABCSND2 *is* the total.  Return it
+    // unchanged -- this is exactly FIL/Margherita's behaviour
+    // (leptonic_eos_implementation.hh:611, csnd2 = vars[CS2]).
+    //
+    // add_ele_contribution = true (electron-free baryon table): TABCSND2 is
+    // then the BARYONS-ONLY sound speed while the leptons and photons supply
+    // most of the sub-nuclear pressure.  It is not merely inaccurate -- on
+    // sfho_compose_noele_0-5ye.h5 at T = 0.1 MeV it is NEGATIVE across the
+    // nuclear spinodal (2454 of 5100 grid points over 2e-4 < nb < 0.5,
+    // min -3.5e-2), because a baryons-only table is not a standalone EOS.
+    // sqrt() of that in the eigenspeeds is a NaN.  Rebuild the total from the
+    // additive P and eps instead:
+    //     cs^2 = (1/h) [ (dP/drho)|_eps + (P/rho^2) (dP/deps)|_rho ]
+    // with the two derivatives obtained from the (rho,T) partials, which ARE
+    // additive across the components:
+    //     (dP/deps)|_rho = (dP/dlnT) / (deps/dlnT)
+    //     (dP/drho)|_eps = [ (dP/dlnrho) - (dP/dlnT)(deps/dlnrho)/(deps/dlnT) ] / rho
+    // Four extra (P,eps) evaluations, paid only in the pairing that needs it.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
-    baryon_csnd2(double lrho, double ltemp, double ye, double ymu) const
+    total_csnd2(double lrho, double ltemp, double ye, double ymu) const
     {
-        return baryon_table.interp(lrho, ltemp,
-                                   table_yp(ye, ymu),
-                                   TABCSND2) ;
+        if ( !add_ele_contribution ) {
+            return clamp_csnd2(
+                baryon_table.interp(lrho, ltemp, table_yp(ye, ymu), TABCSND2) ) ;
+        }
+        // Centred differences on the table's own log axes, kept inside range.
+        constexpr double dl = 1.0e-4 ;
+        double const lr_p = Kokkos::fmin(lrhomax,  lrho  + dl) ;
+        double const lr_m = Kokkos::fmax(lrhomin,  lrho  - dl) ;
+        double const lt_p = Kokkos::fmin(ltempmax, ltemp + dl) ;
+        double const lt_m = Kokkos::fmax(ltempmin, ltemp - dl) ;
+
+        double const P_rp = total_press(lr_p, ltemp, ye, ymu) ;
+        double const P_rm = total_press(lr_m, ltemp, ye, ymu) ;
+        double const P_tp = total_press(lrho, lt_p, ye, ymu) ;
+        double const P_tm = total_press(lrho, lt_m, ye, ymu) ;
+        double const e_rp = total_eps  (lr_p, ltemp, ye, ymu) ;
+        double const e_rm = total_eps  (lr_m, ltemp, ye, ymu) ;
+        double const e_tp = total_eps  (lrho, lt_p, ye, ymu) ;
+        double const e_tm = total_eps  (lrho, lt_m, ye, ymu) ;
+
+        double const dP_dlr = (P_rp - P_rm) / Kokkos::fmax(1e-300, lr_p - lr_m) ;
+        double const dP_dlt = (P_tp - P_tm) / Kokkos::fmax(1e-300, lt_p - lt_m) ;
+        double const de_dlr = (e_rp - e_rm) / Kokkos::fmax(1e-300, lr_p - lr_m) ;
+        double const de_dlt = (e_tp - e_tm) / Kokkos::fmax(1e-300, lt_p - lt_m) ;
+
+        // Degenerate matter has de/dlnT -> 0; fall back to the isothermal
+        // derivative there rather than dividing by it.
+        double const rho  = Kokkos::exp(lrho) ;
+        double const P    = total_press(lrho, ltemp, ye, ymu) ;
+        double const eps  = total_eps  (lrho, ltemp, ye, ymu) ;
+        double const h    = 1. + eps + P/rho ;
+        bool   const thermal = Kokkos::fabs(de_dlt) > 1e-14 * (1. + Kokkos::fabs(eps)) ;
+        double const dP_de   = thermal ? dP_dlt / de_dlt : 0.0 ;
+        double const dP_drho = thermal
+            ? (dP_dlr - dP_dlt * de_dlr / de_dlt) / rho
+            :  dP_dlr / rho ;
+        return clamp_csnd2( (dP_drho + (P/(rho*rho)) * dP_de) / Kokkos::fmax(1e-300, h) ) ;
+    }
+
+    // Keep the sound speed physical.  A table that returns cs^2 <= 0 (the
+    // spinodal) or >= 1 (acausal top rows) would otherwise produce NaN or
+    // superluminal eigenspeeds in the Riemann solver.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+    clamp_csnd2(double cs2) const {
+        if ( !(cs2 > 0.) )  return 1.0e-12 ;
+        if ( cs2 > 1. )     return 1.0 ;
+        return cs2 ;
     }
 
     // ----------------------------------------------------------
@@ -914,11 +1046,19 @@ class leptonic_eos_4d_t
         (void) ye ;
         #endif
     }
+    // Clamp to the working temperature range.  By default these ARE the table
+    // bounds (FIL parity, leptonic_eos_implementation.hh:133); an explicit
+    // eos.leptonic.cold_table_temperature moves the floor up.  Sitting exactly
+    // on the boundary is safe here only because the eps and press brackets
+    // clamp silently there -- if you ever restore the flag in
+    // ltemp__eps_lrho_ye_ymu you MUST also restore a margin in this function,
+    // or every cell of a cold star gets C2P_RESET_TAU + C2P_RESET_STILDE on
+    // every c2p call.  See docs/leptonic-eos-fil-parity.md.
+    // temp_floor_/temp_ceil_ are resolved once at load time
+    // (see read_leptonic_4d_table.cpp).
     KOKKOS_INLINE_FUNCTION void limit_temp(double& temp, err_t& err) const {
-        double const tmin = Kokkos::exp(ltempmin) ;
-        double const tmax = Kokkos::exp(ltempmax) ;
-        if ( temp < tmin ) { temp = tmin ; err.set(EOS_TEMPERATURE_TOO_LOW)  ; } //(1.+1e-2)*tmin
-        if ( temp > tmax ) { temp = tmax ; err.set(EOS_TEMPERATURE_TOO_HIGH) ; } //(1.-1e-2)*tmax
+        if ( temp < temp_floor_ ) { temp = temp_floor_ ; err.set(EOS_TEMPERATURE_TOO_LOW)  ; }
+        if ( temp > temp_ceil_  ) { temp = temp_ceil_  ; err.set(EOS_TEMPERATURE_TOO_HIGH) ; }
     }
     KOKKOS_INLINE_FUNCTION void limit_entropy_rho_ye_ymu(double& entropy,
         double& rho, double& ye, double& ymu, err_t& err) const
@@ -937,10 +1077,34 @@ class leptonic_eos_4d_t
     ltemp__eps_lrho_ye_ymu(double& eps, double lrho,
                            double ye, double ymu, err_t& err) const
     {
+        // FIL PARITY (see docs/leptonic-eos-fil-parity.md).  Reaching the
+        // bottom of the eps bracket is the NORMAL state of a cold star at the
+        // temperature floor -- eps(T_min) IS the smallest eps the table can
+        // represent -- not a failure.  Margherita clamps here and returns with
+        // no error code at all (leptonic_eos_implementation.hh:188).  GRACE
+        // flagged it, and c2p.hh turns EOS_EPS_TOO_LOW into C2P_RESET_STILDE +
+        // C2P_RESET_TAU, so every cell of a cold star had its momentum and
+        // energy conservatives rewritten on every c2p call.
+        //
+        // Clamp silently within a tolerance, flag only a genuine shortfall, so
+        // a real c2p divergence is still caught.  eps_bracket_tol_ sits far
+        // above round-off (~1e-16) and far below any physical energy deficit.
         double const eps_lo = total_eps(lrho, ltempmin, ye, ymu) ;
         double const eps_hi = total_eps(lrho, ltempmax, ye, ymu) ;
-        if (eps <= eps_lo) { eps = eps_lo ; err.set(EOS_EPS_TOO_LOW)  ; return ltempmin ; }
-        if (eps >= eps_hi) { eps = eps_hi ; err.set(EOS_EPS_TOO_HIGH) ; return ltempmax ; }
+        if (eps <= eps_lo) {
+            bool const significant =
+                eps < eps_lo - eps_bracket_tol_ * Kokkos::fabs(eps_lo) ;
+            eps = eps_lo ;
+            if (significant) err.set(EOS_EPS_TOO_LOW) ;
+            return ltempmin ;
+        }
+        if (eps >= eps_hi) {
+            bool const significant =
+                eps > eps_hi + eps_bracket_tol_ * Kokkos::fabs(eps_hi) ;
+            eps = eps_hi ;
+            if (significant) err.set(EOS_EPS_TOO_HIGH) ;
+            return ltempmax ;
+        }
         auto rootfun = [this, lrho, ye, ymu, eps] (double lt) {
             return total_eps(lrho, lt, ye, ymu) - eps ;
         } ;
@@ -951,10 +1115,24 @@ class leptonic_eos_4d_t
     ltemp__press_lrho_ye_ymu(double& press, double lrho,
                              double ye, double ymu, err_t& err) const
     {
+        // Same FIL-parity treatment as the eps bracket above: a cold star at
+        // the temperature floor sits on P(T_min) by construction.
         double const p_lo = total_press(lrho, ltempmin, ye, ymu) ;
         double const p_hi = total_press(lrho, ltempmax, ye, ymu) ;
-        if (press <= p_lo) { press = p_lo ; err.set(EOS_PRESS_TOO_LOW)  ; return ltempmin ; }
-        if (press >= p_hi) { press = p_hi ; err.set(EOS_PRESS_TOO_HIGH) ; return ltempmax ; }
+        if (press <= p_lo) {
+            bool const significant =
+                press < p_lo - eps_bracket_tol_ * Kokkos::fabs(p_lo) ;
+            press = p_lo ;
+            if (significant) err.set(EOS_PRESS_TOO_LOW) ;
+            return ltempmin ;
+        }
+        if (press >= p_hi) {
+            bool const significant =
+                press > p_hi + eps_bracket_tol_ * Kokkos::fabs(p_hi) ;
+            press = p_hi ;
+            if (significant) err.set(EOS_PRESS_TOO_HIGH) ;
+            return ltempmax ;
+        }
         auto rootfun = [this, lrho, ye, ymu, press] (double lt) {
             return total_press(lrho, lt, ye, ymu) - press ;
         } ;
