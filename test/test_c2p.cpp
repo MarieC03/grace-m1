@@ -38,10 +38,12 @@
 #include <grace/physics/grmhd_helpers.hh>
 #include <grace/utils/metric_utils.hh>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 namespace {
 
@@ -1894,3 +1896,201 @@ TEST_CASE("c2p leptonic: halo cells from a hot-TOV run at it=210",
     }
 }
 #endif
+
+#ifdef GRACE_ENABLE_MUONS
+//************************************************************************************
+//  Leptonic EOS determinism.
+//
+//  The EOS must be a pure function of (rho, T, Ye, Ymu): identical inputs must give
+//  bit-identical outputs, whichever thread evaluates them and however many times the
+//  kernel is launched.  Two independent checks:
+//
+//    (a) thread consistency   -- one input point evaluated by many threads in a
+//        single launch; catches results that depend on thread or register state.
+//    (b) launch repeatability -- a grid of points evaluated in two separate
+//        launches; catches results that vary between launches.
+//
+//  Motivated by a Hunter HOT-TOV in which two identical 8-rank runs diverged at the
+//  stellar surface from iteration 1 (1-ULP seed, amplified to cell-alive-vs-atmosphere
+//  by it 20).  Bisection with Cowling + M1 off + FOFC off + entropy backup off left
+//  the muon sector of this EOS as the only difference: the tabulated EOS and
+//  leptonic-without-muons were both bit-reproducible over 21 iterations.
+//
+//  Exercises the two entry points a step actually uses:
+//    press_eps_csnd2__temp_rho_ye_ymu            -- the flux kernel, ~6x per cell
+//    press_h_csnd2_temp_entropy__eps_rho_ye_ymu  -- the Kastaun inversion
+//************************************************************************************
+namespace {
+
+enum DET_OUT : int {
+    D_PRESS = 0, D_EPS, D_CSND2,
+    D_TEMP, D_RHO, D_YE, D_YMU, D_ERR,   // in/out args: the EOS clamps them in place
+    D_KAS_PRESS, D_KAS_TEMP, D_KAS_ENT, D_KAS_H,
+    D_N
+} ;
+
+KOKKOS_INLINE_FUNCTION void
+eval_leptonic_once(leptonic_eos_4d_t const& eos,
+                   double rho, double temp, double ye, double ymu,
+                   double* out)
+{
+    // Forward hook: the call the Riemann solver makes at every reconstructed face.
+    double eps = 0.0, csnd2 = 0.0 ;
+    double r = rho, t = temp, y = ye, m = ymu ;
+    eos_err_t err ;
+    out[D_PRESS] = eos.press_eps_csnd2__temp_rho_ye_ymu(eps, csnd2, t, r, y, m, err) ;
+    out[D_EPS]   = eps  ; out[D_CSND2] = csnd2 ;
+    out[D_TEMP]  = t    ; out[D_RHO]   = r ; out[D_YE] = y ; out[D_YMU] = m ;
+    out[D_ERR]   = static_cast<double>(err.words[0]) ;
+
+    // Inverse hook: feed that eps back through the Kastaun temperature inversion.
+    double hh = 0.0, cs2 = 0.0, t2 = 0.0, s2 = 0.0 ;
+    double e2 = eps, r2 = rho, y2 = ye, m2 = ymu ;
+    eos_err_t err2 ;
+    out[D_KAS_PRESS] = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(
+        hh, cs2, t2, s2, e2, r2, y2, m2, err2) ;
+    out[D_KAS_TEMP] = t2 ; out[D_KAS_ENT] = s2 ; out[D_KAS_H] = hh ;
+}
+
+constexpr char const* DET_NAME[D_N] = {
+    "press","eps","csnd2","temp(out)","rho(out)","ye(out)","ymu(out)","eos_err",
+    "kastaun press","kastaun temp","kastaun entropy","kastaun h"
+} ;
+
+} // namespace
+
+TEST_CASE("leptonic EOS is a deterministic function of its inputs",
+          "[c2p][eos][leptonic][determinism]")
+{
+    using namespace Kokkos ;
+
+    auto eos = eos::get().get_eos<leptonic_eos_4d_t>() ;
+
+    // --- Sample the regime where the Hunter runs diverged ---------------------
+    // rho from the atmosphere floor up into the star; T from the table minimum
+    // into the shocked range; Ymu straddling the dilute threshold (6e-4) so both
+    // the muon-table lookup and the muons_resolved() skip branch are exercised.
+    std::vector<double> rhos, temps, yes, ymus ;
+    {
+        double const lr_lo = std::log(eos.density_minimum()) ;
+        double const lr_hi = std::log(1.0e-3) ;
+        for (int i = 0 ; i < 24 ; ++i)
+            rhos.push_back(std::exp(lr_lo + (lr_hi - lr_lo) * i / 23.0)) ;
+        double const lt_lo = std::log(eos.temperature_minimum()) ;
+        double const lt_hi = std::log(50.0) ;
+        for (int i = 0 ; i < 12 ; ++i)
+            temps.push_back(std::exp(lt_lo + (lt_hi - lt_lo) * i / 11.0)) ;
+        for (int i = 0 ; i < 6 ; ++i)
+            yes.push_back(0.02 + (0.46 * i) / 5.0) ;
+        double const ymu_lo = eos.get_c2p_ymu_min() ;
+        for (double v : {ymu_lo, 5.9e-4, 6.0e-4, 6.1e-4, 1.0e-3, 1.0e-2, 3.4e-2, 1.0e-1})
+            ymus.push_back(std::max(v, ymu_lo)) ;
+    }
+    size_t const N = rhos.size() * temps.size() * yes.size() * ymus.size() ;
+
+    View<double**> pts("det_pts", N, 4) ;
+    auto h_pts = create_mirror_view(pts) ;
+    {
+        size_t n = 0 ;
+        for (double r : rhos) for (double t : temps) for (double y : yes) for (double m : ymus) {
+            h_pts(n,0) = r ; h_pts(n,1) = t ; h_pts(n,2) = y ; h_pts(n,3) = m ; ++n ;
+        }
+    }
+    deep_copy(pts, h_pts) ;
+
+    // --- (a) thread consistency: one point, many threads, one launch ----------
+    SECTION("identical inputs give identical outputs across threads") {
+        constexpr int N_PT = 16 , N_REP = 512 ;
+        size_t const stride = N / N_PT ;
+        View<double**> out("det_thread", static_cast<size_t>(N_PT) * N_REP, D_N) ;
+        parallel_for("eos_det_threads", static_cast<size_t>(N_PT) * N_REP,
+                     KOKKOS_LAMBDA(size_t const idx) {
+            size_t const ip = idx / N_REP ;
+            size_t const p  = ip * stride ;
+            double loc[D_N] ;
+            eval_leptonic_once(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+            for (int k = 0 ; k < D_N ; ++k) out(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int mismatches = 0 ;
+        for (int ip = 0 ; ip < N_PT ; ++ip) {
+            size_t const base = static_cast<size_t>(ip) * N_REP ;
+            for (int rep = 1 ; rep < N_REP ; ++rep) {
+                for (int k = 0 ; k < D_N ; ++k) {
+                    if (h(base + rep, k) != h(base, k)) {
+                        if (++mismatches <= 5) {
+                            size_t const p = static_cast<size_t>(ip) * stride ;
+                            INFO("point rho=" << h_pts(p,0) << " T=" << h_pts(p,1)
+                                 << " Ye=" << h_pts(p,2) << " Ymu=" << h_pts(p,3)
+                                 << "  field " << DET_NAME[k]
+                                 << "  thread 0 = " << std::setprecision(17) << h(base,k)
+                                 << "  thread " << rep << " = " << h(base+rep,k)) ;
+                            CHECK(h(base + rep, k) == h(base, k)) ;
+                        }
+                    }
+                }
+            }
+        }
+        INFO("total field mismatches across threads: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    // --- (b) launch repeatability: same grid, two launches --------------------
+    SECTION("identical inputs give identical outputs across kernel launches") {
+        View<double**> a("det_a", N, D_N), b("det_b", N, D_N) ;
+        auto run = [&](View<double**> o) {
+            parallel_for("eos_det_launch", N, KOKKOS_LAMBDA(size_t const idx) {
+                double loc[D_N] ;
+                eval_leptonic_once(eos, pts(idx,0), pts(idx,1), pts(idx,2), pts(idx,3), loc) ;
+                for (int k = 0 ; k < D_N ; ++k) o(idx,k) = loc[k] ;
+            }) ;
+            fence() ;
+        } ;
+        run(a) ; run(b) ;
+        auto ha = create_mirror_view_and_copy(HostSpace(), a) ;
+        auto hb = create_mirror_view_and_copy(HostSpace(), b) ;
+
+        // Guard against a vacuous pass: the sweep must actually have produced
+        // finite, varying thermodynamics, and must have crossed the dilute-Ymu
+        // threshold in both directions so the muon table is really exercised.
+        {
+            double pmin = ha(0,D_PRESS), pmax = ha(0,D_PRESS) ;
+            int n_finite = 0 ;
+            for (size_t i = 0 ; i < N ; ++i) {
+                double const pv = ha(i,D_PRESS) ;
+                if (std::isfinite(pv)) ++n_finite ;
+                pmin = std::min(pmin, pv) ; pmax = std::max(pmax, pv) ;
+            }
+            INFO("sweep: " << N << " points, " << n_finite << " finite, press in ["
+                 << pmin << ", " << pmax << "]") ;
+            REQUIRE(n_finite == static_cast<int>(N)) ;
+            REQUIRE(pmax > pmin) ;
+            int n_res = 0, n_dil = 0 ;
+            for (size_t i = 0 ; i < N ; ++i)
+                (h_pts(i,3) > 6.0e-4 ? n_res : n_dil) += 1 ;
+            INFO("muon-table lookups: " << n_res << " resolved, " << n_dil << " dilute") ;
+            REQUIRE(n_res > 0) ;
+            REQUIRE(n_dil > 0) ;
+        }
+
+        int mismatches = 0 ;
+        for (size_t i = 0 ; i < N ; ++i) {
+            for (int k = 0 ; k < D_N ; ++k) {
+                if (ha(i,k) != hb(i,k)) {
+                    if (++mismatches <= 5) {
+                        INFO("point rho=" << h_pts(i,0) << " T=" << h_pts(i,1)
+                             << " Ye=" << h_pts(i,2) << " Ymu=" << h_pts(i,3)
+                             << "  field " << DET_NAME[k]
+                             << "  launch A = " << std::setprecision(17) << ha(i,k)
+                             << "  launch B = " << hb(i,k)) ;
+                        CHECK(ha(i,k) == hb(i,k)) ;
+                    }
+                }
+            }
+        }
+        INFO("total field mismatches across launches: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+}
+#endif // GRACE_ENABLE_MUONS
