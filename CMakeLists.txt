@@ -264,13 +264,39 @@ message(STATUS "Reconstructed thermo primitive: ${GRACE_RECON_THERMO}")
 #
 # Selection order:
 #   1. User-provided -DGRACE_PERF_TUNING=<name> — short name matching a
-#      subdirectory of performance_tuning/ (e.g. Mi300A, A100).  Useful when
-#      Kokkos_ARCH_* doesn't propagate out of an installed Kokkos into the
-#      parent CMake (common with find_package(Kokkos)).
-#   2. Auto-detect from Kokkos_ARCH_* cache variables.
-#   3. Fall through to generic (no arch detected).
+#      subdirectory of performance_tuning/ (e.g. Mi300A, A100).
+#   2. Auto-detect from whatever the Kokkos package exposes (see below).
+#   3. Fall through to generic — WARNS, because generic.h defines GRACE_NO_LB,
+#      which drops __launch_bounds__ and with it the MaxThreadsPerBlock
+#      declaration that GRACE's MDRangePolicy tiles depend on.  On MI300A that
+#      has been observed to produce non-deterministic flux kernels and, in some
+#      configurations, a hard GPU fault.  Landing on generic should be a
+#      deliberate choice, not a silent default.
+#
+# Architecture detection: an INSTALLED Kokkos (find_package) exports
+# Kokkos_ARCH (e.g. "ZEN;AMD_GFX942_APU"), Kokkos_HIP_ARCHITECTURES and
+# Kokkos_CUDA_ARCHITECTURES, but NOT the Kokkos_ARCH_<NAME> booleans — those
+# exist only for an in-tree (add_subdirectory) Kokkos.  Checking only the
+# booleans silently missed every installed-Kokkos build.  Collect all three
+# sources and match on the union.  Note MI300A reports as AMD_GFX942_APU
+# (the APU part); MI300X is plain AMD_GFX942.  Both are gfx942 and share the
+# Mi300A tuning.
 set(GRACE_PERF_TUNING "" CACHE STRING
-    "Select performance-tuning header by name (Mi300A|Mi250X|A100|H100|generic). Leave empty to auto-detect from Kokkos_ARCH_*.")
+    "Select performance-tuning header by name (Mi300A|Mi250X|A100|H100|generic). Leave empty to auto-detect.")
+
+set(_grace_arch_tokens "")
+foreach(_v Kokkos_ARCH Kokkos_HIP_ARCHITECTURES Kokkos_CUDA_ARCHITECTURES)
+    if(DEFINED ${_v})
+        list(APPEND _grace_arch_tokens ${${_v}})
+    endif()
+endforeach()
+# Legacy in-tree booleans, folded into the same token list.
+foreach(_a AMD_GFX942 AMD_GFX942_APU AMD_GFX90A VEGA90A AMPERE80 HOPPER90)
+    if(Kokkos_ARCH_${_a})
+        list(APPEND _grace_arch_tokens ${_a})
+    endif()
+endforeach()
+string(TOUPPER "${_grace_arch_tokens}" _grace_arch)
 
 if(GRACE_PERF_TUNING)
     set(_grace_tuning_candidate "${CMAKE_SOURCE_DIR}/performance_tuning/${GRACE_PERF_TUNING}/tuning.h")
@@ -284,21 +310,33 @@ if(GRACE_PERF_TUNING)
     endif()
     set(GRACE_PERF_TUNING_HEADER "${_grace_tuning_candidate}")
     message(STATUS "Perf-tuning header: ${GRACE_PERF_TUNING} (user-selected)")
-elseif(Kokkos_ARCH_AMD_GFX942)
+elseif(_grace_arch MATCHES "GFX942")
     set(GRACE_PERF_TUNING_HEADER "${CMAKE_SOURCE_DIR}/performance_tuning/Mi300A/tuning.h")
-    message(STATUS "Perf-tuning header: Mi300A (gfx942)")
-elseif(Kokkos_ARCH_AMD_GFX90A)
+    message(STATUS "Perf-tuning header: Mi300A (gfx942, from '${_grace_arch}')")
+elseif(_grace_arch MATCHES "GFX90A|VEGA90A")
     set(GRACE_PERF_TUNING_HEADER "${CMAKE_SOURCE_DIR}/performance_tuning/Mi250X/tuning.h")
-    message(STATUS "Perf-tuning header: Mi250X (gfx90a)")
-elseif(Kokkos_ARCH_AMPERE80)
+    message(STATUS "Perf-tuning header: Mi250X (gfx90a, from '${_grace_arch}')")
+elseif(_grace_arch MATCHES "AMPERE80" OR "80" IN_LIST Kokkos_CUDA_ARCHITECTURES)
     set(GRACE_PERF_TUNING_HEADER "${CMAKE_SOURCE_DIR}/performance_tuning/A100/tuning.h")
-    message(STATUS "Perf-tuning header: A100 (sm_80)")
-elseif(Kokkos_ARCH_HOPPER90)
+    message(STATUS "Perf-tuning header: A100 (sm_80, from '${_grace_arch}')")
+elseif(_grace_arch MATCHES "HOPPER90" OR "90" IN_LIST Kokkos_CUDA_ARCHITECTURES)
     set(GRACE_PERF_TUNING_HEADER "${CMAKE_SOURCE_DIR}/performance_tuning/H100/tuning.h")
-    message(STATUS "Perf-tuning header: H100 (sm_90)")
+    message(STATUS "Perf-tuning header: H100 (sm_90, from '${_grace_arch}')")
 else()
     set(GRACE_PERF_TUNING_HEADER "${CMAKE_SOURCE_DIR}/performance_tuning/generic.h")
-    message(STATUS "Perf-tuning header: generic (no arch detected — override with -DGRACE_PERF_TUNING=<name>)")
+    if(GRACE_ENABLE_HIP OR GRACE_ENABLE_CUDA OR GRACE_ENABLE_SYCL)
+        message(WARNING
+            "Perf-tuning header: generic — no GPU architecture detected "
+            "(Kokkos_ARCH='${Kokkos_ARCH}', Kokkos_HIP_ARCHITECTURES='${Kokkos_HIP_ARCHITECTURES}', "
+            "Kokkos_CUDA_ARCHITECTURES='${Kokkos_CUDA_ARCHITECTURES}').\n"
+            "generic.h defines GRACE_NO_LB, which removes __launch_bounds__ from the flux and "
+            "Z4c kernels.  That also removes the MaxThreadsPerBlock declaration the MDRangePolicy "
+            "tiles rely on; on MI300A this produced non-deterministic flux kernels and, in some "
+            "configurations, a GPU memory fault.  Select a header explicitly with "
+            "-DGRACE_PERF_TUNING=<Mi300A|Mi250X|A100|H100|generic>.")
+    else()
+        message(STATUS "Perf-tuning header: generic (CPU backend)")
+    endif()
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/include/grace/grace_config.h.in" grace_config.h)
