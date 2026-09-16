@@ -510,8 +510,6 @@ void flag_fofc_cells(
     auto& emf      = grace::variable_list::get().getemfarray() ;
     auto& fofc_faces    = grace::variable_list::get().getfofcfacetags() ;
     auto& fofc_edges    = grace::variable_list::get().getfofcedgetags() ;
-    auto& fofc_face_cnt = grace::variable_list::get().getfofcfcnt() ;
-    auto& fofc_edge_cnt = grace::variable_list::get().getfofcecnt() ;
     // Diagnostic: record the FOFC trigger per cell into the sticky-OR
     // aux(C2P_ERR_) field (bits C2P_FOFC_FLOORED / C2P_FOFC_DMP), so the
     // FOFC flag — and which path triggered it — is visible in c2p_err output.
@@ -532,13 +530,9 @@ void flag_fofc_cells(
     c2p_pars.alp_bh_thresh = 1e30 ;
     auto dcoords  = grace::coordinate_system::get().get_device_coord_system() ;
 
-    // Per-substep reset: byte-flag tag views and the 3-element compact-slot
-    // counters.  Lists are oversized to (worst-case interior) * nq so no
-    // bound check is needed once the slot is claimed.
+    // Per-substep reset of the face/edge tag views.
     Kokkos::deep_copy(fofc_faces,    int{0}) ;
     Kokkos::deep_copy(fofc_edges,    int{0}) ;
-    Kokkos::deep_copy(fofc_face_cnt, int{0}) ;
-    Kokkos::deep_copy(fofc_edge_cnt, int{0}) ;
 
     auto Bx = old_stag_state.face_staggered_fields_x ;
     auto By = old_stag_state.face_staggered_fields_y ;
@@ -732,81 +726,6 @@ void flag_fofc_cells(
         /************************************************************************************/
     }) ;
 
-    // compact
-    auto& fofc_fx  = grace::variable_list::get().getfofcfx() ;
-    auto& fofc_fy  = grace::variable_list::get().getfofcfy() ;
-    auto& fofc_fz  = grace::variable_list::get().getfofcfz() ;
-#ifdef GRACE_FOFC_CORRECT_EMF
-    auto& fofc_eyz = grace::variable_list::get().getfofceyz() ;
-    auto& fofc_exz = grace::variable_list::get().getfofcexz() ;
-    auto& fofc_exy = grace::variable_list::get().getfofcexy() ;
-#endif
-    // fofc_face_cnt / fofc_edge_cnt are already bound at the top of the function.
-
-    auto fofc_compact_policy = MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
-          {VEC(ngz-1,ngz-1,ngz-1),0}
-        , {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}
-    ) ;
-    parallel_for("fofc_compact_faces_and_edges", fofc_compact_policy,
-        KOKKOS_LAMBDA(int i, int j, int k, int q) {
-        // X face
-        // needed range: i \in [ngz,  nx + ngz] (i.e. inclusive!) for flux update
-        //               j \in [ngz-1, ny + ngz], k \in [ngz-1, nz + ngz] for emf computation (GS only!)
-        if ( (i >= ngz) && (fofc_faces(VEC(i,j,k), 0, q)) ) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_face_cnt(0), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_fx(slot) = tag ;
-        }
-        // Y face
-        // needed range: j \in [ngz,  ny + ngz] (i.e. inclusive!) for flux update
-        //               i \in [ngz-1, nx + ngz], k \in [ngz-1, nz + ngz] for emf computation (GS only!)
-        if ((j >= ngz) && (fofc_faces(VEC(i,j,k), 1, q))) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_face_cnt(1), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_fy(slot) = tag ;
-        }
-        // Z face
-        // needed range: k \in [ngz,  nz + ngz] (i.e. inclusive!) for flux update
-        //               i \in [ngz-1, nx + ngz], j \in [ngz-1, ny + ngz] for emf computation (GS only!)
-        if ((k >= ngz) && (fofc_faces(VEC(i,j,k), 2, q))) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_face_cnt(2), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_fz(slot) = tag ;
-        }
-#ifdef GRACE_FOFC_CORRECT_EMF
-        // Edge compaction only when the CT edge-EMF recompute is compiled in.
-        // YZ EDGE (E^x, parallel to x-axis, staggered in y and z)
-        // needed range: i \in [ngz, nx+ngz-1] for CT update
-        //               j \in [ngz, ny+ngz],   k \in [ngz, nz+ngz] for CT update
-        if ( (i>=ngz) && (j>=ngz) && (k>=ngz) && (i<nx+ngz) && (fofc_edges(i,j,k,0,q)) ) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_edge_cnt(0), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_eyz(slot) = tag ;
-        }
-        // XZ EDGE (E^y, parallel to y-axis, staggered in x and z)
-        // needed range: j \in [ngz, ny+ngz-1] for CT update
-        //               i \in [ngz, nx+ngz],   k \in [ngz, nz+ngz] for CT update
-        if ( (j>=ngz) && (i>=ngz) && (k>=ngz) && (j<ny+ngz) && (fofc_edges(i,j,k,1,q)) ) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_edge_cnt(1), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_exz(slot) = tag ;
-        }
-        // XY EDGE (E^z, parallel to z-axis, staggered in x and y)
-        // needed range: k \in [ngz, nz+ngz-1] for CT update
-        //               i \in [ngz, nx+ngz],   j \in [ngz, ny+ngz] for CT update
-        if ( (k>=ngz) && (i>=ngz) && (j>=ngz) && (k<nz+ngz) && (fofc_edges(i,j,k,2,q)) ) {
-            int slot = Kokkos::atomic_fetch_add(&fofc_edge_cnt(2), 1);
-            fofc_index_tag_t tag ;
-            tag.q = q ; tag.i = i ; tag.j = j ; tag.k = k ;
-            fofc_exy(slot) = tag ;
-        }
-#endif
-    });
 }
 
 template< typename eos_t >
@@ -834,31 +753,9 @@ void apply_fofc_correction(
     #else
     ASSERT(0, "Should have been caught earlier, FOFC and UCT are incompatible.") ;
     #endif
-    // FOFC index lists were populated atomically by flag_fofc_cells.  The
-    // counter scalar was already copied back to host there (for the log line),
-    // but flag_fofc_cells is a separate translation-unit-level call, so we
-    // bring the count over again here — it's a single int.
-    auto& fofc_fx = grace::variable_list::get().getfofcfx() ;
-    auto& fofc_fy = grace::variable_list::get().getfofcfy() ;
-    auto& fofc_fz = grace::variable_list::get().getfofcfz() ;
+    auto& fofc_faces = grace::variable_list::get().getfofcfacetags() ;
 #ifdef GRACE_FOFC_CORRECT_EMF
-    auto& fofc_eyz = grace::variable_list::get().getfofceyz() ;
-    auto& fofc_exz = grace::variable_list::get().getfofcexz() ;
-    auto& fofc_exy = grace::variable_list::get().getfofcexy() ;
-#endif
-
-    auto& fofc_face_cnt = grace::variable_list::get().getfofcfcnt() ;
-#ifdef GRACE_FOFC_CORRECT_EMF
-    auto& fofc_edge_cnt = grace::variable_list::get().getfofcecnt() ;
-#endif
-    // Stage through a HostSpace mirror of the same View<int[1]> shape rather
-    // than deep_copy-ing into a bare int (which isn't portable across Kokkos
-    // backends for rank-0/rank-1 sources).
-    Kokkos::View<int[3], Kokkos::HostSpace> host_face_cnt("fofc_face_count_host") ;
-    Kokkos::deep_copy(host_face_cnt, fofc_face_cnt) ;
-#ifdef GRACE_FOFC_CORRECT_EMF
-    Kokkos::View<int[3], Kokkos::HostSpace> host_edge_cnt("fofc_edge_count_host") ;
-    Kokkos::deep_copy(host_edge_cnt, fofc_edge_cnt) ;
+    auto& fofc_edges = grace::variable_list::get().getfofcedgetags() ;
 #endif
     //**************************************************************************************************/
     using recon_t   = donor_cell_reconstructor_t ;
@@ -874,7 +771,6 @@ void apply_fofc_correction(
     // the GS getefarray() the M1 flux takes as 'vbar'; recon_t (donor_cell)
     // serves both hydro and M1.
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
-    auto& fofc_faces = grace::variable_list::get().getfofcfacetags() ;
     bool const m1_on = m1_is_active() ;   // captured by value into the kernels below
     #endif
 
@@ -884,142 +780,133 @@ void apply_fofc_correction(
     // the scratch aperture on MI300A (HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION
     // with muons and >= 3 species).  The hydro launch takes the same
     // LaunchBounds<256,2> as compute_grmhd_*_flux, for the same reason.
+    // Tagged sweep: each flagged face is visited exactly once in fixed grid
+    // order, so the corrected fluxes do not depend on launch scheduling.
+    // Ranges reproduce the old compaction guards; tile product == 256.
     #ifdef GRACE_NO_LB
-    using fofc_face_policy_t = Kokkos::RangePolicy<> ;
+    using fofc_sweep_policy_t = MDRangePolicy< Rank<GRACE_NSPACEDIM+1> > ;
     #else
-    using fofc_face_policy_t = Kokkos::RangePolicy<Kokkos::LaunchBounds<256, 2>> ;
+    using fofc_sweep_policy_t = MDRangePolicy< Rank<GRACE_NSPACEDIM+1>, Kokkos::LaunchBounds<256, 2> > ;
     #endif
+    fofc_sweep_policy_t x_faces( {VEC(ngz,  ngz-1,ngz-1),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}, {VEC(16,4,4),1} ) ;
+    fofc_sweep_policy_t y_faces( {VEC(ngz-1,ngz,  ngz-1),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}, {VEC(16,4,4),1} ) ;
+    fofc_sweep_policy_t z_faces( {VEC(ngz-1,ngz-1,ngz  ),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}, {VEC(16,4,4),1} ) ;
+    // DEBUG: per-direction control of the FOFC flux correction, to isolate
+    // which directional loop breaks discrete symmetry.  Select with
+    //   cmake -DGRACE_FOFC_CORRECTION_DIRS=xyz  (normal; the default)
+    //   cmake -DGRACE_FOFC_CORRECTION_DIRS=y    (only y-faces corrected)
+    //   cmake -DGRACE_FOFC_CORRECTION_DIRS=""   (flag, but never correct)
+#ifdef GRACE_FOFC_CORRECT_X
     #ifndef GRACE_FREEZE_HYDRO
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_fluxes_fofc")
-                , fofc_face_policy_t(0, host_face_cnt(0))
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fx(idx) ;
-        #ifdef GRACE_ENABLE_M1
-        // bit 0: recompute hydro only where hydro flagged it
-        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) & 1) ) return ;
-        #endif
-        grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_fluxes_fofc"), x_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !(fofc_faces(VEC(i,j,k),0,q) & 1) ) return ;   // bit 0 = hydro
+        grmhd_eq_system.template compute_x_flux<recon_t,riemann_t>(q,i,j,k, fluxes, Eface, dx, dt, dtfact) ;
     }) ;
     #endif
     #ifdef GRACE_ENABLE_M1
     if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_M1_fluxes_fofc")
-                , host_face_cnt(0)
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fx(idx) ;
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),0,qijk.q) ;   // bit s+1 = species s
-        if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_x_M1_fluxes_fofc"), x_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        int const m = fofc_faces(VEC(i,j,k),0,q) ;   // bit s+1 = species s
+        if ( !(m >> 1) ) return ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_x_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_x_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_x_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_x_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_x_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_x_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
+#endif // GRACE_FOFC_CORRECT_X
+#ifdef GRACE_FOFC_CORRECT_Y
     #ifndef GRACE_FREEZE_HYDRO
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_fluxes_fofc")
-                , fofc_face_policy_t(0, host_face_cnt(1))
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fy(idx) ;
-        #ifdef GRACE_ENABLE_M1
-        // bit 0: recompute hydro only where hydro flagged it
-        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),1,qijk.q) & 1) ) return ;
-        #endif
-        grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_fluxes_fofc"), y_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !(fofc_faces(VEC(i,j,k),1,q) & 1) ) return ;   // bit 0 = hydro
+        grmhd_eq_system.template compute_y_flux<recon_t,riemann_t>(q,i,j,k, fluxes, Eface, dx, dt, dtfact) ;
     }) ;
     #endif
     #ifdef GRACE_ENABLE_M1
     if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_M1_fluxes_fofc")
-                , host_face_cnt(1)
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fy(idx) ;
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),1,qijk.q) ;   // bit s+1 = species s
-        if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_y_M1_fluxes_fofc"), y_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        int const m = fofc_faces(VEC(i,j,k),1,q) ;   // bit s+1 = species s
+        if ( !(m >> 1) ) return ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_y_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_y_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_y_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_y_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_y_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_y_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
+#endif // GRACE_FOFC_CORRECT_Y
+#ifdef GRACE_FOFC_CORRECT_Z
     #ifndef GRACE_FREEZE_HYDRO
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_fluxes_fofc")
-                , fofc_face_policy_t(0, host_face_cnt(2))
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fz(idx) ;
-        #ifdef GRACE_ENABLE_M1
-        // bit 0: recompute hydro only where hydro flagged it
-        if ( !(fofc_faces(VEC(qijk.i,qijk.j,qijk.k),2,qijk.q) & 1) ) return ;
-        #endif
-        grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(qijk.q,qijk.i,qijk.j,qijk.k, fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_fluxes_fofc"), z_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !(fofc_faces(VEC(i,j,k),2,q) & 1) ) return ;   // bit 0 = hydro
+        grmhd_eq_system.template compute_z_flux<recon_t,riemann_t>(q,i,j,k, fluxes, Eface, dx, dt, dtfact) ;
     }) ;
     #endif
     #ifdef GRACE_ENABLE_M1
     if ( m1_on )   // M1 activation trigger: idle M1 recomputes no radiation flux
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_M1_fluxes_fofc")
-                , host_face_cnt(2)
-                , KOKKOS_LAMBDA (int idx) {
-        auto qijk = fofc_fz(idx) ;
-        int const m = fofc_faces(VEC(qijk.i,qijk.j,qijk.k),2,qijk.q) ;   // bit s+1 = species s
-        if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_z_M1_fluxes_fofc"), z_faces
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        int const m = fofc_faces(VEC(i,j,k),2,q) ;   // bit s+1 = species s
+        if ( !(m >> 1) ) return ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_z_flux<recon_t,2>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_z_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_z_flux<recon_t,3>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_z_flux<recon_t,4>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_z_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_z_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(qijk.q,VEC(qijk.i,qijk.j,qijk.k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
+#endif // GRACE_FOFC_CORRECT_Z
 
-#ifdef GRACE_FOFC_CORRECT_EMF
+#if defined(GRACE_FOFC_CORRECT_EMF) && (defined(GRACE_FOFC_CORRECT_X) || defined(GRACE_FOFC_CORRECT_Y) || defined(GRACE_FOFC_CORRECT_Z))
     // Recompute the GS edge EMF on every flagged edge using the (partly
     // updated) Eface / Ecenter / fluxes.  Same arithmetic as compute_emfs
     // — see gs_edge_emf_{x,y,z} in grmhd_helpers.hh for the discretization.
     // LEGACY: this partial (flagged-only) recompute breaks bit-exact discrete
     // symmetry; compiled out by default (hydro-only FOFC keeps the main-pass EMF).
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_yz_edge_fofc")
-                , host_edge_cnt(0)
-                , KOKKOS_LAMBDA (int idx_) {
-        auto qijk = fofc_eyz(idx_) ;
-        emf(qijk.i, qijk.j, qijk.k, 0, qijk.q) =
-            gs_edge_emf_x(Eface, Ecenter, fluxes,
-                          VEC(qijk.i, qijk.j, qijk.k), qijk.q) ;
+    fofc_sweep_policy_t yz_edges( {VEC(ngz,ngz,ngz),0}, {VEC(nx+ngz,  ny+ngz+1,nz+ngz+1),nq}, {VEC(16,4,4),1} ) ;
+    fofc_sweep_policy_t xz_edges( {VEC(ngz,ngz,ngz),0}, {VEC(nx+ngz+1,ny+ngz,  nz+ngz+1),nq}, {VEC(16,4,4),1} ) ;
+    fofc_sweep_policy_t xy_edges( {VEC(ngz,ngz,ngz),0}, {VEC(nx+ngz+1,ny+ngz+1,nz+ngz  ),nq}, {VEC(16,4,4),1} ) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_yz_edge_fofc"), yz_edges
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !fofc_edges(i,j,k,0,q) ) return ;
+        emf(i,j,k,0,q) = gs_edge_emf_x(Eface, Ecenter, fluxes, VEC(i,j,k), q) ;
     }) ;
-
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_xz_edge_fofc")
-                , host_edge_cnt(1)
-                , KOKKOS_LAMBDA (int idx_) {
-        auto qijk = fofc_exz(idx_) ;
-        emf(qijk.i, qijk.j, qijk.k, 1, qijk.q) =
-            gs_edge_emf_y(Eface, Ecenter, fluxes,
-                          VEC(qijk.i, qijk.j, qijk.k), qijk.q) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_xz_edge_fofc"), xz_edges
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !fofc_edges(i,j,k,1,q) ) return ;
+        emf(i,j,k,1,q) = gs_edge_emf_y(Eface, Ecenter, fluxes, VEC(i,j,k), q) ;
     }) ;
-
-    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_xy_edge_fofc")
-                , host_edge_cnt(2)
-                , KOKKOS_LAMBDA (int idx_) {
-        auto qijk = fofc_exy(idx_) ;
-        emf(qijk.i, qijk.j, qijk.k, 2, qijk.q) =
-            gs_edge_emf_z(Eface, Ecenter, fluxes,
-                          VEC(qijk.i, qijk.j, qijk.k), qijk.q) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL", "correct_xy_edge_fofc"), xy_edges
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
+        if ( !fofc_edges(i,j,k,2,q) ) return ;
+        emf(i,j,k,2,q) = gs_edge_emf_z(Eface, Ecenter, fluxes, VEC(i,j,k), q) ;
     }) ;
 #endif // GRACE_FOFC_CORRECT_EMF
 }

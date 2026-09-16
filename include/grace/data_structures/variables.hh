@@ -189,21 +189,11 @@ public:
      * c2p would have floored. Populated atomically by flag_fofc_cells;
      * consumed by apply_fofc_correction, which iterates [0, count).
      *
-     * Each list is allocated to nx*ny*nz*nq (worst case = every interior
-     * cell flagged in every quadrant).
+     * Tag views are (i,j,k,dir,q); the correction sweeps them directly.
      */
     GRACE_ALWAYS_INLINE Kokkos::View<int*****, grace::default_space>& getfofcfacetags() { return _fofc_face_tags ; }
     GRACE_ALWAYS_INLINE Kokkos::View<int*****, grace::default_space>& getfofcedgetags() { return _fofc_edge_tags ; }
 
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofcfx() { return _fofc_fx ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofcfy() { return _fofc_fy ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofcfz() { return _fofc_fz ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofceyz() { return _fofc_eyz ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofcexz() { return _fofc_exz ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<fofc_index_tag_t*, grace::default_space>& getfofcexy() { return _fofc_exy ; }
-
-    GRACE_ALWAYS_INLINE Kokkos::View<int[3], grace::default_space>& getfofcfcnt() { return _fofc_face_cnt ; }
-    GRACE_ALWAYS_INLINE Kokkos::View<int[3], grace::default_space>& getfofcecnt() { return _fofc_edge_cnt ; }
     //*****************************************************************************************************
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
     /**
@@ -276,9 +266,6 @@ private:
     emf_array_t   _emf                  ; //!< EMF for time evolution of ideal MHD.
     Kokkos::View<int*****, grace::default_space> _fofc_face_tags ;     //!< Tag faces for fofc, atomically.
     Kokkos::View<int*****, grace::default_space> _fofc_edge_tags ;     //!< Tag edges for fofc, atomically.
-    Kokkos::View<fofc_index_tag_t*, grace::default_space> _fofc_fx, _fofc_fy, _fofc_fz    ; //!< Unique faces in each direction that need first order correction
-    Kokkos::View<fofc_index_tag_t*, grace::default_space> _fofc_eyz, _fofc_exz, _fofc_exy ; //!< Unique edges in each direction that need first order correction
-    Kokkos::View<int[3], grace::default_space> _fofc_face_cnt, _fofc_edge_cnt ; //!< Count of unique faces/edges where fofc is needed
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
     var_array_t   _z4c_curv_scratch     ; //!< Persistent intermediates between curvature-pre and curvature-update kernels.
     #endif

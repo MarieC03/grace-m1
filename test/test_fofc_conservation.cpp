@@ -44,7 +44,7 @@
 //     conservation residual is at the FP floor.  This is the *interesting*
 //     state for verifying that the composition itself doesn't introduce
 //     drift — any non-zero residual is a real bug.
-//   - This test does NOT flag any EMF edges (fofc_edge_cnt left at 0).
+//   - This test does NOT flag any EMF edges (edge tags left at 0).
 //     EMF refluxing is exercised by `test_ct_flux_conservation.cpp`; the
 //     FOFC edge-correction path will be covered by an extension.
 //
@@ -245,48 +245,34 @@ TEST_CASE("FOFC + reflux preserves conservation on AMR (manually flagged cells)"
 	}
 
 	// -------------------------------------------------------------------
-	// 4. Reset FOFC tags + counts, populate face-slot lists.
+	// 4. Reset FOFC tags and flag the 6 faces of every target cell.
 	// -------------------------------------------------------------------
-	auto& fofc_faces    = vlist.getfofcfacetags();
-	auto& fofc_edges    = vlist.getfofcedgetags();
-	auto& fofc_face_cnt = vlist.getfofcfcnt();
-	auto& fofc_edge_cnt = vlist.getfofcecnt();
-	auto& fofc_fx       = vlist.getfofcfx();
-	auto& fofc_fy       = vlist.getfofcfy();
-	auto& fofc_fz       = vlist.getfofcfz();
+	auto& fofc_faces = vlist.getfofcfacetags();
+	auto& fofc_edges = vlist.getfofcedgetags();
 
 	Kokkos::deep_copy(fofc_faces, 0);
 	Kokkos::deep_copy(fofc_edges, 0);
-	Kokkos::deep_copy(fofc_face_cnt, 0);
-	Kokkos::deep_copy(fofc_edge_cnt, 0);
 
-	auto fofc_fx_h = Kokkos::create_mirror_view(fofc_fx);
-	auto fofc_fy_h = Kokkos::create_mirror_view(fofc_fy);
-	auto fofc_fz_h = Kokkos::create_mirror_view(fofc_fz);
-	auto cnt_h     = Kokkos::create_mirror_view(fofc_face_cnt);
-	cnt_h(0) = cnt_h(1) = cnt_h(2) = 0;
-
+	auto fofc_faces_h = Kokkos::create_mirror_view(fofc_faces);
+	Kokkos::deep_copy(fofc_faces_h, 0);
 	for (auto const& tgt : targets) {
 		int const q = tgt[0];
 		int const i = tgt[1], j = tgt[2], k = tgt[3];
 		// 6 faces of cell (i,j,k): ±x at i and i+1, ±y at j and j+1, ±z at k and k+1.
-		fofc_fx_h(cnt_h(0)++) = { q, i,   j,   k   };
-		fofc_fx_h(cnt_h(0)++) = { q, i+1, j,   k   };
-		fofc_fy_h(cnt_h(1)++) = { q, i,   j,   k   };
-		fofc_fy_h(cnt_h(1)++) = { q, i,   j+1, k   };
-		fofc_fz_h(cnt_h(2)++) = { q, i,   j,   k   };
-		fofc_fz_h(cnt_h(2)++) = { q, i,   j,   k+1 };
+		fofc_faces_h(VEC(i,   j,   k  ), 0, q) = 1;
+		fofc_faces_h(VEC(i+1, j,   k  ), 0, q) = 1;
+		fofc_faces_h(VEC(i,   j,   k  ), 1, q) = 1;
+		fofc_faces_h(VEC(i,   j+1, k  ), 1, q) = 1;
+		fofc_faces_h(VEC(i,   j,   k  ), 2, q) = 1;
+		fofc_faces_h(VEC(i,   j,   k+1), 2, q) = 1;
 	}
-	Kokkos::deep_copy(fofc_fx,       fofc_fx_h);
-	Kokkos::deep_copy(fofc_fy,       fofc_fy_h);
-	Kokkos::deep_copy(fofc_fz,       fofc_fz_h);
-	Kokkos::deep_copy(fofc_face_cnt, cnt_h);
+	Kokkos::deep_copy(fofc_faces, fofc_faces_h);
 	Kokkos::fence();
 
 	// -------------------------------------------------------------------
 	// 5. apply_fofc_correction — overwrites flagged face fluxes with
-	//    donor + LLF.  Edge counts are 0, so the EMF-correction parallel_fors
-	//    iterate over an empty range (no-ops).
+	//    donor + LLF.  Edge tags stay 0, so the EMF sweeps (if compiled
+	//    in) find nothing to recompute.
 	// -------------------------------------------------------------------
 	apply_fofc_correction<eos_t>(t, dt, dtfact, state, state, stag, stag);
 	Kokkos::fence();
@@ -352,10 +338,7 @@ TEST_CASE("FOFC + reflux preserves conservation on AMR (manually flagged cells)"
 	if (rank == 0) {
 		std::cout << "FOFC conservation: " << n_global_targets
 		          << " target cells flagged globally"
-		          << " (this rank: " << n_local_targets
-		          << "; face slots: x=" << cnt_h(0)
-		          << " y="    << cnt_h(1)
-		          << " z="    << cnt_h(2) << ")" << std::endl;
+		          << " (this rank: " << n_local_targets << ")" << std::endl;
 	}
 }
 

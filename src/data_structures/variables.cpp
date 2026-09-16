@@ -81,14 +81,6 @@ variable_list_impl_t::variable_list_impl_t()
     , _emf()
     , _fofc_face_tags("fofc_face_tags", 0,0,0,0,0)
     , _fofc_edge_tags("fofc_edge_tags", 0,0,0,0,0)
-    , _fofc_fx("fofc_fx", 0)
-    , _fofc_fy("fofc_fy", 0)
-    , _fofc_fz("fofc_fz", 0)
-    , _fofc_eyz("fofc_eyz", 0)
-    , _fofc_exz("fofc_exz", 0)
-    , _fofc_exy("fofc_exy", 0)
-    , _fofc_face_cnt("fofc_face_count")
-    , _fofc_edge_cnt("fofc_edge_count")
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
     , _z4c_curv_scratch("z4c_curv_scratch", VEC(0,0,0),0,0)
     #endif
@@ -163,10 +155,8 @@ variable_list_impl_t::variable_list_impl_t()
                    , GRACE_NSPACEDIM
                    , nq ) ;
     #ifdef GRACE_ENABLE_FOFC
-    /* FOFC compacted index lists: worst case is every interior cell in every
-     * quadrant flagged.  Per-substep population is atomic in flag_fofc_cells,
-     * so order is non-deterministic; that's fine because the apply step just
-     * iterates [0, count).                                                  */
+    /* FOFC face/edge tag views, (i,j,k,dir,q).  Set atomically (OR) in
+     * flag_fofc_cells and swept directly by apply_fofc_correction.  */
     {
         Kokkos::realloc( _fofc_face_tags 
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
@@ -177,16 +167,6 @@ variable_list_impl_t::variable_list_impl_t()
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
                         , nq ) ;
-#endif
-        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq ;
-        Kokkos::realloc( _fofc_fx, nflag_max_face ) ;
-        Kokkos::realloc( _fofc_fy, nflag_max_face ) ;
-        Kokkos::realloc( _fofc_fz, nflag_max_face ) ;
-#ifdef GRACE_FOFC_CORRECT_EMF
-        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq ;
-        Kokkos::realloc( _fofc_eyz, nflag_max_edge ) ;
-        Kokkos::realloc( _fofc_exz, nflag_max_edge ) ;
-        Kokkos::realloc( _fofc_exy, nflag_max_edge ) ;
 #endif
     }
     #endif 
@@ -282,16 +262,6 @@ void variable_list_impl_t::resize_aux_staging_and_flux_buffers(int nq_new)
                         , VEC( nx + 1 + 2*ngz,ny + 1 + 2*ngz,nz + 1 + 2*ngz)
                         , GRACE_NSPACEDIM
                         , nq_new ) ;
-#endif
-        size_t const nflag_max_face = (nx + 1 + 2*ngz) * (nx + 2*ngz) * (nx + 2*ngz) * nq_new ;
-        Kokkos::realloc( _fofc_fx, nflag_max_face ) ;
-        Kokkos::realloc( _fofc_fy, nflag_max_face ) ;
-        Kokkos::realloc( _fofc_fz, nflag_max_face ) ;
-#ifdef GRACE_FOFC_CORRECT_EMF
-        size_t const nflag_max_edge = (nx + 1 + 2*ngz) * (nx + 1 + 2*ngz) * (nx + 2*ngz) * nq_new ;
-        Kokkos::realloc( _fofc_eyz, nflag_max_edge ) ;
-        Kokkos::realloc( _fofc_exz, nflag_max_edge ) ;
-        Kokkos::realloc( _fofc_exy, nflag_max_edge ) ;
 #endif
     }
     #endif
