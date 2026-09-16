@@ -917,7 +917,10 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
                    "used for the EOS clamp and the cold slice alike.",
                    T_cold, T_tab_min) ;
     }
-    if ( temp_atm < T_cold ) {
+    // Relative tolerance: T_cold is exp(log(T_min)) and comes back as
+    // 0.10000000000000002 for a table whose first point is 0.1, so an exact
+    // compare against a parfile temp_fl of 0.1 warns about a 2e-17 gap.
+    if ( temp_atm < T_cold * (1. - 1e-12) ) {
         GRACE_WARN("grmhd.atmosphere.temp_fl = {} is below the EOS temperature "
                    "floor {}; EOS lookups clamp up to the floor, so the "
                    "atmosphere and any ID written at temp_fl will not be "
