@@ -165,8 +165,15 @@ void set_m1_eas(
 
     auto const eas = get_eas_selection() ;
 
+    // Launch-bounds switch: undefined leaves the policy and tile as-is.
+    // The tile product must equal MaxThreadsPerBlock or HIP rejects the launch.
+#ifdef GRACE_M1_EAS_LB
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space,GRACE_M1_EAS_LB>
+        policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(16,4,4),1}) ;
+#else
     MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
         policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
+#endif
 
     // Run every selected provider, in parfile order.  Which providers may
     // coexist is validated centrally in get_eas_selection().

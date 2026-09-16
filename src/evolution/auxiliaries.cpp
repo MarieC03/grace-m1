@@ -118,8 +118,15 @@ void compute_auxiliary_quantities(
     auto& coord_system = grace::coordinate_system::get() ;
     auto dev_coords = coord_system.get_device_coord_system() ;
 
+    // Launch-bounds switch: undefined leaves the policy and tile as-is.
+    // Shared by conservs_to_prims / compute_E_center / m1_get_auxiliaries.
+#ifdef GRACE_AUX_LB
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space,GRACE_AUX_LB>
+        policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(16,4,4),1}) ;
+#else
     MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
         policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
+#endif
 
     #ifndef GRACE_FREEZE_HYDRO
     parallel_for(GRACE_EXECUTION_TAG("EVOL","conservs_to_prims"), policy

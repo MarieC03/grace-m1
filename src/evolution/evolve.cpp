@@ -544,10 +544,19 @@ void flag_fofc_cells(
     // same physical cell as its own interior under deterministic local
     // computation from mirror-consistent ghost primitives, and rewrites
     // the same boundary face from its side with bit-identical LLF.
+    // Launch-bounds switch: undefined leaves the policy and tile as-is.
+#ifdef GRACE_FOFC_FLAG_LB
+    auto fofc_flag_policy = MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,GRACE_FOFC_FLAG_LB>(
+          {VEC(ngz-1,ngz-1,ngz-1),0}
+        , {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}
+        , {VEC(16,4,4),1}
+    ) ;
+#else
     auto fofc_flag_policy = MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
           {VEC(ngz-1,ngz-1,ngz-1),0}
         , {VEC(nx+ngz+1,ny+ngz+1,nz+ngz+1),nq}
     ) ;
+#endif
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "flag_fofc_cells")
                 , fofc_flag_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
@@ -1879,11 +1888,21 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     auto const _beos = eos::get().get_eos<eos_t>() ;
 #endif
 
+    // Launch-bounds switch: undefined leaves the policy and tile as-is.
+#ifdef GRACE_M1_IMPLICIT_LB
+    auto policy =
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,GRACE_M1_IMPLICIT_LB> (
+              {VEC(0,0,0),0}
+            , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
+            , {VEC(16,4,4),1}
+        ) ;
+#else
     auto policy =
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
               {VEC(0,0,0),0}
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
         ) ;
+#endif
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
