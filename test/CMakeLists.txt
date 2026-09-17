@@ -87,6 +87,16 @@ add_grace_test(hdf5_output_test test_hdf5_IO.cpp)
 # add_grace_test(eos_test test_eos.cpp)
 add_grace_test(metric_test test_metric.cpp)
 add_grace_test(c2p_test test_c2p.cpp)
+# Extra compile flags for c2p_test ONLY (e.g. -DGRACE_C2P_TEST_OPT=-O2): the
+# [determinism] cases are compiler-sensitive (hipcc 7.0.2 miscompiles the
+# leptonic forward+inverse kernel at -O3 on gfx942), so the optimisation level
+# is a test variable.  Appended after the build-type flags, so it wins.
+set(GRACE_C2P_TEST_OPT "" CACHE STRING "Extra compile options for c2p_test (e.g. -O2)")
+if(GRACE_C2P_TEST_OPT)
+    separate_arguments(_c2p_test_opt NATIVE_COMMAND "${GRACE_C2P_TEST_OPT}")
+    target_compile_options(c2p_test PRIVATE ${_c2p_test_opt})
+    message(STATUS "c2p_test: extra compile options ${_c2p_test_opt}")
+endif()
 add_grace_test(grmhd_kernels_test test_grmhd_kernels.cpp)
 add_grace_test(emf_reflux_test test_reflux.cpp)
 add_grace_test(flux_reflux_test test_flux_reflux.cpp)
@@ -397,7 +407,7 @@ endif()
 # leptonic + a 5-species build); it is a no-op tag in non-5-species builds
 # where that test case is compiled out.
 add_test(NAME gamma2_c2p_test COMMAND
-        mpirun -n 1 ./c2p_test "~[leptonic]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
+        mpirun -n 1 ./c2p_test "~[leptonic]~[tabulated]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
 set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 
 # Leptonic (4D, with muons) c2p round-trip.  Only meaningful in a 5-species
@@ -408,8 +418,30 @@ set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 # label it "leptonic" so it can be excluded by label as well as by tag.
 if(GRACE_ENABLE_MUONS)
     add_test(NAME leptonic_c2p_test COMMAND
-            mpirun -n 1 ./c2p_test "[leptonic]~[halo]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
+            mpirun -n 1 ./c2p_test "[leptonic]~[halo]~[replay]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
     set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+
+    # The two [determinism] cases (EOS entry points, full conservs_to_prims)
+    # again under the PRODUCTION atmosphere: rho_fl 1e-14, temp_fl on the table
+    # floor, entropy backup on -- the branches the round-trip yaml keeps off.
+    add_test(NAME halo_c2p_determinism_test COMMAND
+            mpirun -n 1 ./c2p_test "[determinism]~[tabulated]" --grace-parfile ./configs/c2p_test_halo.yaml )
+    set_tests_properties(halo_c2p_determinism_test PROPERTIES LABELS "physics;leptonic;determinism")
+
+    # Replay of cells lifted from a production output
+    # (scripts/extract_c2p_replay_cells.py).  Needs GRACE_C2P_REPLAY_FILE=<cell
+    # file> in the environment and a yaml matching the run's eos / atmosphere /
+    # c2p blocks; the case SKIPs (does not fail) without the file.
+    add_test(NAME replay_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[replay]" --grace-parfile ./configs/c2p_test_replay.yaml )
+    set_tests_properties(replay_c2p_test PROPERTIES LABELS "physics;leptonic;replay")
+
+    # Tabulated-EOS twin of the EOS [determinism] case: the same forward+inverse
+    # code path on tabulated_eos_t.  In the muon block only because it shares
+    # the leptonic cases' helpers.
+    add_test(NAME tabulated_c2p_determinism_test COMMAND
+            mpirun -n 1 ./c2p_test "[tabulated]" --grace-parfile ./configs/c2p_test_tabulated.yaml )
+    set_tests_properties(tabulated_c2p_determinism_test PROPERTIES LABELS "physics;eos;determinism")
 
     # Halo-cell replay.  Excluded from the test above because it needs the
     # PRODUCTION atmosphere (rho_fl 1e-14, entropy backup on): under the shared

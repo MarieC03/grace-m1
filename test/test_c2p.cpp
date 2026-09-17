@@ -34,6 +34,7 @@
 #include <grace/parallel/mpi_wrappers.hh>
 #include <grace/physics/eos/eos_storage.hh>
 #include <grace/physics/eos/leptonic_eos_4d.hh>
+#include <grace/physics/eos/tabulated_eos.hh>
 #include <grace/physics/eos/c2p.hh>
 #include <grace/physics/grmhd_helpers.hh>
 #include <grace/utils/metric_utils.hh>
@@ -41,8 +42,16 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iomanip>
+#include <limits>
+#include <map>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -1929,10 +1938,12 @@ enum DET_OUT : int {
     D_N
 } ;
 
+// One forward + inverse evaluation.  Templated on the EOS so the tabulated
+// twin runs the identical code path (every EOS exposes the _ye_ymu wrappers).
+template <typename eos_t>
 KOKKOS_INLINE_FUNCTION void
-eval_leptonic_once(leptonic_eos_4d_t const& eos,
-                   double rho, double temp, double ye, double ymu,
-                   double* out)
+eval_eos_once(eos_t const& eos, double rho, double temp, double ye, double ymu,
+              double* out)
 {
     // Forward hook: the call the Riemann solver makes at every reconstructed face.
     double eps = 0.0, csnd2 = 0.0 ;
@@ -1952,10 +1963,143 @@ eval_leptonic_once(leptonic_eos_4d_t const& eos,
     out[D_KAS_TEMP] = t2 ; out[D_KAS_ENT] = s2 ; out[D_KAS_H] = hh ;
 }
 
+// Same, with a compiler barrier between the forward stores and the inverse:
+// nothing can be moved across it or share a register with the inverse's own
+// inlined total_eps copies.  Passing where eval_eos_once fails = miscompile.
+template <typename eos_t>
+KOKKOS_INLINE_FUNCTION void
+eval_eos_once_barrier(eos_t const& eos, double rho, double temp, double ye, double ymu,
+                      double* out)
+{
+    // Forward hook: the call the Riemann solver makes at every reconstructed face.
+    double eps = 0.0, csnd2 = 0.0 ;
+    double r = rho, t = temp, y = ye, m = ymu ;
+    eos_err_t err ;
+    out[D_PRESS] = eos.press_eps_csnd2__temp_rho_ye_ymu(eps, csnd2, t, r, y, m, err) ;
+    out[D_EPS]   = eps  ; out[D_CSND2] = csnd2 ;
+    out[D_TEMP]  = t    ; out[D_RHO]   = r ; out[D_YE] = y ; out[D_YMU] = m ;
+    out[D_ERR]   = static_cast<double>(err.words[0]) ;
+    asm volatile("" ::: "memory") ;
+    volatile double const eps_kept = eps ;
+    asm volatile("" ::: "memory") ;
+
+    // Inverse hook, fed from the volatile copy.
+    double hh = 0.0, cs2 = 0.0, t2 = 0.0, s2 = 0.0 ;
+    double e2 = eps_kept, r2 = rho, y2 = ye, m2 = ymu ;
+    eos_err_t err2 ;
+    out[D_KAS_PRESS] = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(
+        hh, cs2, t2, s2, e2, r2, y2, m2, err2) ;
+    out[D_KAS_TEMP] = t2 ; out[D_KAS_ENT] = s2 ; out[D_KAS_H] = hh ;
+}
+
+// Same, compiled without optimisation: the EOS members are not inlined into
+// it, so the register pattern of the combined kernel does not exist.
+#if defined(__clang__)
+#pragma clang optimize off
+#endif
+template <typename eos_t>
+KOKKOS_INLINE_FUNCTION void
+eval_eos_once_optnone(eos_t const& eos, double rho, double temp, double ye, double ymu,
+                      double* out)
+{
+    // Forward hook: the call the Riemann solver makes at every reconstructed face.
+    double eps = 0.0, csnd2 = 0.0 ;
+    double r = rho, t = temp, y = ye, m = ymu ;
+    eos_err_t err ;
+    out[D_PRESS] = eos.press_eps_csnd2__temp_rho_ye_ymu(eps, csnd2, t, r, y, m, err) ;
+    out[D_EPS]   = eps  ; out[D_CSND2] = csnd2 ;
+    out[D_TEMP]  = t    ; out[D_RHO]   = r ; out[D_YE] = y ; out[D_YMU] = m ;
+    out[D_ERR]   = static_cast<double>(err.words[0]) ;
+
+    // Inverse hook: feed that eps back through the Kastaun temperature inversion.
+    double hh = 0.0, cs2 = 0.0, t2 = 0.0, s2 = 0.0 ;
+    double e2 = eps, r2 = rho, y2 = ye, m2 = ymu ;
+    eos_err_t err2 ;
+    out[D_KAS_PRESS] = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(
+        hh, cs2, t2, s2, e2, r2, y2, m2, err2) ;
+    out[D_KAS_TEMP] = t2 ; out[D_KAS_ENT] = s2 ; out[D_KAS_H] = hh ;
+}
+#if defined(__clang__)
+#pragma clang optimize on
+#endif
+
+// Evaluator tags for the thread-consistency launches below.
+struct eval_plain_t {
+    template <typename E> KOKKOS_INLINE_FUNCTION void
+    operator()(E const& e, double r, double t, double y, double m, double* o) const
+    { eval_eos_once(e, r, t, y, m, o) ; }
+} ;
+struct eval_barrier_t {
+    template <typename E> KOKKOS_INLINE_FUNCTION void
+    operator()(E const& e, double r, double t, double y, double m, double* o) const
+    { eval_eos_once_barrier(e, r, t, y, m, o) ; }
+} ;
+struct eval_optnone_t {
+    template <typename E> KOKKOS_INLINE_FUNCTION void
+    operator()(E const& e, double r, double t, double y, double m, double* o) const
+    { eval_eos_once_optnone(e, r, t, y, m, o) ; }
+} ;
+
 constexpr char const* DET_NAME[D_N] = {
     "press","eps","csnd2","temp(out)","rho(out)","ye(out)","ymu(out)","eos_err",
     "kastaun press","kastaun temp","kastaun entropy","kastaun h"
 } ;
+
+
+// Anatomy record of one evaluation (see the anatomy sections).
+enum AN : int { AN_EPS = 0, AN_EPS2, AN_EB, AN_EMU, AN_EE, AN_SHIFT, AN_KT,
+                AN_WG, AN_WI, AN_LANE, AN_HWID, AN_XCC, AN_N } ;
+
+template <bool WITH_INVERSE>
+KOKKOS_INLINE_FUNCTION void
+anatomy_eval(leptonic_eos_4d_t const& eos, double rho, double temp, double ye, double ymu,
+             double* out)
+{
+    double eps = 0.0, cs2 = 0.0 ;
+    double r1 = rho, t1 = temp, y1 = ye, m1 = ymu ;
+    eos_err_t e1 ;
+    eos.press_eps_csnd2__temp_rho_ye_ymu(eps, cs2, t1, r1, y1, m1, e1) ;
+    double r2 = rho, t2 = temp, y2 = ye, m2 = ymu ;
+    eos_err_t e2 ;
+    double const eps2 = eos.eps__temp_rho_ye_ymu(t2, r2, y2, m2, e2) ;
+    // total_eps term by term, on the limited arguments the EOS used
+    double const lrho = Kokkos::log(r1), ltemp = Kokkos::log(t1) ;
+    double const yp   = eos.add_ele_contribution ? y1 + m1 : y1 ;
+    double const eb   = Kokkos::exp(eos.baryon_table.interp(
+                            lrho, ltemp, yp, leptonic_eos_4d_t::TABEPS)) - eos.energy_shift ;
+    double emu = 0.0 ;
+    if (m1 > 6.0e-4) {
+        double const lm = Kokkos::log(m1) ;
+        emu = eos.muon_table.interp(lrho, ltemp, lm, leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_MINUS)
+            + eos.muon_table.interp(lrho, ltemp, lm, leptonic_eos_4d_t::MUON_VIDX::TABEPS_MU_PLUS) ;
+    }
+    double ee = 0.0 ;
+    if (eos.add_ele_contribution)
+        ee = eos.ele_table.interp(lrho, ltemp, y1, leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_MINUS)
+           + eos.ele_table.interp(lrho, ltemp, y1, leptonic_eos_4d_t::ELE_VIDX::TABEPS_E_PLUS) ;
+    double kt = 0.0 ;
+    if constexpr (WITH_INVERSE) {
+        double hh = 0.0, c3 = 0.0, s3 = 0.0 ;
+        double e3 = eps, r3 = rho, y3 = ye, m3 = ymu ;
+        eos_err_t err3 ;
+        eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(hh, c3, kt, s3, e3, r3, y3, m3, err3) ;
+    }
+    double wg = -1.0, wi = -1.0, lane = -1.0, hwid = -1.0, xcc = -1.0 ;
+#if defined(__HIP_DEVICE_COMPILE__)
+    wg   = __builtin_amdgcn_workgroup_id_x() ;
+    wi   = __builtin_amdgcn_workitem_id_x() ;
+    lane = __lane_id() ;
+    hwid = __builtin_amdgcn_s_getreg(63492) ;   // hwreg(HW_REG_HW_ID, 0, 32)
+#if defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__)
+    xcc  = __builtin_amdgcn_s_getreg(63508) ;   // hwreg(HW_REG_XCC_ID, 0, 32)
+#endif
+#endif
+    out[AN_EPS]  = eps ;  out[AN_EPS2] = eps2 ; out[AN_EB]    = eb ;
+    out[AN_EMU]  = emu ;  out[AN_EE]   = ee ;   out[AN_SHIFT] = eos.energy_shift ;
+    out[AN_KT]   = kt ;
+    out[AN_WG]   = wg ;   out[AN_WI]   = wi ;   out[AN_LANE]  = lane ;
+    out[AN_HWID] = hwid ; out[AN_XCC]  = xcc ;
+}
 
 } // namespace
 
@@ -2008,7 +2152,7 @@ TEST_CASE("leptonic EOS is a deterministic function of its inputs",
             size_t const ip = idx / N_REP ;
             size_t const p  = ip * stride ;
             double loc[D_N] ;
-            eval_leptonic_once(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+            eval_eos_once(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
             for (int k = 0 ; k < D_N ; ++k) out(idx,k) = loc[k] ;
         }) ;
         fence() ;
@@ -2042,7 +2186,7 @@ TEST_CASE("leptonic EOS is a deterministic function of its inputs",
         auto run = [&](View<double**> o) {
             parallel_for("eos_det_launch", N, KOKKOS_LAMBDA(size_t const idx) {
                 double loc[D_N] ;
-                eval_leptonic_once(eos, pts(idx,0), pts(idx,1), pts(idx,2), pts(idx,3), loc) ;
+                eval_eos_once(eos, pts(idx,0), pts(idx,1), pts(idx,2), pts(idx,3), loc) ;
                 for (int k = 0 ; k < D_N ; ++k) o(idx,k) = loc[k] ;
             }) ;
             fence() ;
@@ -2091,6 +2235,832 @@ TEST_CASE("leptonic EOS is a deterministic function of its inputs",
         }
         INFO("total field mismatches across launches: " << mismatches) ;
         REQUIRE(mismatches == 0) ;
+    }
+
+    // --- (c) is it a timing race at all?  (Hunter/MI300A, ROCm 7.0.2) ----------
+    // Section (a) fails there with >= 2 hardware queues and passes under
+    // AMD_SERIALIZE_COPY=3, although Kokkos already fences after every memset and
+    // deep_copy.  Same launch as (a) with the copy-class operations removed or
+    // waited for at device scope: a pass means the stream-level wait is not
+    // enough; a fail in every variant means the damage is not a timing race.
+    auto thread_check = [&](char const* what, auto prepare, auto evaluator) -> int {
+        constexpr int N_PT = 16, N_REP = 512 ;
+        size_t const stride = N / N_PT ;
+        View<double**> out = prepare(static_cast<size_t>(N_PT) * N_REP) ;
+        parallel_for("eos_det_sync", static_cast<size_t>(N_PT) * N_REP,
+                     KOKKOS_LAMBDA(size_t const idx) {
+            size_t const ip = idx / N_REP ;
+            size_t const p  = ip * stride ;
+            double loc[D_N] ;
+            evaluator(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+            for (int k = 0 ; k < D_N ; ++k) out(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int mismatches = 0 ;
+        for (int ip = 0 ; ip < N_PT ; ++ip) {
+            size_t const base = static_cast<size_t>(ip) * N_REP ;
+            for (int rep = 1 ; rep < N_REP ; ++rep)
+                for (int k = 0 ; k < D_N ; ++k)
+                    if (h(base + rep, k) != h(base, k)) ++mismatches ;
+        }
+        printf("   %-44s mismatches across threads: %d\n", what, mismatches) ;
+        return mismatches ;
+    } ;
+    SECTION("Kokkos::fence() between the output allocation and the launch") {
+        int const m = thread_check("Kokkos::fence() before launch", [](size_t n) {
+            View<double**> o("det_sync_fence", n, D_N) ;
+            Kokkos::fence() ;
+            return o ;
+        }, eval_plain_t{}) ;
+        REQUIRE(m == 0) ;
+    }
+#ifdef KOKKOS_ENABLE_HIP
+    SECTION("hipDeviceSynchronize() between the output allocation and the launch") {
+        int const m = thread_check("hipDeviceSynchronize() before launch", [](size_t n) {
+            View<double**> o("det_sync_device", n, D_N) ;
+            REQUIRE(hipDeviceSynchronize() == hipSuccess) ;
+            return o ;
+        }, eval_plain_t{}) ;
+        REQUIRE(m == 0) ;
+    }
+#endif
+    SECTION("no zero-fill of the output view before the launch") {
+        int const m = thread_check("output allocated without memset", [](size_t n) {
+            return View<double**>(view_alloc(WithoutInitializing, "det_sync_noinit"), n, D_N) ;
+        }, eval_plain_t{}) ;
+        REQUIRE(m == 0) ;
+    }
+
+    // --- (c') the compiled code as the variable ---------------------------------
+    SECTION("compiler barrier between the forward stores and the inverse") {
+        int const m = thread_check("asm barrier + volatile eps before inverse", [](size_t n) {
+            return View<double**>("det_sync_barrier", n, D_N) ;
+        }, eval_barrier_t{}) ;
+        REQUIRE(m == 0) ;
+    }
+    SECTION("forward + inverse compiled without optimisation") {
+        int const m = thread_check("#pragma clang optimize off wrapper", [](size_t n) {
+            return View<double**>("det_sync_optnone", n, D_N) ;
+        }, eval_optnone_t{}) ;
+        REQUIRE(m == 0) ;
+    }
+
+    // --- (d) anatomy of a bad evaluation --------------------------------------
+    // Per evaluation: the EOS's eps through two entry points, the three terms of
+    // total_eps recomputed from the public tables, the energy shift the device
+    // sees, the inverse's T (second kernel only) and where the work-item ran
+    // (work-group, item, lane, HW_ID, XCC).  Reported, not asserted.  Two
+    // kernels: forward only, and forward + inverse -- the failing combination.
+    auto run_anatomy = [&](char const* label, auto launch) {
+        constexpr int N_PT = 16, N_REP = 512 ;
+        size_t const stride = N / N_PT ;
+        size_t const M = static_cast<size_t>(N_PT) * N_REP ;
+        View<double**> out("det_anatomy", M, AN_N) ;
+        launch(out, stride, N_REP) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+
+        // "bad" = disagrees with the value most replicas of the same point got.
+        int n_bad = 0, n_eps2_same = 0, n_sum_bad = 0, shown = 0 ;
+        std::map<int,int> by_wi, by_lane ;
+        std::map<long,int> units_all, units_bad ;
+        double shift_lo = h(0,AN_SHIFT), shift_hi = shift_lo ;
+        for (int ip = 0 ; ip < N_PT ; ++ip) {
+            size_t const base = static_cast<size_t>(ip) * N_REP ;
+            std::map<double,int> votes ;
+            for (int rep = 0 ; rep < N_REP ; ++rep) ++votes[h(base + rep, AN_EPS)] ;
+            double mode = 0.0 ; int best = -1 ;
+            for (auto const& [v, c] : votes) if (c > best) { best = c ; mode = v ; }
+            for (int rep = 0 ; rep < N_REP ; ++rep) {
+                size_t const i = base + rep ;
+                shift_lo = std::min(shift_lo, h(i,AN_SHIFT)) ;
+                shift_hi = std::max(shift_hi, h(i,AN_SHIFT)) ;
+                // (xcc, se, sh, cu, pipe, simd): HW_ID without the wave-id bits
+                long const unit = (static_cast<long>(h(i,AN_XCC)) << 32)
+                                | (static_cast<long>(h(i,AN_HWID)) & 0xFFF0L) ;
+                ++units_all[unit] ;
+                if (h(i,AN_EPS) == mode) continue ;
+                ++n_bad ;
+                ++units_bad[unit] ;
+                ++by_wi  [static_cast<int>(h(i,AN_WI))] ;
+                ++by_lane[static_cast<int>(h(i,AN_LANE))] ;
+                double const sum = h(i,AN_EB) + h(i,AN_EMU) + h(i,AN_EE) ;
+                if (h(i,AN_EPS2) == h(i,AN_EPS)) ++n_eps2_same ;
+                if (std::fabs(sum - mode) > 1e-12 * std::max(1.0, std::fabs(mode))) ++n_sum_bad ;
+                if (shown++ < 6)
+                    printf("   [%s] bad idx %6zu (point %2d rep %3d): eps-mode %+.17g  eps2-mode %+.17g"
+                           "  terms-mode %+.3e  T_inv %.17g  wg %g wi %g lane %g xcc %g hwid 0x%08lx\n",
+                           label, i, ip, rep, h(i,AN_EPS) - mode, h(i,AN_EPS2) - mode, sum - mode,
+                           h(i,AN_KT), h(i,AN_WG), h(i,AN_WI), h(i,AN_LANE), h(i,AN_XCC),
+                           static_cast<long>(h(i,AN_HWID))) ;
+            }
+        }
+        printf("   anatomy [%s]: %d bad of %zu evaluations; second entry point equally bad in %d;"
+               " test-side term sum bad in %d; energy_shift seen in [%.17g, %.17g]\n",
+               label, n_bad, M, n_eps2_same, n_sum_bad, shift_lo, shift_hi) ;
+        auto top = [&](std::map<int,int> const& m, char const* what) {
+            printf("   [%s] bad by %s:", label, what) ;
+            int k = 0 ;
+            for (auto const& [key, c] : m) { if (k++ == 6) { printf(" ...") ; break ; } printf(" %d:%d", key, c) ; }
+            printf("\n") ;
+        } ;
+        top(by_wi, "work-item-in-group") ;
+        top(by_lane, "lane") ;
+        printf("   [%s] bad on %zu of %zu hardware units seen (xcc<<32 | HW_ID&0xfff0):",
+               label, units_bad.size(), units_all.size()) ;
+        int k = 0 ;
+        for (auto const& [u, c] : units_bad) { if (k++ == 8) { printf(" ...") ; break ; } printf(" %lx:%d/%d", u, c, units_all[u]) ; }
+        printf("\n") ;
+    } ;
+    SECTION("anatomy: forward only") {
+        run_anatomy("forward only", [&](View<double**> out, size_t stride, int n_rep) {
+            parallel_for("eos_det_anatomy_fwd", out.extent(0), KOKKOS_LAMBDA(size_t const idx) {
+                size_t const p = (idx / n_rep) * stride ;
+                double loc[AN_N] ;
+                anatomy_eval<false>(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+                for (int k = 0 ; k < AN_N ; ++k) out(idx,k) = loc[k] ;
+            }) ;
+        }) ;
+    }
+    SECTION("anatomy: forward + inverse") {
+        run_anatomy("forward+inverse", [&](View<double**> out, size_t stride, int n_rep) {
+            parallel_for("eos_det_anatomy_inv", out.extent(0), KOKKOS_LAMBDA(size_t const idx) {
+                size_t const p = (idx / n_rep) * stride ;
+                double loc[AN_N] ;
+                anatomy_eval<true>(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+                for (int k = 0 ; k < AN_N ; ++k) out(idx,k) = loc[k] ;
+            }) ;
+        }) ;
+    }
+}
+//************************************************************************************
+//  Tabulated-EOS twin of the EOS determinism case: the same forward + inverse
+//  code path instantiated for tabulated_eos_t (Y_mu = 0), so an EOS-specific
+//  compiled-code defect can be told from a generic one.  Bound to
+//  configs/c2p_test_tabulated.yaml.
+//************************************************************************************
+TEST_CASE("tabulated EOS is a deterministic function of its inputs",
+          "[c2p][eos][tabulated][determinism]")
+{
+    using namespace Kokkos ;
+
+    auto eos = eos::get().get_eos<tabulated_eos_t>() ;
+
+    // rho / T / Ye grid as in the leptonic case; the EOS clamps to its own table
+    // bounds, which is part of what is exercised.
+    std::vector<double> rhos, temps, yes ;
+    for (int i = 0 ; i < 24 ; ++i)
+        rhos.push_back(std::exp(std::log(2.7e-15) + (std::log(1.0e-3) - std::log(2.7e-15)) * i / 23.0)) ;
+    for (int i = 0 ; i < 12 ; ++i)
+        temps.push_back(std::exp(std::log(0.1) + (std::log(50.0) - std::log(0.1)) * i / 11.0)) ;
+    for (int i = 0 ; i < 6 ; ++i)
+        yes.push_back(0.02 + (0.46 * i) / 5.0) ;
+    size_t const N = rhos.size() * temps.size() * yes.size() ;
+
+    View<double**> pts("tab_det_pts", N, 4) ;
+    auto h_pts = create_mirror_view(pts) ;
+    {
+        size_t n = 0 ;
+        for (double r : rhos) for (double t : temps) for (double y : yes) {
+            h_pts(n,0) = r ; h_pts(n,1) = t ; h_pts(n,2) = y ; h_pts(n,3) = 0.0 ; ++n ;
+        }
+    }
+    deep_copy(pts, h_pts) ;
+    auto describe = [&](size_t i) {
+        std::ostringstream o ;
+        o << "point rho=" << h_pts(i,0) << " T=" << h_pts(i,1) << " Ye=" << h_pts(i,2) ;
+        return o.str() ;
+    } ;
+
+    SECTION("identical inputs give identical outputs across threads") {
+        constexpr int N_PT = 16, N_REP = 512 ;
+        size_t const stride = N / N_PT ;
+        View<double**> out("tab_det_thread", static_cast<size_t>(N_PT) * N_REP, D_N) ;
+        parallel_for("tab_eos_det_threads", static_cast<size_t>(N_PT) * N_REP,
+                     KOKKOS_LAMBDA(size_t const idx) {
+            size_t const p = (idx / N_REP) * stride ;
+            double loc[D_N] ;
+            eval_eos_once(eos, pts(p,0), pts(p,1), pts(p,2), pts(p,3), loc) ;
+            for (int k = 0 ; k < D_N ; ++k) out(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int mismatches = 0 ;
+        for (int ip = 0 ; ip < N_PT ; ++ip) {
+            size_t const base = static_cast<size_t>(ip) * N_REP ;
+            for (int rep = 1 ; rep < N_REP ; ++rep)
+                for (int k = 0 ; k < D_N ; ++k)
+                    if (h(base + rep, k) != h(base, k) && ++mismatches <= 5) {
+                        INFO(describe(ip * stride) << "  field " << DET_NAME[k]
+                             << "  thread 0 = " << std::setprecision(17) << h(base,k)
+                             << "  thread " << rep << " = " << h(base+rep,k)) ;
+                        CHECK(h(base + rep, k) == h(base, k)) ;
+                    }
+        }
+        printf("   tabulated: total field mismatches across threads: %d\n", mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    SECTION("identical inputs give identical outputs across kernel launches") {
+        View<double**> a("tab_det_a", N, D_N), b("tab_det_b", N, D_N) ;
+        auto run = [&](View<double**> o) {
+            parallel_for("tab_eos_det_launch", N, KOKKOS_LAMBDA(size_t const idx) {
+                double loc[D_N] ;
+                eval_eos_once(eos, pts(idx,0), pts(idx,1), pts(idx,2), pts(idx,3), loc) ;
+                for (int k = 0 ; k < D_N ; ++k) o(idx,k) = loc[k] ;
+            }) ;
+            fence() ;
+        } ;
+        run(a) ; run(b) ;
+        auto ha = create_mirror_view_and_copy(HostSpace(), a) ;
+        auto hb = create_mirror_view_and_copy(HostSpace(), b) ;
+        int n_finite = 0 ;
+        for (size_t i = 0 ; i < N ; ++i) if (std::isfinite(ha(i,D_PRESS))) ++n_finite ;
+        REQUIRE(n_finite == static_cast<int>(N)) ;
+        int mismatches = 0 ;
+        for (size_t i = 0 ; i < N ; ++i)
+            for (int k = 0 ; k < D_N ; ++k)
+                if (ha(i,k) != hb(i,k) && ++mismatches <= 5) {
+                    INFO(describe(i) << "  field " << DET_NAME[k]
+                         << "  launch A = " << std::setprecision(17) << ha(i,k)
+                         << "  launch B = " << hb(i,k)) ;
+                    CHECK(ha(i,k) == hb(i,k)) ;
+                }
+        printf("   tabulated: total field mismatches across launches: %d\n", mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+}
+
+//************************************************************************************
+//  Full c2p determinism.
+//
+//  The EOS case above guards the EOS entry points.  This one guards the whole
+//  production inversion -- limiter, Kastaun solve, distrust gate, entropy backup,
+//  atmosphere / T-floor branches and the conservative write-back -- as a pure
+//  function of (cons, metric): same bits across threads, across launches, under
+//  the production launch shape, and whatever the incoming primitive array holds
+//  (compute_auxiliaries hands c2p an uninitialised array).
+//
+//  Registered twice: under the round-trip yaml (backup off) and under the halo
+//  yaml (production atmosphere, backup on) -- see test/CMakeLists.txt.
+//************************************************************************************
+namespace {
+
+// Everything one c2p evaluation produces, recorded slot by slot.
+enum FULL_OUT : int {
+    F_RHO = 0, F_EPS, F_TEMP, F_PRESS, F_ENT, F_YE, F_YMU, F_ZX, F_ZY, F_ZZ,
+    F_DENS, F_TAU, F_STX, F_STY, F_STZ, F_ENTS, F_YES, F_YMUS,
+    F_FLOORED, F_ERR,
+    F_N
+} ;
+constexpr char const* FULL_NAME[F_N] = {
+    "rho", "eps", "temp", "press", "entropy", "ye", "ymu", "zx", "zy", "zz",
+    "dens", "tau", "stx", "sty", "stz", "ents", "yes", "ymus", "floored", "c2p_err"
+} ;
+
+KOKKOS_INLINE_FUNCTION void
+c2p_record(grmhd_prims_array_t const& p, grmhd_cons_array_t const& c,
+           bool floored, c2p_err_t const& e, double* out)
+{
+    out[F_RHO]   = p[RHOL]   ; out[F_EPS]  = p[EPSL]  ; out[F_TEMP] = p[TEMPL] ;
+    out[F_PRESS] = p[PRESSL] ; out[F_ENT]  = p[ENTL]  ; out[F_YE]   = p[YEL]   ;
+    out[F_YMU]   = p[YMUL]   ; out[F_ZX]   = p[ZXL]   ; out[F_ZY]   = p[ZYL]   ;
+    out[F_ZZ]    = p[ZZL]    ;
+    out[F_DENS]  = c[DENSL]  ; out[F_TAU]  = c[TAUL]  ; out[F_STX]  = c[STXL]  ;
+    out[F_STY]   = c[STYL]   ; out[F_STZ]  = c[STZL]  ; out[F_ENTS] = c[ENTSL] ;
+    out[F_YES]   = c[YESL]   ; out[F_YMUS] = c[YMUSL] ;
+    out[F_FLOORED] = floored ? 1.0 : 0.0 ;
+    out[F_ERR]     = static_cast<double>(e.words[0]) ;
+}
+
+// One probe state.  `mutate` is applied to the conservatives after P2C:
+// 1 = tau*(1-1e-3) (pushes eps below the cold floor -> distrust / backup),
+// 2 = advected entropy*0.7 (visible only to the backup).
+struct c2p_probe_t { double rho, temp, ye, ymu, W ; int mutate ; } ;
+
+/// P2C the probe, mutate, fill the incoming primitives with `guess` and run
+/// the production c2p.  `out` gets all F_N slots.
+template <typename eos_t>
+KOKKOS_INLINE_FUNCTION void
+c2p_full_once(eos_t const& eos, atmo_params_t const& atmo,
+              excision_params_t const& excision, c2p_params_t const& c2p_pars,
+              metric_array_t const& metric, c2p_probe_t const& s,
+              double guess, double* out)
+{
+    grmhd_prims_array_t p0{} ;
+    p0[RHOL]  = s.rho ;  p0[TEMPL] = s.temp ;  p0[YEL] = s.ye ;  p0[YMUL] = s.ymu ;
+    p0[ZXL]   = Kokkos::sqrt(s.W*s.W - 1.0) ;  p0[ZYL] = 0.0 ;  p0[ZZL] = 0.0 ;
+    p0[BXL]   = p0[BYL] = p0[BZL] = 0.0 ;
+    double csnd2 ;
+    eos_err_t err{} ;
+    p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                    p0[EPSL], csnd2, p0[ENTL], p0[TEMPL],
+                    p0[RHOL], p0[YEL], p0[YMUL], err) ;
+
+    grmhd_cons_array_t cons{} ;
+    prims_to_conservs(p0, cons, metric) ;
+    if      (s.mutate == 1) cons[TAUL]  *= (1.0 - 1.0e-3) ;
+    else if (s.mutate == 2) cons[ENTSL] *= 0.7 ;
+
+    grmhd_prims_array_t p1 ;
+    for (auto& v : p1) v = guess ;
+    c2p_err_t cerr ;
+    double rtp[3] = {1.0, 1.0, 1.0} ;
+    bool const fl = conservs_to_prims(cons, p1, metric, eos, atmo, excision,
+                                      c2p_pars, rtp, cerr) ;
+    c2p_record(p1, cons, fl, cerr, out) ;
+}
+
+inline bool same_bits(double a, double b)
+{
+    return std::memcmp(&a, &b, sizeof(double)) == 0 ;   // NaN-safe, sign-of-zero-strict
+}
+
+/// Slot-by-slot bitwise comparison of two (n x F_N) host views; the first few
+/// mismatches are reported through `describe(i)`.
+template <typename HV, typename Desc>
+int count_bit_mismatches(HV const& a, HV const& b, size_t n,
+                         Desc describe, char const* what)
+{
+    int mismatches = 0 ;
+    for (size_t i = 0 ; i < n ; ++i) {
+        for (int k = 0 ; k < F_N ; ++k) {
+            if (same_bits(a(i,k), b(i,k))) continue ;
+            if (++mismatches <= 5) {
+                INFO(what << ": " << describe(i) << "  field " << FULL_NAME[k]
+                     << "  A = " << std::setprecision(17) << a(i,k)
+                     << "  B = " << b(i,k)) ;
+                CHECK(same_bits(a(i,k), b(i,k))) ;
+            }
+        }
+    }
+    return mismatches ;
+}
+
+// Which c2p branches a set of evaluations took, from the recorded error words.
+struct branch_hist_t { int clean = 0, atmo = 0, tfloor = 0, backup = 0,
+                           tau = 0, eps_lo = 0, ymu = 0 ; } ;
+template <typename HV>
+branch_hist_t branch_histogram(HV const& h, size_t n)
+{
+    branch_hist_t b ;
+    for (size_t i = 0 ; i < n ; ++i) {
+        c2p_err_t e ;
+        e.words[0] = static_cast<uint64_t>(h(i, F_ERR)) ;
+        bool const touched =
+               e.test(c2p_err_enum_t::C2P_RESET_DENS)   || e.test(c2p_err_enum_t::C2P_RESET_TAU)
+            || e.test(c2p_err_enum_t::C2P_RESET_STILDE) || e.test(c2p_err_enum_t::C2P_RESET_YE)
+            || e.test(c2p_err_enum_t::C2P_RESET_YMU)    || e.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)
+            || e.test(c2p_err_enum_t::C2P_ATMO_RESET)   || e.test(c2p_err_enum_t::C2P_T_FLOORED) ;
+        if (!touched) ++b.clean ;
+        if (e.test(c2p_err_enum_t::C2P_ATMO_RESET))      ++b.atmo ;
+        if (e.test(c2p_err_enum_t::C2P_T_FLOORED))       ++b.tfloor ;
+        if (e.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)) ++b.backup ;
+        if (e.test(c2p_err_enum_t::C2P_RESET_TAU))       ++b.tau ;
+        if (e.test(c2p_err_enum_t::C2P_SIG_EPS_TOO_LOW)) ++b.eps_lo ;
+        if (e.test(c2p_err_enum_t::C2P_RESET_YMU))       ++b.ymu ;
+    }
+    return b ;
+}
+
+void print_branch_histogram(char const* label, branch_hist_t const& b, size_t n)
+{
+    printf("   %s: %zu evaluations -- clean %d, atmo %d, T-floor %d, backup %d, "
+           "tau-reset %d, eps-too-low %d, ymu-reset %d\n",
+           label, n, b.clean, b.atmo, b.tfloor, b.backup, b.tau, b.eps_lo, b.ymu) ;
+}
+
+// The production auxiliaries launch: LaunchBounds<256,1> with a 16x4x4 tile on
+// the tuned architectures, a plain MDRange elsewhere (tuning.h decides).
+#ifdef GRACE_AUX_LB
+using aux_shape_policy_t = Kokkos::MDRangePolicy<Kokkos::Rank<3>, GRACE_AUX_LB> ;
+#else
+using aux_shape_policy_t = Kokkos::MDRangePolicy<Kokkos::Rank<3>> ;
+#endif
+inline aux_shape_policy_t make_aux_shape_policy(int nx, int ny, int nz)
+{
+#ifdef GRACE_AUX_LB
+    return aux_shape_policy_t({0,0,0}, {nx,ny,nz}, {16,4,4}) ;
+#else
+    return aux_shape_policy_t({0,0,0}, {nx,ny,nz}) ;
+#endif
+}
+
+} // namespace
+
+TEST_CASE("c2p leptonic: conservs_to_prims is a deterministic function of its inputs",
+          "[c2p][leptonic][determinism]")
+{
+    using namespace Kokkos ;
+
+    auto eos      = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    auto atmo     = get_atmo_params() ;
+    auto excision = get_excision_params() ;
+    auto c2p_pars = get_c2p_params() ;
+    metric_array_t const metric({1.0, 0.0, 0.0, 1.0, 0.0, 1.0}, {0.0, 0.0, 0.0}, 1.0) ;
+
+    // --- Probe grid: the cold/dilute corners the production runs live in ------
+    // Exact table edges (T_min, Ye_min, Ymu_min), the atmosphere floor values,
+    // the headon core state (rho 1e-3, T 0.1, Ye 0.052, Ymu 0.019), the rung-B
+    // residual T (0.35), the spurious floor-inversion root (2.37), W = 1 exactly.
+    std::vector<c2p_probe_t> probes ;
+    {
+        double const t_min  = eos.temperature_minimum() ;
+        double const ye_lo  = eos.get_c2p_ye_min() ;
+        double const ymu_lo = eos.get_c2p_ymu_min() ;
+        std::vector<double> const rhos  = {0.5*atmo.rho_fl, 1e-12, 1e-10, 1e-8, 1e-6,
+                                           1e-5, 1e-4, 3e-4, 1e-3, 3e-3} ;
+        std::vector<double> const temps = {t_min, atmo.temp_fl, 0.1, 0.35, 1.0, 2.37, 10.0, 30.0} ;
+        std::vector<double> const yes   = {ye_lo, 0.052, 0.1, 0.25, 0.45} ;
+        std::vector<double> const ymus  = {ymu_lo, 5.9e-4, 6.1e-4, 1e-3, 0.019, 0.05} ;
+        std::vector<double> const Ws    = {1.0, 1.05, 2.0} ;
+        for (double r : rhos) for (double t : temps) for (double y : yes)
+        for (double m : ymus) for (double W : Ws) for (int mut = 0 ; mut < 3 ; ++mut)
+            probes.push_back({r, t, y, m, W, mut}) ;
+    }
+    size_t const N = probes.size() ;
+    View<c2p_probe_t*> d_probes("c2p_probes", N) ;
+    auto h_probes = create_mirror_view(d_probes) ;
+    for (size_t i = 0 ; i < N ; ++i) h_probes(i) = probes[i] ;
+    deep_copy(d_probes, h_probes) ;
+
+    auto describe = [&](size_t i) {
+        std::ostringstream s ;
+        auto const& p = probes[i] ;
+        s << "rho=" << p.rho << " T=" << p.temp << " Ye=" << p.ye << " Ymu=" << p.ymu
+          << " W=" << p.W << " mutate=" << p.mutate ;
+        return s.str() ;
+    } ;
+
+    // Flat launch of the whole grid.
+    auto run_flat = [&](View<double**> o, double guess) {
+        parallel_for("c2p_det_flat", N, KOKKOS_LAMBDA(size_t const idx) {
+            double loc[F_N] ;
+            c2p_full_once(eos, atmo, excision, c2p_pars, metric, d_probes(idx), guess, loc) ;
+            for (int k = 0 ; k < F_N ; ++k) o(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+    } ;
+
+    View<double**> ref("c2p_det_ref", N, F_N) ;
+    run_flat(ref, 0.0) ;
+    auto h_ref = create_mirror_view_and_copy(HostSpace(), ref) ;
+
+    // Guard against a vacuous pass: every branch under test must have fired.
+    // (Catch2 re-enters the body once per SECTION -- print only the first time.)
+    {
+        auto const b = branch_histogram(h_ref, N) ;
+        static bool reported = false ;
+        if (!reported) { reported = true ; print_branch_histogram("full c2p", b, N) ; }
+        REQUIRE(b.clean > 0) ;
+        REQUIRE(b.atmo > 0) ;
+        REQUIRE(b.tau + b.eps_lo > 0) ;
+        if (c2p_pars.use_ent_backup) REQUIRE(b.backup > 0) ;
+    }
+
+    // --- (a) thread consistency: one probe, many threads, one launch ---------
+    SECTION("identical inputs give identical outputs across threads") {
+        constexpr int N_PT = 32, N_REP = 256 ;
+        size_t const stride = N / N_PT ;
+        View<double**> out("c2p_det_thread", static_cast<size_t>(N_PT) * N_REP, F_N) ;
+        parallel_for("c2p_det_threads", static_cast<size_t>(N_PT) * N_REP,
+                     KOKKOS_LAMBDA(size_t const idx) {
+            size_t const p = (idx / N_REP) * stride ;
+            double loc[F_N] ;
+            c2p_full_once(eos, atmo, excision, c2p_pars, metric, d_probes(p), 0.0, loc) ;
+            for (int k = 0 ; k < F_N ; ++k) out(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int mismatches = 0 ;
+        for (int ip = 0 ; ip < N_PT ; ++ip) {
+            size_t const base = static_cast<size_t>(ip) * N_REP ;
+            for (int rep = 1 ; rep < N_REP ; ++rep)
+                for (int k = 0 ; k < F_N ; ++k)
+                    if (!same_bits(h(base + rep, k), h(base, k)) && ++mismatches <= 5) {
+                        INFO("probe " << describe(ip * stride) << "  field " << FULL_NAME[k]
+                             << "  thread 0 = " << std::setprecision(17) << h(base,k)
+                             << "  thread " << rep << " = " << h(base+rep,k)) ;
+                        CHECK(same_bits(h(base + rep, k), h(base, k))) ;
+                    }
+        }
+        INFO("total field mismatches across threads: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    // --- (b) launch repeatability: same grid, second flat launch --------------
+    SECTION("identical inputs give identical outputs across launches") {
+        View<double**> again("c2p_det_again", N, F_N) ;
+        run_flat(again, 0.0) ;
+        auto h = create_mirror_view_and_copy(HostSpace(), again) ;
+        int const mismatches = count_bit_mismatches(h_ref, h, N, describe, "launch A vs B") ;
+        INFO("total field mismatches across launches: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    // --- (c) production launch shape: MDRange + LaunchBounds as in auxiliaries -
+    SECTION("the production launch shape gives the same bits as a flat launch") {
+        constexpr int NX = 32, NY = 32 ;
+        int const NZ = static_cast<int>((N + NX*NY - 1) / (NX*NY)) ;
+        View<double**> out("c2p_det_shape", N, F_N) ;
+        parallel_for("c2p_det_aux_shape", make_aux_shape_policy(NX, NY, NZ),
+                     KOKKOS_LAMBDA(int const i, int const j, int const k) {
+            size_t const idx = static_cast<size_t>(i) + NX * (static_cast<size_t>(j) + NY * k) ;
+            if (idx >= N) return ;
+            double loc[F_N] ;
+            c2p_full_once(eos, atmo, excision, c2p_pars, metric, d_probes(idx), 0.0, loc) ;
+            for (int f = 0 ; f < F_N ; ++f) out(idx,f) = loc[f] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int const mismatches = count_bit_mismatches(h_ref, h, N, describe, "flat vs aux-shape") ;
+        INFO("total field mismatches flat vs production launch shape: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    // --- (d) guess independence: production passes an uninitialised array ----
+    SECTION("the output does not depend on the incoming primitive array") {
+        double const fills[3] = {std::numeric_limits<double>::quiet_NaN(), 1.0e300, -1.0} ;
+        for (double fill : fills) {
+            View<double**> out("c2p_det_guess", N, F_N) ;
+            run_flat(out, fill) ;
+            auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+            int const mismatches = count_bit_mismatches(h_ref, h, N, describe, "guess 0 vs fill") ;
+            INFO("incoming primitives filled with " << fill
+                 << ": total field mismatches vs zero-filled = " << mismatches) ;
+            REQUIRE(mismatches == 0) ;
+        }
+    }
+}
+
+//************************************************************************************
+//  Replay of production cells.
+//
+//  scripts/extract_c2p_replay_cells.py lifts coordinates, metric, primitives and
+//  c2p_err of selected cells out of a surface_out_plane_*.h5 into a text file.
+//  This case rebuilds each cell's conservatives with its own metric (that IS the
+//  state the run held: c2p re-synchronises the conservatives from its primitives)
+//  and runs the production c2p on them: the same four invariants as above, on
+//  real inputs, plus -- for cells the run inverted cleanly -- the round trip must
+//  land back on the run's own rho / Ye / Ymu.
+//
+//  Skips unless GRACE_C2P_REPLAY_FILE names a cell file.  Bind a yaml whose
+//  eos / atmosphere / c2p blocks match the run (configs/c2p_test_replay.yaml);
+//  the file's c2p_err bits are decoded with THIS build's layout.
+//************************************************************************************
+namespace {
+
+struct replay_cell_t {
+    double x, y, z ;
+    double gt[6] ;                  // conformal metric xx xy xz yy yz zz
+    double conf_fact, alp, beta[3] ;
+    double rho, eps, press, temp, ent, ye, ymu ;
+    double zvec[3], B[3] ;
+    double c2p_err ;
+} ;
+constexpr int REPLAY_NCOL = 28 ;
+
+/// Parse the extractor's text format; '#' lines are collected into `header`.
+std::vector<replay_cell_t> read_replay_cells(std::string const& path, std::string& header)
+{
+    std::ifstream in(path) ;
+    if (!in) throw std::runtime_error("cannot open replay file " + path) ;
+    std::vector<replay_cell_t> cells ;
+    std::string line ;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue ;
+        if (line[0] == '#') { header += line + "\n" ; continue ; }
+        double v[REPLAY_NCOL] ;
+        char const* s = line.c_str() ;
+        int n = 0 ;
+        for (; n < REPLAY_NCOL ; ++n) {
+            char* e = nullptr ;
+            v[n] = std::strtod(s, &e) ;
+            if (e == s) break ;
+            s = e ;
+        }
+        if (n != REPLAY_NCOL)
+            throw std::runtime_error("replay row with " + std::to_string(n)
+                                     + " columns (want 28): " + line) ;
+        replay_cell_t c ;
+        c.x = v[0] ; c.y = v[1] ; c.z = v[2] ;
+        for (int k = 0 ; k < 6 ; ++k) c.gt[k] = v[3+k] ;
+        c.conf_fact = v[9] ; c.alp = v[10] ;
+        for (int k = 0 ; k < 3 ; ++k) c.beta[k] = v[11+k] ;
+        c.rho = v[14] ; c.eps = v[15] ; c.press = v[16] ; c.temp = v[17] ;
+        c.ent = v[18] ; c.ye  = v[19] ; c.ymu   = v[20] ;
+        for (int k = 0 ; k < 3 ; ++k) c.zvec[k] = v[21+k] ;
+        for (int k = 0 ; k < 3 ; ++k) c.B[k]    = v[24+k] ;
+        c.c2p_err = v[27] ;
+        cells.push_back(c) ;
+    }
+    return cells ;
+}
+
+/// Rebuild the cell's conservatives exactly as compute_auxiliaries holds them
+/// and run the production c2p with the incoming primitives filled with `guess`.
+template <typename eos_t>
+KOKKOS_INLINE_FUNCTION void
+c2p_replay_once(eos_t const& eos, atmo_params_t const& atmo,
+                excision_params_t const& excision, c2p_params_t const& c2p_pars,
+                replay_cell_t const& c, double guess, double* out)
+{
+#if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
+    metric_array_t const metric({c.gt[0], c.gt[1], c.gt[2], c.gt[3], c.gt[4], c.gt[5]},
+                                c.conf_fact, {c.beta[0], c.beta[1], c.beta[2]}, c.alp) ;
+#else
+    double const ooW = 1.0 / Kokkos::fmax(1e-100, c.conf_fact) ;   // the Z4 ctor's scaling
+    metric_array_t const metric({c.gt[0]*(ooW*ooW), c.gt[1]*(ooW*ooW), c.gt[2]*(ooW*ooW),
+                                 c.gt[3]*(ooW*ooW), c.gt[4]*(ooW*ooW), c.gt[5]*(ooW*ooW)},
+                                {c.beta[0], c.beta[1], c.beta[2]}, c.alp) ;
+#endif
+    grmhd_prims_array_t p0{} ;
+    p0[RHOL] = c.rho ; p0[EPSL] = c.eps ; p0[PRESSL] = c.press ; p0[TEMPL] = c.temp ;
+    p0[ENTL] = c.ent ; p0[YEL]  = c.ye  ; p0[YMUL]   = c.ymu   ;
+    p0[ZXL]  = c.zvec[0] ; p0[ZYL] = c.zvec[1] ; p0[ZZL] = c.zvec[2] ;
+    p0[BXL]  = c.B[0]    ; p0[BYL] = c.B[1]    ; p0[BZL] = c.B[2]    ;
+
+    grmhd_cons_array_t cons{} ;
+    prims_to_conservs(p0, cons, metric) ;
+    // compute_auxiliaries derives the cell-centred B from the densitised
+    // staggered average: cons B is sqrt(gamma) times the primitive B.
+    cons[BSXL] = c.B[0] * metric.sqrtg() ;
+    cons[BSYL] = c.B[1] * metric.sqrtg() ;
+    cons[BSZL] = c.B[2] * metric.sqrtg() ;
+
+    grmhd_prims_array_t p1 ;
+    for (auto& v : p1) v = guess ;
+    c2p_err_t cerr ;
+    double rtp[3] = {Kokkos::sqrt(c.x*c.x + c.y*c.y + c.z*c.z), 0.0, 0.0} ;
+    bool const fl = conservs_to_prims(cons, p1, metric, eos, atmo, excision,
+                                      c2p_pars, rtp, cerr) ;
+    c2p_record(p1, cons, fl, cerr, out) ;
+}
+
+} // namespace
+
+TEST_CASE("c2p leptonic: replay of production cells (GRACE_C2P_REPLAY_FILE)",
+          "[c2p][leptonic][replay]")
+{
+    using namespace Kokkos ;
+
+    char const* path = std::getenv("GRACE_C2P_REPLAY_FILE") ;
+    if (path == nullptr || *path == '\0')
+        SKIP("set GRACE_C2P_REPLAY_FILE to a cell file from scripts/extract_c2p_replay_cells.py") ;
+
+    std::string header ;
+    std::vector<replay_cell_t> const cells = read_replay_cells(path, header) ;
+    size_t const NC = cells.size() ;
+    REQUIRE(NC > 0) ;
+
+    auto eos      = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    auto atmo     = get_atmo_params() ;
+    auto excision = get_excision_params() ;
+    auto c2p_pars = get_c2p_params() ;
+
+    View<replay_cell_t*> d_cells("replay_cells", NC) ;
+    auto h_cells = create_mirror_view(d_cells) ;
+    for (size_t i = 0 ; i < NC ; ++i) h_cells(i) = cells[i] ;
+    deep_copy(d_cells, h_cells) ;
+
+    auto describe = [&](size_t i) {
+        std::ostringstream s ;
+        auto const& c = cells[i] ;
+        s << "cell " << i << " at (" << c.x << ", " << c.y << ", " << c.z << ") rho=" << c.rho
+          << " T=" << c.temp << " Ye=" << c.ye << " Ymu=" << c.ymu ;
+        return s.str() ;
+    } ;
+
+    auto run_flat = [&](View<double**> o, double guess) {
+        parallel_for("c2p_replay_flat", NC, KOKKOS_LAMBDA(size_t const idx) {
+            double loc[F_N] ;
+            c2p_replay_once(eos, atmo, excision, c2p_pars, d_cells(idx), guess, loc) ;
+            for (int k = 0 ; k < F_N ; ++k) o(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+    } ;
+
+    View<double**> ref("c2p_replay_ref", NC, F_N) ;
+    run_flat(ref, 0.0) ;
+    auto h_ref = create_mirror_view_and_copy(HostSpace(), ref) ;
+
+    // What the run recorded for these cells versus what the replay did
+    // (Catch2 re-enters the body once per SECTION -- print only the first time).
+    static bool reported = false ;
+    if (!reported) {
+        reported = true ;
+        printf("\n   replay file %s\n%s   %zu cells\n", path, header.c_str(), NC) ;
+        View<double**, HostSpace> h_file("replay_file_err", NC, F_N) ;
+        for (size_t i = 0 ; i < NC ; ++i) h_file(i, F_ERR) = cells[i].c2p_err ;
+        print_branch_histogram("run    ", branch_histogram(h_file, NC), NC) ;
+        print_branch_histogram("replay ", branch_histogram(h_ref,  NC), NC) ;
+    }
+
+    SECTION("identical inputs give identical outputs across threads") {
+        constexpr int N_REP = 16 ;
+        View<double**> out("c2p_replay_thread", NC * N_REP, F_N) ;
+        parallel_for("c2p_replay_threads", NC * N_REP, KOKKOS_LAMBDA(size_t const idx) {
+            double loc[F_N] ;
+            c2p_replay_once(eos, atmo, excision, c2p_pars, d_cells(idx / N_REP), 0.0, loc) ;
+            for (int k = 0 ; k < F_N ; ++k) out(idx,k) = loc[k] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int mismatches = 0 ;
+        for (size_t i = 0 ; i < NC ; ++i)
+            for (int rep = 1 ; rep < N_REP ; ++rep)
+                for (int k = 0 ; k < F_N ; ++k)
+                    if (!same_bits(h(i*N_REP + rep, k), h(i*N_REP, k)) && ++mismatches <= 5) {
+                        INFO(describe(i) << "  field " << FULL_NAME[k]
+                             << "  thread 0 = " << std::setprecision(17) << h(i*N_REP,k)
+                             << "  thread " << rep << " = " << h(i*N_REP+rep,k)) ;
+                        CHECK(same_bits(h(i*N_REP + rep, k), h(i*N_REP, k))) ;
+                    }
+        INFO("total field mismatches across threads: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    SECTION("identical inputs give identical outputs across launches") {
+        View<double**> again("c2p_replay_again", NC, F_N) ;
+        run_flat(again, 0.0) ;
+        auto h = create_mirror_view_and_copy(HostSpace(), again) ;
+        int const mismatches = count_bit_mismatches(h_ref, h, NC, describe, "launch A vs B") ;
+        INFO("total field mismatches across launches: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    SECTION("the production launch shape gives the same bits as a flat launch") {
+        constexpr int NX = 16, NY = 16 ;
+        int const NZ = static_cast<int>((NC + NX*NY - 1) / (NX*NY)) ;
+        View<double**> out("c2p_replay_shape", NC, F_N) ;
+        parallel_for("c2p_replay_aux_shape", make_aux_shape_policy(NX, NY, NZ),
+                     KOKKOS_LAMBDA(int const i, int const j, int const k) {
+            size_t const idx = static_cast<size_t>(i) + NX * (static_cast<size_t>(j) + NY * k) ;
+            if (idx >= NC) return ;
+            double loc[F_N] ;
+            c2p_replay_once(eos, atmo, excision, c2p_pars, d_cells(idx), 0.0, loc) ;
+            for (int f = 0 ; f < F_N ; ++f) out(idx,f) = loc[f] ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        int const mismatches = count_bit_mismatches(h_ref, h, NC, describe, "flat vs aux-shape") ;
+        INFO("total field mismatches flat vs production launch shape: " << mismatches) ;
+        REQUIRE(mismatches == 0) ;
+    }
+
+    SECTION("the output does not depend on the incoming primitive array") {
+        double const fills[2] = {std::numeric_limits<double>::quiet_NaN(), 1.0e300} ;
+        for (double fill : fills) {
+            View<double**> out("c2p_replay_guess", NC, F_N) ;
+            run_flat(out, fill) ;
+            auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+            int const mismatches = count_bit_mismatches(h_ref, h, NC, describe, "guess 0 vs fill") ;
+            INFO("incoming primitives filled with " << fill
+                 << ": total field mismatches vs zero-filled = " << mismatches) ;
+            REQUIRE(mismatches == 0) ;
+        }
+    }
+
+    // Cells the run inverted without any reset must round-trip onto the run's
+    // own state.  rho / Ye / Ymu are the well-conditioned outputs; T and eps at
+    // the table floor are not (the eps->T inversion is noise-limited there), so
+    // those are reported, not asserted.  A large residual here means the bound
+    // yaml does not match the run (wrong table, floor or backup setting).
+    SECTION("cleanly inverted cells round-trip onto the run's own state") {
+        int n_clean = 0, n_backup_now = 0 ;
+        double res_max = 0.0, dT_max = 0.0, deps_max = 0.0, dz_max = 0.0 ;
+        size_t i_max = 0 ;
+        for (size_t i = 0 ; i < NC ; ++i) {
+            c2p_err_t e ;
+            e.words[0] = static_cast<uint64_t>(cells[i].c2p_err) ;
+            bool const clean = !(
+                   e.test(c2p_err_enum_t::C2P_RESET_DENS)   || e.test(c2p_err_enum_t::C2P_RESET_TAU)
+                || e.test(c2p_err_enum_t::C2P_RESET_STILDE) || e.test(c2p_err_enum_t::C2P_RESET_YE)
+                || e.test(c2p_err_enum_t::C2P_RESET_YMU)    || e.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)
+                || e.test(c2p_err_enum_t::C2P_ATMO_RESET)   || e.test(c2p_err_enum_t::C2P_T_FLOORED)) ;
+            if (!clean) continue ;
+            ++n_clean ;
+            auto const& c = cells[i] ;
+            double r = std::fabs(h_ref(i,F_RHO) - c.rho) / c.rho ;
+            r = std::max(r, std::fabs(h_ref(i,F_YE)  - c.ye)  / c.ye) ;
+            r = std::max(r, std::fabs(h_ref(i,F_YMU) - c.ymu) / c.ymu) ;
+            if (r > res_max) { res_max = r ; i_max = i ; }
+            dT_max   = std::max(dT_max,   std::fabs(h_ref(i,F_TEMP) - c.temp) / c.temp) ;
+            deps_max = std::max(deps_max, std::fabs(h_ref(i,F_EPS)  - c.eps)  / std::max(std::fabs(c.eps), 1e-30)) ;
+            for (int k = 0 ; k < 3 ; ++k)
+                dz_max = std::max(dz_max, std::fabs(h_ref(i,F_ZX+k) - c.zvec[k])) ;
+            c2p_err_t now ;
+            now.words[0] = static_cast<uint64_t>(h_ref(i,F_ERR)) ;
+            if (now.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)) ++n_backup_now ;
+        }
+        printf("   %d cells clean in the run; replay took the backup on %d of them\n"
+               "   max rel residual rho/Ye/Ymu %.3e, T %.3e, eps %.3e; max |dz| %.3e\n",
+               n_clean, n_backup_now, res_max, dT_max, deps_max, dz_max) ;
+        REQUIRE(n_clean > 0) ;
+        INFO("worst cell: " << describe(i_max) << "  replay rho=" << std::setprecision(17)
+             << h_ref(i_max,F_RHO) << " Ye=" << h_ref(i_max,F_YE) << " Ymu=" << h_ref(i_max,F_YMU)) ;
+        REQUIRE(res_max < 1e-8) ;
     }
 }
 #endif // GRACE_ENABLE_MUONS

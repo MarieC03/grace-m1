@@ -1,0 +1,49 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Tabulated-EOS config for the "[tabulated][determinism]" TEST_CASE: the
+# forward + inverse EOS evaluation on tabulated_eos_t, the twin of the
+# leptonic determinism case.  SFHo CompOSE table WITH electrons and the cold
+# slice generated from it (baryon mass m_u, as recorded in that file's header).
+# Table paths are absolute and machine-local -- edit them for your machine.
+# ---------------------------------------------------------------------------
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "tabulated",
+  tabulated_eos: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_electrons_ye0-5.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    baryon_mass: "m_u"
+  },
+  eps_maximum: 1.e+05
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-14,
+    atmo_tol: 1.e-2,
+    temp_fl: 0.1,
+    ye_fl: 0.05
+  },
+  c2p: {
+    tolerance: 1.e-09,
+    use_c2p_entropy_backup: false
+  }
+}
+m1: {
+  eas: {
+    kind: "neutrino_analytic"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}
