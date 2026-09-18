@@ -1072,14 +1072,20 @@ struct m1_equations_system_t
         auto const PUD_r = metric_face.lower(
             {PUU_r[idir][0], PUU_r[idir][1],PUU_r[idir][2]}
         ) ;
-        // compute the A factor for asymptotic flux correction
-        // These are only the aux of e-neutrino
-        double const kappa_a = this->_aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q);
-        double const kappa_s = this->_aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q);
+        // A factor for the asymptotic flux correction.  Face opacity is the geometric
+        // mean of the two adjacent cells (as FIL): mirror symmetric, unlike cell i alone.
+        int const im = i - utils::delta(0,idir) ;
+        int const jm = j - utils::delta(1,idir) ;
+        #ifdef GRACE_3D
+        int const km = k - utils::delta(2,idir) ;
+        #endif
+        double const kappa_R = this->_aux(VEC(i ,j ,k ),m1_kappaa_idx<ispec>(),q)
+                             + this->_aux(VEC(i ,j ,k ),m1_kappas_idx<ispec>(),q) ;
+        double const kappa_L = this->_aux(VEC(im,jm,km),m1_kappaa_idx<ispec>(),q)
+                             + this->_aux(VEC(im,jm,km),m1_kappas_idx<ispec>(),q) ;
         double const _dx = dx(idir,q);
-        // this prevents division by zero while also clamping it
-        // in [0,1]... I think!
-        double const A = 1./( _dx * Kokkos::fmax(kappa_a+kappa_s,1./_dx) ) ;
+        // the fmax clamps A to [0,1] and guards the division
+        double const A = 1./( _dx * Kokkos::fmax(Kokkos::sqrt(kappa_L*kappa_R),1./_dx) ) ;
         // compute one component of the upper-index flux for the E flux
 
         double FUd_l = metric_face.invgamma(imap[idir][0]) * primL[FXL]
