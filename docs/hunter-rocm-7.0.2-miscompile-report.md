@@ -116,7 +116,10 @@ all 97 output fields and 228 scalars over 21 steps, except four values of the
 momentum-constraint *diagnostic* (not an evolved field) at two outputs, differing by
 24–896 ULP in far-atmosphere cells; the evolved state in those cells is identical and the
 next output is identical again. Wall time of that build: 1.62 / 1.65 s per step at `-O1`
-(no `-O3` reference run of the same build). The `-O3` FOFC run also carries a mirror-symmetry violation of
+(no `-O3` reference run of the same build). With the transport switched on (neutrino
+emissivities/opacities evaluated every step, radiation still at its floor for this cold
+initial data) the pair is bit-identical in all 97 fields and all scalars over 21 steps,
+at 1.83 s per step. The `-O3` FOFC run also carries a mirror-symmetry violation of
 `1.7e-9` (`3.9e-14`, round-off, at `-O1`). Wall time of the head-on runs (8 ranks, 8 GPUs,
 20 steps, rank-0 log timestamps): `-O3` 0.99 / 0.98 s per step, `-O1` 0.96 / 0.95 s per
 step; total runtime 266.5 / 267.2 s vs 265.5 / 265.1 s. `-O1` costs nothing measurable here.
