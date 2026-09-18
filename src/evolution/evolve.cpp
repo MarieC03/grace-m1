@@ -56,9 +56,9 @@
 #include <grace/physics/z4c.hh>
 #include <grace/physics/z4c_helpers.hh>
 #endif
+#include <grace/physics/m1_trigger.hh>   // m1_is_active(): constexpr false without M1
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
-#include <grace/physics/m1_trigger.hh>
 #include <grace/physics/m1.hh>
 #ifdef GRACE_M1_OPTICAL_DEPTH
 #include <grace/physics/eas_optical_depth.hh>
@@ -193,6 +193,32 @@ void evolve_impl() {
     // hook with field deposition between substages — not this entry point.
     grace::particles::particles_module_t::get().advance_step(dt);
     #endif
+
+    // Stage helpers for the ARS IMEX steppers: nw += c dt X(od) and ghost zones,
+    // then `hook` (accumulations on the RAW stage, so that floors and constraint
+    // projections never leak into the stage derivatives), constraints, auxiliaries.
+    auto imex_explicit = [&] ( double c
+                             , var_array_t& nw, var_array_t& od
+                             , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
+                             , bool last, auto&& hook ) {
+        advance_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        amr::apply_boundary_conditions(nw,snw,od,sod,dt,c) ;
+        hook() ;
+        enforce_algebraic_constraints_after_bc(nw) ;
+        if ( last ) compute_auxiliary_quantities<eos_t>(nw, snw, aux) ;
+        else        compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+    } ;
+    // nw = od + c dt G(nw), `hook` on the raw solution.  With no implicit physics
+    // active nw is a copy of od, whose auxiliaries are current: skip the c2p pass.
+    auto imex_implicit = [&] ( double c
+                             , var_array_t& nw, var_array_t& od
+                             , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
+                             , auto&& hook ) {
+        advance_implicit_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        hook() ;
+        if ( m1_is_active() )
+            compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+    } ;
 
     if ( tstepper == "euler" ) {
         //compute_auxiliary_quantities<eos_t>(state, aux) ;
@@ -444,7 +470,87 @@ void evolve_impl() {
         compute_auxiliary_quantities<eos_t>(state, sstate, aux) ;
         /* done */
     } else if (tstepper == "imex232" ) {
-        ERROR("Imex 3 not implemented yet") ;
+        // ARS(2,3,2) (Ascher, Ruuth & Spiteri 1997): 2 implicit solves, 3 explicit evaluations,
+        // order 2, L-stable; the explicit part has RK3's stability polynomial.  advance_substep ADDS
+        // c dt X(old) in place, so stage derivatives are buffer differences taken in the raw-stage hooks.
+        double const g = 1.0 - 1.0/sqrt(2.0) ;
+        double const d = -2.0*sqrt(2.0)/3.0 ;
+        double const c = (1.0-g)/g ;
+        double const k = (1.0-g)/(1.0-d) ;
+        auto& stage  = grace::variable_list::get().getstagingbuffer() ;
+        auto& sstage = grace::variable_list::get().getstagstagingbuffer();
+        auto s0 = stage[0] ; auto ss0 = sstage[0] ;
+        auto r2 = stage[1] ; auto sr2 = sstage[1] ;
+        // R1 = y + g dt X(y) (state_p enters as a copy of y);  r2 = y + d dtX(y)
+        imex_explicit(g, state_p, state, sstate_p, sstate, false, [&] {
+            linop_apply(r2, state, state_p, sr2, sstate, sstate_p, 1.0-d/g, d/g) ;
+        }) ;
+        // xi1 -> s0;  r2 and the y' accumulator (state) get (1-g) dtG(xi1), and
+        // k*r2 is pre-subtracted so that adding k*R2 below leaves (1-g) dtX(xi1).
+        imex_implicit(g, s0, state_p, ss0, sstate_p, [&] {
+            linop_apply(r2, r2, s0, state_p, sr2, sr2, ss0, sstate_p, 1.0, c, -c) ;
+            linop_apply(state, state, s0, state_p, sstate, sstate, ss0, sstate_p, 1.0, c, -c) ;
+            linop_apply(state, state, r2, sstate, sstate, sr2, 1.0, -k) ;
+        }) ;
+        // R2 = r2 + (1-d) dt X(xi1)
+        imex_explicit(1.0-d, r2, s0, sr2, ss0, false, [&] {
+            linop_apply(state, state, r2, sstate, sstate, sr2, 1.0, k) ;
+        }) ;
+        // xi2 -> state_p;  + g dt G(xi2) = xi2 - R2
+        imex_implicit(g, state_p, r2, sstate_p, sr2, [&] {
+            linop_apply(state, state, state_p, r2, sstate, sstate, sstate_p, sr2, 1.0, 1.0, -1.0) ;
+        }) ;
+        imex_explicit(g, state, state_p, sstate, sstate_p, true, [] {}) ;
+    } else if (tstepper == "imex333" or tstepper == "imex343" ) {
+        // ARS(3,4,3): 3 implicit solves, 4 explicit evaluations, order 3, L-stable, RK4 stability
+        // polynomial; coefficients solved to full precision, bookkeeping as in imex232.  NOT SSP
+        // (negative weights): overshoots on free-streaming M1 discontinuities -- prefer imex232 there.
+        double const g   = 0.435866521508459 ;
+        double const b1  = -1.5*g*g + 4.0*g - 0.25 ;
+        double const b2  =  1.5*g*g - 5.0*g + 1.25 ;
+        double const ai  = 0.5*(1.0-g) ;                 // implicit a32
+        double const e32 = 0.39665437472560172 ;
+        double const e43 = 0.55292914803593984 ;         // = e42
+        double const e31 = 0.5*(1.0+g) - e32 ;
+        double const e41 = 1.0 - 2.0*e43 ;
+        auto& stage  = grace::variable_list::get().getstagingbuffer() ;
+        auto& sstage = grace::variable_list::get().getstagstagingbuffer();
+        auto s0 = stage[0] ; auto ss0 = sstage[0] ;
+        auto r2 = stage[1] ; auto sr2 = sstage[1] ;
+        auto r3 = stage[2] ; auto sr3 = sstage[2] ;
+        // R1 = y + g dt X(y);  r2, r3 = y + (e31, e41) dtX(y)
+        imex_explicit(g, state_p, state, sstate_p, sstate, false, [&] {
+            linop_apply(r2, state, state_p, sr2, sstate, sstate_p, 1.0-e31/g, e31/g) ;
+            linop_apply(r3, state, state_p, sr3, sstate, sstate_p, 1.0-e41/g, e41/g) ;
+        }) ;
+        // xi1 -> s0;  add the G(xi1) shares, pre-subtract the X(xi1) shares
+        imex_implicit(g, s0, state_p, ss0, sstate_p, [&] {
+            linop_apply(r2, r2, s0, state_p, sr2, sr2, ss0, sstate_p, 1.0, ai/g, -ai/g) ;
+            linop_apply(r3, r3, s0, state_p, sr3, sr3, ss0, sstate_p, 1.0, b1/g, -b1/g) ;
+            linop_apply(state, state, s0, state_p, sstate, sstate, ss0, sstate_p, 1.0, b1/g, -b1/g) ;
+            linop_apply(r3, r3, r2, sr3, sr3, sr2, 1.0, -e43/e32) ;
+            linop_apply(state, state, r2, sstate, sstate, sr2, 1.0, -b1/e32) ;
+        }) ;
+        // R2 = r2 + e32 dt X(xi1)
+        imex_explicit(e32, r2, s0, sr2, ss0, false, [&] {
+            linop_apply(r3, r3, r2, sr3, sr3, sr2, 1.0, e43/e32) ;
+            linop_apply(state, state, r2, sstate, sstate, sr2, 1.0, b1/e32) ;
+        }) ;
+        // xi2 -> state_p;  add the G(xi2) shares, pre-subtract y's X(xi2) share
+        imex_implicit(g, state_p, r2, sstate_p, sr2, [&] {
+            linop_apply(r3, r3, state_p, r2, sr3, sr3, sstate_p, sr2, 1.0, b2/g, -b2/g) ;
+            linop_apply(state, state, state_p, r2, sstate, sstate, sstate_p, sr2, 1.0, b2/g, -b2/g) ;
+            linop_apply(state, state, r3, sstate, sstate, sr3, 1.0, -b2/e43) ;
+        }) ;
+        // R3 = r3 + e43 dt X(xi2)
+        imex_explicit(e43, r3, state_p, sr3, sstate_p, false, [&] {
+            linop_apply(state, state, r3, sstate, sstate, sr3, 1.0, b2/e43) ;
+        }) ;
+        // xi3 -> s0;  + g dt G(xi3) = xi3 - R3
+        imex_implicit(g, s0, r3, ss0, sr3, [&] {
+            linop_apply(state, state, s0, r3, sstate, sstate, ss0, sr3, 1.0, 1.0, -1.0) ;
+        }) ;
+        imex_explicit(g, state, s0, sstate, ss0, true, [] {}) ;
     } else {
         ERROR("Unrecognised time-stepper.") ;
     }

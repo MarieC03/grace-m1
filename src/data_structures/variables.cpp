@@ -193,6 +193,10 @@ variable_list_impl_t::variable_list_impl_t()
     int n_staging_bufs{0} ;  
     if ( tstepper == "rk3" or tstepper == "imex222" or tstepper=="rk4") { 
         n_staging_bufs = 1 ; 
+    } else if ( tstepper == "imex232" ) {
+        n_staging_bufs = 2 ;
+    } else if ( tstepper == "imex333" or tstepper == "imex343" ) {
+        n_staging_bufs = 3 ;
     }
     _staging_buffer.reserve(n_staging_bufs) ; 
     _stag_staging_buffer.reserve(n_staging_bufs) ;
