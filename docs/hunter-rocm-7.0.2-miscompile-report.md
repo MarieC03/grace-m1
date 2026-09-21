@@ -32,7 +32,9 @@ when built at `-O3` and are bit-identical over 21 steps when built at `-O1` (sec
 
 - HLRS Hunter, HPE Cray EX, AMD Instinct MI300A (gfx942, APU). Reproduced on nodes
   `x1001c1s4b1n0`, `x1000c3s0b0n0`, `x1001c0s3b0n0`.
-- Modules `HLRS/APU/2026.1`, `rocm/7.0.2`.
+- Modules `HLRS/APU/2026.1`, `rocm/7.0.2`, loaded by the group environment scripts
+  `/zhome/projects/groups/xfp44203/common/grace-env-2026.sh` and `kadath-env-2026.sh`
+  (same directory; libraries built by `build_libs_2026.sh` into `libs/`).
   `hipcc --version`: HIP version 7.0.51831-7c9236b16; AMD clang version 20.0.0git
   (roc-7.0.2 25385 0dda3adf56766e0aac0d03173ced3759e1ffecbc), target x86_64-unknown-linux-gnu.
 - Kokkos 5.0.2 built with `Kokkos_ARCH_AMD_GFX942_APU` (HIPSpace is host-accessible unified
@@ -127,13 +129,19 @@ step; total runtime 266.5 / 267.2 s vs 265.5 / 265.1 s. `-O1` costs nothing meas
 ## 6. Reproducer (about 10 s on one GPU)
 
 Source: GRACE, branch `fix/leptonic-fil-parity` (Hunter copy:
-`/lustre/hpe/ws13/ws13.a/ws/xfpmiler-BHNS/grace-m1`). Needs the SFHo tables
+`/lustre/hpe/ws13/ws13.a/ws/xfpmiler-BHNS/grace-m1`). In that directory `build/` is the
+original `-O3 -DNDEBUG` build that produces the wrong results, left untouched for
+inspection, and `build-O1/` is the same source configured with
+`CMAKE_CXX_FLAGS_RELEASE="-O1 -DNDEBUG"`, which is correct. Needs the SFHo tables
 `sfho_compose_noele_0-5ye.h5` (251 MB), `sfho_leptons_noele_0-5ye_ken_v2.h5` (216 MB) and the
 two cold slices (`/zhome/projects/groups/xfp44203/common/EOS/4D/`), paths set in
 `test/configs/c2p_test_replay.yaml`.
 
 ```bash
-source <grace env>                       # HLRS/APU/2026.1 + rocm/7.0.2, see above
+source /zhome/projects/groups/xfp44203/common/grace-env-2026.sh    # HLRS/APU/2026.1 + rocm/7.0.2
+source /zhome/projects/groups/xfp44203/common/kadath-env-2026.sh
+cd /lustre/hpe/ws13/ws13.a/ws/xfpmiler-BHNS/grace-m1
+grep GRACE_C2P_TEST_OPT build/CMakeCache.txt     # must be empty for the -O3 result
 cmake --build build --target c2p_test -j
 cd build/test
 ./c2p_test "[determinism]~[tabulated]" --grace-parfile ./configs/c2p_test_replay.yaml \
@@ -165,3 +173,13 @@ Device assembly: `cmake -DGRACE_C2P_TEST_OPT=-save-temps=obj build`, then
 3. Recommended interim: building GRACE at `-O1` is proven correct and, for the case above,
    free. We still need the fix or a narrower `-mllvm` switch, since heavier configurations
    (five-species neutrino transport with an implicit solver) have not been timed at `-O1`.
+
+## 9. How this report was produced
+
+The reproducer, the test variants and the analysis, including the reading of the device
+assembly in section 4, were developed with the help of an AI coding assistant (Claude,
+Anthropic). The assistant ran on my laptop only and has no access to Hunter or to any other
+HLRS system. Every build, test and simulation on Hunter quoted here was compiled, submitted
+and run by me; the assistant worked from the logs and output files I copied back. The only
+results it produced itself are those of the host (OpenMP, macOS) build. I have checked the
+numbers in this report against the Hunter logs.
