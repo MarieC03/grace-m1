@@ -628,6 +628,24 @@ struct nu_rates_all_out {
     std::array<nu_rates_out, NUMSPECIES> out;
 };
 
+// Fastest beta-equilibration timescale 1/sqrt(ka (ka + ks)) over the species
+// that carry lepton number (FIL: nux excluded; only nue/nuebar at 3 species).
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+double betaeq_tau_min(const nu_rates_all_out& all) {
+#if GRACE_M1_NU_SPECIES >= 5
+    constexpr int n_lepton = NUX ;    // NUE, NUEBAR, NUMU, NUMUBAR
+#else
+    constexpr int n_lepton = NUMU ;   // NUE, NUEBAR
+#endif
+    double tau_min = 1.0e300 ;
+    for (int s = 0; s < n_lepton; ++s) {
+        const double ka = all.out[s].kappa_a ;
+        const double ks = all.out[s].kappa_s ;
+        tau_min = Kokkos::fmin(tau_min, 1.0 / Kokkos::sqrt(ka*(ka + ks) + 1.0e-45)) ;
+    }
+    return tau_min ;
+}
+
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_charged_current_absorption_opacity(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
@@ -1033,9 +1051,9 @@ nu_rates_all_out compute_all_species_weakhub(
                 // numu_bar_fact = 1.0).  The table opacities already carry the
                 // spectral information, so scaling would double-count.
             } else {
-                // NUE, NUEBAR
-                rates.Q[s]       *= fact;
-                rates.R[s]       *= fact;
+                // NUE, NUEBAR.  Opacities only, as in FIL: hot neutrinos are absorbed
+                // more strongly by cold matter (neutrino heating); what the matter
+                // emits depends on the matter alone, so Q and R are not scaled.
                 rates.kappa_a[s] *= fact;
                 rates.kappa_n[s] *= fact;
                 rates.kappa_s[s] *= fact;
@@ -1202,8 +1220,9 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
             else if (s == NUX) {
                 rates.kappa_s[s] *= fact;
             } else {
-                rates.Q[s]       *= fact;
-                rates.R[s]       *= fact;
+                // Opacities only, as in FIL: hot neutrinos are absorbed more strongly
+                // by cold matter (neutrino heating); what the matter emits depends on
+                // the matter alone, so Q and R are not scaled.
                 rates.kappa_a[s] *= fact;
                 rates.kappa_n[s] *= fact;
                 rates.kappa_s[s] *= fact;

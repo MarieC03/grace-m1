@@ -761,6 +761,45 @@ TEST_CASE("compute_all_species: heavy-lepton emissivities equal the thermal "
     REQUIRE(all.out[NUEBAR].eta_E == 0.0);
 }
 
+TEST_CASE("compute_all_species: the neutrino-temperature factor scales the opacities "
+          "and leaves the emission alone", "[m1rates][integration][tnu]") {
+    // Hot neutrinos in colder matter are absorbed more strongly (neutrino heating), but
+    // what the matter emits depends on the matter alone.  Scaling Q and R as well made
+    // cold matter emit as if hot and pinned Ye at the table bound in ejecta.
+    using namespace nu_constants;
+    mock_eos_t eos;
+    tau_policy_analytic_density tau;
+    const double T_mev = 5.0;
+    const fugacity_state F = make_fugacity_state(
+        eos, 1.0e11 * RHOGF, T_mev, 0.1, 0.0, 1.0, kXyzOrigin, tau);
+
+    const nu_rates_all_out off = compute_all_species(
+        F, true, true, true, true, kXyzOrigin, tau, false);
+
+    // Mean energies [MeV] that give T_nu = 3 T for nue and 10 T for nuebar, and a
+    // radiation field COLDER than the matter for nux (factor must stay 1).
+    double eps[NUMSPECIES] = {0.0};
+    eps[NUE]    =  3.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUE]);
+    eps[NUEBAR] = 10.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUEBAR]);
+    eps[NUX]    =  0.5 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUX]);
+    const nu_rates_all_out on = compute_all_species(
+        F, true, true, true, true, kXyzOrigin, tau, true, eps);
+
+    const double fact[2] = {9.0, 100.0};
+    for (int s : {int(NUE), int(NUEBAR)}) {
+        INFO("species " << s);
+        REQUIRE(off.out[s].eta_E > 1.0e-50);             // a real rate, not the floor
+        REQUIRE(on.out[s].eta_E == off.out[s].eta_E);    // emission untouched, bitwise
+        REQUIRE(on.out[s].eta_N == off.out[s].eta_N);
+        REQUIRE_THAT(on.out[s].kappa_a, WithinRel(fact[s] * off.out[s].kappa_a, 1e-12));
+        REQUIRE_THAT(on.out[s].kappa_n, WithinRel(fact[s] * off.out[s].kappa_n, 1e-12));
+        REQUIRE_THAT(on.out[s].kappa_s, WithinRel(fact[s] * off.out[s].kappa_s, 1e-12));
+    }
+    // colder radiation never lowers an opacity
+    REQUIRE(on.out[NUX].kappa_s == off.out[NUX].kappa_s);
+    REQUIRE(on.out[NUX].eta_E   == off.out[NUX].eta_E);
+}
+
 TEST_CASE("compute_species wrapper agrees with compute_all_species",
           "[m1rates][integration]") {
     using namespace nu_constants;
@@ -783,4 +822,27 @@ TEST_CASE("compute_species wrapper agrees with compute_all_species",
         REQUIRE(one.kappa_n == all.out[s].kappa_n);
         REQUIRE(one.kappa_s == all.out[s].kappa_s);
     }
+}
+
+TEST_CASE("betaeq_tau_min: only lepton-carrying species open the timescale gate",
+          "[m1][rates][betaeq]")
+{
+    // One species trapped (kappa_a = kappa_s = 1e3), every other rate zero.
+    auto const trapped = [](int s) {
+        nu_rates_all_out all{};
+        all.out[s].kappa_a = 1.0e3;
+        all.out[s].kappa_s = 1.0e3;
+        return betaeq_tau_min(all);
+    };
+    const double tau_trapped = 1.0 / std::sqrt(1.0e3 * 2.0e3);
+
+    REQUIRE(trapped(NUX) > 1.0e20);   // nux alone: the gate stays closed (FIL)
+    REQUIRE_THAT(trapped(NUE),    WithinRel(tau_trapped, kExactTol));
+    REQUIRE_THAT(trapped(NUEBAR), WithinRel(tau_trapped, kExactTol));
+#if GRACE_M1_NU_SPECIES >= 5
+    REQUIRE_THAT(trapped(NUMU),    WithinRel(tau_trapped, kExactTol));
+    REQUIRE_THAT(trapped(NUMUBAR), WithinRel(tau_trapped, kExactTol));
+#else
+    REQUIRE(trapped(NUMU) > 1.0e20);  // not evolved at 3 species
+#endif
 }

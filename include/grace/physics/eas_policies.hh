@@ -1075,21 +1075,16 @@ struct neutrinos_eas_op
         // re-evaluate the rates at the equilibrated state.
         // ------------------------------------------------------------------
         if (betaeq_mode == betaeq_mode_t::timescale && dt > 0.0) {
-            double tau_beta_min = 1.0e300 ;
-            for (int s = 0; s < NUMSPECIES; ++s) {
-                const double ka = all.out[s].kappa_a ;
-                const double ks = all.out[s].kappa_s ;
-                const double tau_beta =
-                    1.0 / Kokkos::sqrt(ka*(ka + ks) + 1.0e-45) ;
-                tau_beta_min = Kokkos::fmin(tau_beta_min, tau_beta) ;
-            }
+            // Only lepton-carrying species open the gate (FIL): a trapped nux
+            // alone must not trigger a Ye/Ymu equilibration.
+            const double tau_beta_min = betaeq_tau_min(all) ;
             const double beta_equil_tscale = tau_beta_min / dt ;
             #ifdef GRACE_M1_DIAGNOSTICS
             betaeq_tscale_diag = beta_equil_tscale ;
             #endif
 
-            // Radiation number floors (undensitized), mirroring the
-            // reference implementation's N > 1e-16 guards.
+            // Radiation number floors (undensitized) for the species whose N
+            // enters the lepton targets Yle/Ylmu; nux contributes energy only.
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
             const double oosqrtg = 1.0 / metric.sqrtg() ;
@@ -1097,17 +1092,12 @@ struct neutrinos_eas_op
                 state(VEC(i,j,k), m1_nrad_idx<0>(), q)*oosqrtg > 1.0e-16 ;
             #if GRACE_M1_NU_SPECIES >= 3
             N_ok = N_ok
-                && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16
-                && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16 ;
+                && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16 ;
             #endif
             #if GRACE_M1_NU_SPECIES >= 5
-            // For 3 species idx<2> is NUX, so the guard above already covers all
-            // species; for 5 species idx<2> is numu, so we must additionally
-            // require ν̄_μ (idx 3, used by the muonic beta-eq below) and ν_x
-            // (idx 4) to be populated -- matching the all-species intent.
             N_ok = N_ok
-                && state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosqrtg > 1.0e-16
-                && state(VEC(i,j,k), m1_nrad_idx<4>(), q)*oosqrtg > 1.0e-16 ;
+                && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16
+                && state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosqrtg > 1.0e-16 ;
             #endif
 
             if (beta_equil_tscale < 1.0 && N_ok) {
