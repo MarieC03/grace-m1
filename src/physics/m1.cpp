@@ -48,6 +48,7 @@
 // m1 includes
 #include <grace/physics/m1.hh>
 #include <grace/physics/m1_helpers.hh>
+#include <grace/utils/reductions.hh>
 #include <grace/physics/m1_trigger.hh>
 #include <grace/physics/eas_kinds.hh>
 #include <grace/physics/eas_policies.hh>
@@ -68,6 +69,9 @@
 
 // STL
 #include <string>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
 
 namespace grace {
 //**************************************************************************************************
@@ -132,6 +136,154 @@ void report_betaeq_failures() {
 }
 
 
+#ifdef GRACE_M1_DIAGNOSTICS
+//! Per-step report of the implicit collision solves: failures per species (from the
+//! sticky m1_implicit_err mask) against the cells with a live collision term, and the
+//! largest estimated error.  Silent when every solve converged to a physical state.
+void report_m1_implicit_failures() {
+    using namespace grace ;
+    using namespace Kokkos ;
+
+    if ( !m1_is_active() ) return ;
+
+    DECLARE_GRID_EXTENTS ;
+    auto aux = grace::variable_list::get().getaux() ;
+
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
+        policy({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}) ;
+
+    #if   GRACE_M1_NU_SPECIES >= 5
+    static char const* const names[] = { "nue", "nuebar", "numu", "numubar", "nux", "photon" } ;
+    #elif GRACE_M1_NU_SPECIES >= 3
+    static char const* const names[] = { "nue", "nuebar", "nux", "photon" } ;
+    #elif GRACE_M1_NU_SPECIES >= 1
+    static char const* const names[] = { "nu", "photon" } ;
+    #else
+    static char const* const names[] = { "photon" } ;
+    #endif
+    #ifdef GRACE_M1_PHOTONS
+    int constexpr nslots = GRACE_M1_NU_SPECIES + 1 ;
+    #else
+    int constexpr nslots = GRACE_M1_NU_SPECIES ;
+    #endif
+
+    // Per slot: live, first Newton failed, roundoff, small step, max iter, linear,
+    // non-physical, explicit step taken.
+    enum { LIVE=0, FAILED, ROUNDOFF, SMALLSTEP, MAXITER, LINEAR, NONPHYS, EXPLICIT, NCOUNT=8 } ;
+    double local_cnt[ 6*NCOUNT ] = {0.} , global_cnt[ 6*NCOUNT ] = {0.} ;
+    for ( int s=0; s<nslots; ++s ) {
+        #ifdef GRACE_M1_PHOTONS
+        bool const is_photon = ( s == GRACE_M1_NU_SPECIES ) ;
+        #else
+        bool const is_photon = false ;
+        #endif
+        int ka = 0 ;
+        #if GRACE_M1_NU_SPECIES >= 1
+        if ( !is_photon ) ka = KAPPAA1_ + s*GRACE_N_M1_AUX ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        if ( is_photon )  ka = KAPPAAPH_ ;
+        #endif
+        int const shift = M1_IMPLICIT_ERR_STRIDE * s ;
+        array_sum_t<double,8> cnt ;
+        parallel_reduce( GRACE_EXECUTION_TAG("DIAG","m1_implicit_failure_count")
+                       , policy
+                       , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k),
+                                       int const& q, array_sum_t<double,8>& acc)
+        {
+            // the five rates of a species are contiguous, in the order of m1_eas_array_t
+            bool live = false ;
+            for ( int r=0; r<GRACE_N_M1_AUX; ++r )
+                live = live || !( aux(VEC(i,j,k),ka+r,q) < M1_EAS_NEGLIGIBLE ) ;
+            if ( live ) acc.data[LIVE] += 1.0 ;
+            unsigned const bits =
+                ( static_cast<unsigned>( aux(VEC(i,j,k),M1_IMPLICIT_ERR_,q) ) >> shift ) & 31u ;
+            if ( bits & 7u )                      acc.data[FAILED]    += 1.0 ;
+            if ( bits & M1_IMPLICIT_ROUNDOFF )    acc.data[ROUNDOFF]  += 1.0 ;
+            if ( bits & M1_IMPLICIT_SMALLSTEP )   acc.data[SMALLSTEP] += 1.0 ;
+            if ( bits & M1_IMPLICIT_MAXITER )     acc.data[MAXITER]   += 1.0 ;
+            if ( bits & M1_IMPLICIT_LINEAR )      acc.data[LINEAR]    += 1.0 ;
+            if ( bits & M1_IMPLICIT_NONPHYSICAL ) acc.data[NONPHYS]   += 1.0 ;
+            if ( ( static_cast<unsigned>( aux(VEC(i,j,k),M1_EXPLICIT_STEP_,q) ) >> s ) & 1u )
+                acc.data[EXPLICIT] += 1.0 ;
+        }, Kokkos::Sum<array_sum_t<double,8>>(cnt) ) ;
+        for ( int c=0; c<NCOUNT; ++c ) local_cnt[ s*NCOUNT + c ] = cnt.data[c] ;
+    }
+    parallel::mpi_allreduce(local_cnt, global_cnt, 6*NCOUNT, sc_MPI_SUM) ;
+
+    double local_res = 0.0, global_res = 0.0 ;
+    parallel_reduce( GRACE_EXECUTION_TAG("DIAG","m1_implicit_max_residual")
+                   , policy
+                   , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k),
+                                   int const& q, double& acc)
+    {
+        acc = Kokkos::fmax( acc, aux(VEC(i,j,k),M1_IMPLICIT_RES_,q) ) ;
+    }, Kokkos::Max<double>(local_res) ) ;
+    parallel::mpi_allreduce(&local_res, &global_res, 1, sc_MPI_MAX) ;
+
+    double tot[NCOUNT] = {0.} ;
+    for ( int s=0; s<nslots; ++s )
+        for ( int c=0; c<NCOUNT; ++c ) tot[c] += global_cnt[ s*NCOUNT + c ] ;
+    if ( tot[FAILED] == 0.0 && tot[NONPHYS] == 0.0 ) return ;
+
+    std::ostringstream by_species ;
+    by_species << std::fixed << std::setprecision(2) ;
+    for ( int s=0; s<nslots; ++s ) {
+        double const live = std::max( global_cnt[s*NCOUNT+LIVE], 1.0 ) ;
+        by_species << (s ? ", " : "") << names[s] << " "
+                   << 100.*global_cnt[s*NCOUNT+FAILED]/live << "/"
+                   << 100.*global_cnt[s*NCOUNT+LINEAR]/live ;
+    }
+    GRACE_WARN("M1 implicit solve at iteration {}: first Newton attempt failed in {:.0f} of "
+               "{:.0f} live species-cells ({:.0f} roundoff, {:.0f} small step, {:.0f} max "
+               "iterations); {:.0f} took the linear fallback; {:.0f} ended non-physical; "
+               "{:.0f} took the explicit step; max estimated relative error {:.3e}.  "
+               "By species, % failed / % linear: {}.",
+               grace::get_iteration(), tot[FAILED], tot[LIVE], tot[ROUNDOFF], tot[SMALLSTEP],
+               tot[MAXITER], tot[LINEAR], tot[NONPHYS], tot[EXPLICIT], global_res,
+               by_species.str()) ;
+}
+#endif
+
+
+//**************************************************************************************************
+//! Put every radiation field on its floor, with zero flux.  Called once, when the M1 trigger
+//! fires: M1 was idle until then, so the fields still hold the t = 0 data, and whatever of
+//! that sits ABOVE the floor is never reset again and starts to free-fall (a spurious,
+//! steadily growing inward luminosity).  Interior and ghost cells alike.
+void reset_m1_radiation_to_floor() {
+    using namespace grace ;
+    using namespace Kokkos ;
+    DECLARE_GRID_EXTENTS ;
+    auto state = grace::variable_list::get().getstate() ;
+    auto const atmo = get_m1_atmo_params() ;
+    auto coords = grace::coordinate_system::get().get_device_coord_system() ;
+
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
+        policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
+    parallel_for( GRACE_EXECUTION_TAG("EVOL","m1_reset_radiation_to_floor"), policy
+                , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k), int const& q)
+    {
+        double rtp[3] ;
+        coords.get_physical_coordinates_sph(i,j,k,q,rtp) ;
+        metric_array_t metric ;
+        FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k)) ;
+        double const E = metric.sqrtg() * atmo.E_floor(rtp[0]) ;
+        double const N = metric.sqrtg() * atmo.N_floor(rtp[0]) ;
+        for ( int s = 0 ; s < GRACE_M1_NU_SPECIES ; ++s ) {
+            int const o = s*GRACE_N_M1_VARS ;
+            state(VEC(i,j,k),ERAD1_+o,q)  = E ;   state(VEC(i,j,k),NRAD1_+o,q)  = N ;
+            state(VEC(i,j,k),FRADX1_+o,q) = 0.0 ; state(VEC(i,j,k),FRADY1_+o,q) = 0.0 ;
+            state(VEC(i,j,k),FRADZ1_+o,q) = 0.0 ;
+        }
+        #ifdef GRACE_M1_PHOTONS
+        state(VEC(i,j,k),ERADPH_,q)  = E ;   state(VEC(i,j,k),NRADPH_,q)  = N ;
+        state(VEC(i,j,k),FRADXPH_,q) = 0.0 ; state(VEC(i,j,k),FRADYPH_,q) = 0.0 ;
+        state(VEC(i,j,k),FRADZPH_,q) = 0.0 ;
+        #endif
+    }) ;
+    Kokkos::fence() ;
+}
 
 template < typename eos_t >
 void set_m1_eas() {

@@ -236,6 +236,9 @@ int main(int argc, char* argv[])
         /* Report beta-equilibrium solver failures (silent otherwise)                      */
         /**********************************************************************************/
         grace::report_betaeq_failures() ;
+        #ifdef GRACE_M1_DIAGNOSTICS
+        grace::report_m1_implicit_failures() ;
+        #endif
         #endif
     }
 

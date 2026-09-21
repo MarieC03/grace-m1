@@ -117,6 +117,10 @@ template<int ispec> GRACE_HOST_DEVICE constexpr int NAME() {                  \
 }
 #endif
 
+//! Rates below this count as "no collision term": well above the rate floor,
+//! below any real rate.  Shared by the implicit update and its diagnostic.
+constexpr double M1_EAS_NEGLIGIBLE = 1.0e-30 ;
+
 GRACE_M1_IDX_FN(m1_erad_idx,    ERAD1_,    GRACE_N_M1_VARS, ERADPH_)
 GRACE_M1_IDX_FN(m1_nrad_idx,    NRAD1_,    GRACE_N_M1_VARS, NRADPH_)
 GRACE_M1_IDX_FN(m1_fradx_idx,   FRADX1_,   GRACE_N_M1_VARS, FRADXPH_)
@@ -168,7 +172,7 @@ struct m1_closure_t {
         metric_array_t _metric
     ) : E(prims[ERADL])
       , FD({prims[FXL],prims[FYL],prims[FZL]})
-      , vU({prims[ZXL],prims[ZYL],prims[ZZL]})
+      , zU({prims[ZXL],prims[ZYL],prims[ZZL]})
       , metric(_metric)
     {
         initialize() ;
@@ -179,7 +183,7 @@ struct m1_closure_t {
         vec_t const& _FD,
         vec_t const& _vU,
         metric_array_t _metric
-    ) : E(_E), FD(_FD), vU(_vU), metric(_metric)
+    ) : E(_E), FD(_FD), zU(_vU), metric(_metric)
     {
         initialize() ;
     }
@@ -190,7 +194,7 @@ struct m1_closure_t {
         vec_t const& _FD,
         vec_t const& _vU,
         metric_array_t _metric
-    ) : E(_E), zeta(_zeta), FD(_FD), vU(_vU), metric(_metric)
+    ) : E(_E), zeta(_zeta), FD(_FD), zU(_vU), metric(_metric)
     {
         initialize() ;
         // compute fluid-frame quantities and rad-pressure
@@ -202,7 +206,7 @@ struct m1_closure_t {
     update_closure(m1_prims_array_t const& prims, double zeta0, bool update) {
         E = prims[ERADL];
         FD = vec_t{prims[FXL],prims[FYL],prims[FZL]};
-        vU = vec_t{prims[ZXL],prims[ZYL],prims[ZZL]} ;
+        zU = vec_t{prims[ZXL],prims[ZYL],prims[ZZL]} ;
         initialize() ;
         update_closure(zeta0,update) ;
     }
@@ -287,7 +291,10 @@ struct m1_closure_t {
         );
         #endif
         HU = metric.raise(HD) ;
-        Gamma = W * (E-vdotF)/fmax(J,f_floor) ;
+        // Causal radiation has F.v < E; limiting F.v keeps Gamma = W(E - F.v)/J > 0,
+        // so number absorption never turns into growth (THC_M1).
+        double const vdotF_c = Kokkos::fmin(vdotF, (1.0 - 1.0e-5) * E) ;
+        Gamma = ( E > DBLMIN && J > f_floor ) ? W * (E - vdotF_c) / J : 1.0 ;
     }
 
     void GRACE_HOST_DEVICE
@@ -418,6 +425,7 @@ struct m1_closure_t {
 
     double f2_floor, f_floor ;
     vec_t FD, fhD, HD, vD, vU, FU, fhU, HU;
+    vec_t zU ;   //!< input z^i = W v^i, kept so initialize() can be re-run
     double E, J, F2, F, vdotF, vdotfh, Fdotfh, v2, W, W2, zeta, Gamma;
     double PUU[3][3];
 
@@ -447,15 +455,15 @@ struct m1_closure_t {
         F2 = fmax(F2, f2_floor) ;
         F  = fmax(F , f_floor ) ;
 
-        // v here is actually z, we convert now
-        double const z2 = metric.square_vec(vU) ;
+        // Always from the stored z: this runs again on every Newton evaluation,
+        // and converting vU in place would shrink the velocity on each call.
+        double const z2 = metric.square_vec(zU) ;
         W2 = (1.0+z2) ;
         W = sqrt(W2) ;
-        vU[0]/=W ; vU[1]/=W; vU[2]/=W ;
+        vU = vec_t({ zU[0]/W, zU[1]/W, zU[2]/W }) ;
 
-        // KEN removed the clamp. It can be negative and zero
-        // vdotF = fmax(FD[0] * vU[0] + FD[1] * vU[1] + FD[2] * vU[2], f_floor) ;
-        vdotF = fmax(FD[0]*vU[0] + FD[1]*vU[1] + FD[2]*vU[2], f_floor) ;
+        // Signed as in FIL (no lower clamp); costs beam sharpness across fast transparent flow.
+        vdotF = FD[0]*vU[0] + FD[1]*vU[1] + FD[2]*vU[2] ;
 
         vD = metric.lower(vU) ;
         v2 = metric.square_vec(vU) ;
@@ -479,6 +487,20 @@ struct m1_atmo_params_t {
     double E_fl_scaling, eps_fl_scaling ;
     double eps_min, eps_max ;
     double atmo_tol ;   //!< grmhd.atmosphere.atmo_tol
+    double r_damping ;  //!< beyond this radius the floors fall as (r_damping/r)^2 (FIL r_atmo_damping)
+
+    // A constant floor is a luminosity threshold 4 pi r^2 E_fl that GROWS with r and erases
+    // the tail of a burst on its way out; beyond r_damping the threshold stays constant.
+    // The one definition of the floors: reset, initial data and FOFC tagging all use it.
+    GRACE_HOST_DEVICE double damping(double r) const {
+        return ( r > r_damping ) ? (r_damping/r)*(r_damping/r) : 1.0 ;
+    }
+    GRACE_HOST_DEVICE double E_floor(double r) const {
+        return Kokkos::fmax(1.0e-20, E_fl * Kokkos::pow(r, E_fl_scaling) * damping(r)) ;
+    }
+    GRACE_HOST_DEVICE double N_floor(double r) const {
+        return Kokkos::fmax(1.0e-20, N_fl * Kokkos::pow(r, N_fl_scaling) * damping(r)) ;
+    }
 } ;
 
 struct m1_excision_params_t {
@@ -512,6 +534,7 @@ get_m1_atmo_params() {
     m1_atmo_params.eps_min = grace::get_param<double>("m1", "atmosphere", "eps_min") ;
     m1_atmo_params.eps_max = grace::get_param<double>("m1", "atmosphere", "eps_max") ;
     m1_atmo_params.atmo_tol = grace::get_param<double>("grmhd", "atmosphere", "atmo_tol") ;
+    m1_atmo_params.r_damping = grace::get_param<double>("m1", "atmosphere", "r_damping") ;
     return m1_atmo_params ;
 }
 

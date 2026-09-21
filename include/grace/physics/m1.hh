@@ -357,8 +357,8 @@ struct m1_equations_system_t
         // Independent E and N floors, each tested against its own threshold.
         // cl.E and prims are already undensitised here, so no sqrtg is needed
         // in the test -- only in the write-back below.
-        double const E_atmo = atmo_params.E_fl * Kokkos::pow(r, atmo_params.E_fl_scaling) ;
-        double const N_atmo = atmo_params.N_fl * Kokkos::pow(r, atmo_params.N_fl_scaling) ;
+        double const E_atmo = atmo_params.E_floor(r) ;
+        double const N_atmo = atmo_params.N_floor(r) ;
         bool const E_bad = cl.E         < E_atmo * (1. + atmo_params.atmo_tol ) ;
         bool const N_bad = prims[NRADL] < N_atmo * (1. + atmo_params.atmo_tol ) ;
         // ---- OLD keep-N / full-reset branches (kept for reference) ----------
@@ -378,24 +378,43 @@ struct m1_equations_system_t
         // ---- NEW: FIL parity -- one plain reset, both floors, no keep-N ------
         // FIL sets E and N to their own floors, zeroes the flux and sets the
         // mean energy to 0 (not eps_fl), which keeps the T_nu correction inert.
-        if ( E_bad || N_bad )
-        {
+        // Excision first: the EVOLVED (densitised) fields are what the output shows, so they
+        // are set to the plain excision value, without sqrtg (20..4000 there), and the region
+        // shows up at that value.  Tested before the floor, which would re-densitise it.
+        if ( excise ) {
+            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = excision_params.E_ex ;
+            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
+            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = excision_params.E_ex/excision_params.eps_ex ;
+        } else if ( E_bad || N_bad ) {
             double const sg = metric.sqrtg() ;
             this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = sg * E_atmo ;
             this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
             this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = sg * N_atmo ;
-        } else if ( excise ) {
-            this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex ;
-            this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = 0.0 ;
-            this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) = 0.0 ;
-            this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = 0.0 ;
-            // here since we are in excision it's safe to assume v^i == 0 :
-            // Gamma == 1 and N = sqrtg E / eps_target
-            this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * excision_params.E_ex/excision_params.eps_ex ;
         }
     }
+
+    // ----------------------------------------------------------------------
+    // Collision update of transparent species (override with -DGRACE_M1_EXPLICIT_THIN=0)
+    //   1 = one explicit step U = W + dt S(W) where
+    //       4 alp W^3 (kappa_a+kappa_s) dt < GRACE_M1_EXPLICIT_THIN_MAX_RATE
+    //       (THC_M1's kappa dt < 1, with the lab-frame rate of a counter-streaming
+    //       beam, J <= W^2 (1+v)^2 E): monotone, keeps E > 0, needs no guess.
+    //   0 = Newton solve everywhere, as in FIL.
+    // The step is first order inside the IMEX stage.  At a limit of 1 it shifted the
+    // diffusivity of the scattering test by 5% (kappa dt = 0.09); 0.1 keeps it to
+    // cells that are transparent (kappa dx < 1/3 at cfl 0.25), which is where the
+    // Newton path goes wrong (floor-scale E accepted at the absolute tolerance).
+    // ----------------------------------------------------------------------
+    #ifndef GRACE_M1_EXPLICIT_THIN
+    #define GRACE_M1_EXPLICIT_THIN 1
+    #endif
+    #ifndef GRACE_M1_EXPLICIT_THIN_MAX_RATE
+    #define GRACE_M1_EXPLICIT_THIN_MAX_RATE 0.1
+    #endif
 
     /**
      * @brief Compute M1 implicit update.
@@ -433,8 +452,7 @@ struct m1_equations_system_t
         /**************************************************************************************************/
         // No collision term -> the implicit update is exactly the identity, and
         // the caller deep-copies old->new, so returning leaves U = W and N.
-        // Threshold sits well above the rate floor and below any real rate.
-        constexpr double eas_negligible = 1.0e-30 ;
+        constexpr double eas_negligible = M1_EAS_NEGLIGIBLE ;
         const bool no_collision = eas[KAL]   < eas_negligible
                                && eas[KSL]   < eas_negligible
                                && eas[ETAL]  < eas_negligible
@@ -458,74 +476,101 @@ struct m1_equations_system_t
         double  W[4]  ;
         W[0] = prims[ERADL] ; W[1] = prims[FXL] ; W[2] = prims[FYL] ; W[3] = prims[FZL] ;
         /**************************************************************************************************/
-        // construct the initial guess
         double  U[4]  ;
-        cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
-        //U[0] = ( prims[ERADL] + dt * dtfact * eas[ETAL]) / ( 1. + dt * dtfact * eas[KAL]) ;
-        // take a pointer so we can capture it
-        // in the lambda
-        m1_closure_t* pcl = &cl;
-        /**************************************************************************************************/
-        // construct the lambdas for the evaluation of the update
-        auto const func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
-            pcl->implicit_update_func(eas,u,W,s,dt,dtfact) ;
-        } ;
-        auto const dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
-            pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
-        } ;
-        /**************************************************************************************************/
-        // call rootfinder
-        unsigned long maxiter = 100 ;
-        int err = 0;
-#ifdef GRACE_M1_DOGLEG
-        utils::rootfind_nd_dogleg<4>(
-            func, dfunc, U, maxiter, 1e-15, err
-        ) ;
+#ifdef GRACE_M1_DIAGNOSTICS
+        int  first_err = 0 ;
+        bool used_linear_fallback = false, explicit_step = false ;
+#endif
+#if GRACE_M1_EXPLICIT_THIN
+        // Transparent this stage: the closure above is already at the explicit state W.
+        bool const non_stiff =
+            4.0 * metric.alp() * cl.W*cl.W*cl.W * ( eas[KAL] + eas[KSL] ) * dt * dtfact
+            < GRACE_M1_EXPLICIT_THIN_MAX_RATE ;
 #else
-        utils::rootfind_nd_newton_raphson<4>(
-            func, dfunc, U, maxiter, 1e-15, err
-        ) ;
+        bool const non_stiff = false ;
 #endif
-#ifdef GRACE_M1_COUNT_IMPLICIT
-        printf("[IMP1] %d %.6e %.6e %.6e\n", err, cl.zeta,
-               eas[KAL]*dt*dtfact, eas[KSL]*dt*dtfact) ;
+        if ( non_stiff ) {
+            double S[4] ;
+            cl.get_implicit_sources(eas,S) ;
+            for( int c=0; c<4; ++c ) U[c] = W[c] + dt*dtfact*S[c] ;
+#ifdef GRACE_M1_DIAGNOSTICS
+            explicit_step = true ;
 #endif
-        /**************************************************************************************************/
-        if ( err != utils::nr_err_t::SUCCESS ) {
-            // assume optically thick closure and
-            // repeat
-            cl.update_closure(prims,0.,false /*nb no update here*/) ;
-
+        } else {
+            // construct the initial guess
             cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
-
-            auto const fixed_closure_func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
-                pcl->implicit_update_func(eas,u,W,s,dt,dtfact,false) ;
+            //U[0] = ( prims[ERADL] + dt * dtfact * eas[ETAL]) / ( 1. + dt * dtfact * eas[KAL]) ;
+            // take a pointer so we can capture it
+            // in the lambda
+            m1_closure_t* pcl = &cl;
+            /**************************************************************************************************/
+            // construct the lambdas for the evaluation of the update
+            auto const func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
+                pcl->implicit_update_func(eas,u,W,s,dt,dtfact) ;
             } ;
-            auto const fixed_closure_dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
+            auto const dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
                 pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
             } ;
+            /**************************************************************************************************/
+            // call rootfinder
+            unsigned long maxiter = 100 ;
+            int err = 0;
 #ifdef GRACE_M1_DOGLEG
             utils::rootfind_nd_dogleg<4>(
-                fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
+                func, dfunc, U, maxiter, 1e-15, err
             ) ;
 #else
             utils::rootfind_nd_newton_raphson<4>(
-                fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
+                func, dfunc, U, maxiter, 1e-15, err
             ) ;
 #endif
 #ifdef GRACE_M1_COUNT_IMPLICIT
-            printf("[IMP2] %d\n", err) ;
+            printf("[IMP1] %d %.6e %.6e %.6e\n", err, cl.zeta,
+                   eas[KAL]*dt*dtfact, eas[KSL]*dt*dtfact) ;
 #endif
-            // if we failed again we just take a linear step and call it
-            // (Radice+2022 sec 3.2: on non-convergence they likewise linearise
-            // by fixing chi = 1/3).  Measured: the solver reports failure on
-            // ~26% of solves here, so declining to deposit -- FIL's policy --
-            // starves the collision term and lets Ymu run away.
+#ifdef GRACE_M1_DIAGNOSTICS
+            first_err = err ;
+#endif
+            /**************************************************************************************************/
             if ( err != utils::nr_err_t::SUCCESS ) {
-                cl.update_closure(prims,0,true) ;
+                // assume optically thick closure and
+                // repeat
+                cl.update_closure(prims,0.,false /*nb no update here*/) ;
+
                 cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
+
+                auto const fixed_closure_func = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4]) {
+                    pcl->implicit_update_func(eas,u,W,s,dt,dtfact,false) ;
+                } ;
+                auto const fixed_closure_dfunc = [pcl,eas,W,dt,dtfact] (double (&u)[4], double (&s)[4], double (&J)[4][4]) {
+                    pcl->implicit_update_dfunc(eas,u,W,s,J,dt,dtfact) ;
+                } ;
+#ifdef GRACE_M1_DOGLEG
+                utils::rootfind_nd_dogleg<4>(
+                    fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
+                ) ;
+#else
+                utils::rootfind_nd_newton_raphson<4>(
+                    fixed_closure_func, fixed_closure_dfunc, U, maxiter, 1e-15, err
+                ) ;
+#endif
+#ifdef GRACE_M1_COUNT_IMPLICIT
+                printf("[IMP2] %d\n", err) ;
+#endif
+                // if we failed again we just take a linear step and call it
+                // (Radice+2022 sec 3.2: on non-convergence they likewise linearise
+                // by fixing chi = 1/3).  Measured: the solver reports failure on
+                // ~26% of solves here, so declining to deposit -- FIL's policy --
+                // starves the collision term and lets Ymu run away.
+                if ( err != utils::nr_err_t::SUCCESS ) {
+                    cl.update_closure(prims,0,true) ;
+                    cl.get_implicit_update_initial_guess(eas, U, dt, dtfact);
+#ifdef GRACE_M1_DIAGNOSTICS
+                    used_linear_fallback = true ;
+#endif
+                }
             }
-        }
+        } // Newton path
         // the compiler seems to sometimes think U is never
         // modified and just elides the whole function....
         volatile double U0 = U[0];
@@ -550,20 +595,53 @@ struct m1_equations_system_t
             prims, eas, dt, dtfact, &N, &dN
         ) ;
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = metric.sqrtg() * N ;
+#ifdef GRACE_M1_DIAGNOSTICS
+        // Solver record, sticky over the step's stages (layout: m1_implicit_err_bits_t).
+        // Residual R = W + dt S(U) - U of the full system at the accepted state, whichever
+        // path produced it.  dU ~ R/(1 + alp W kappa dt), so res estimates |dU|/E.
+        // An explicit step has no solve to judge: it records no residual, only its state.
+        double Ufin[4] = { U0, U1, U2, U3 } ;
+        double res = 0.0 ;
+        if ( !explicit_step ) {
+            double R[4] ;
+            cl.implicit_update_func(eas,Ufin,W,R,dt,dtfact) ;
+            for( int c=0; c<4; ++c ) res = Kokkos::fmax(res, Kokkos::fabs(R[c])) ;
+            res /= ( 1.0 + metric.alp() * cl.W * ( eas[KAL] + eas[KSL] ) * dt * dtfact )
+                 * Kokkos::fmax( Kokkos::fmax(Kokkos::fabs(Ufin[0]), Kokkos::fabs(W[0])), 1.0e-200 ) ;
+            if ( !Kokkos::isfinite(res) ) res = 1.0e300 ;
+        }
+        double const F2fin = metric.square_covec({Ufin[1],Ufin[2],Ufin[3]}) ;
+        bool const non_physical = !( Ufin[0] > 0.0 )
+                               || !( F2fin <= (1.0+1.0e-10)*Ufin[0]*Ufin[0] ) ;
+        // One bit per error kind: OR-ing the raw codes of two stages would alias.
+        unsigned const bits = ( first_err != utils::nr_err_t::SUCCESS ? 1u << (first_err-1) : 0u )
+                            | ( used_linear_fallback ? unsigned(M1_IMPLICIT_LINEAR)      : 0u )
+                            | ( non_physical         ? unsigned(M1_IMPLICIT_NONPHYSICAL) : 0u ) ;
+        unsigned const old_bits = static_cast<unsigned>( this->_aux(VEC(i,j,k),M1_IMPLICIT_ERR_,q) ) ;
+        this->_aux(VEC(i,j,k),M1_IMPLICIT_ERR_,q) =
+            static_cast<double>( old_bits | ( bits << (M1_IMPLICIT_ERR_STRIDE*ispec) ) ) ;
+        this->_aux(VEC(i,j,k),M1_IMPLICIT_RES_,q) =
+            Kokkos::fmax( this->_aux(VEC(i,j,k),M1_IMPLICIT_RES_,q), res ) ;
+        if ( explicit_step ) {
+            unsigned const old_ex = static_cast<unsigned>( this->_aux(VEC(i,j,k),M1_EXPLICIT_STEP_,q) ) ;
+            this->_aux(VEC(i,j,k),M1_EXPLICIT_STEP_,q) = static_cast<double>( old_ex | ( 1u << ispec ) ) ;
+        }
+#endif
     }
 
     // ----------------------------------------------------------------------
-    // Backreaction limiter policy  (TESTING toggle)
-    //   1 = FIL-style HARD STOP: an exchange that would drive tau < 0 or push
-    //       Ye/Ymu out of the table bounds is REVERTED entirely for that
-    //       species / lepton channel (fluid untouched, radiation restored).
-    //       In a near-atmosphere cell it therefore does NOTHING rather than
-    //       draining the fluid onto its floors -- preserves the halo.
+    // Backreaction limiter policy (override with -DGRACE_M1_BACKREACT_HARDSTOP=0)
+    //   1 = HARD STOP: every species is accepted or rejected whole (E, F, N).
+    //       A lepton pair that would push Ye/Ymu off the table is rejected
+    //       first; the rest is accepted iff tau + sum(dE) > 0.  In a
+    //       near-atmosphere cell it does nothing rather than drain the fluid.
     //   0 = conservative SCALED limiter: throttle both sides by a shared factor
     //       so the fluid absorbs what it can and the radiation keeps the rest
     //       (energy/lepton conserved, but pins the low-density fluid to floor).
     // ----------------------------------------------------------------------
+    #ifndef GRACE_M1_BACKREACT_HARDSTOP
     #define GRACE_M1_BACKREACT_HARDSTOP 1
+    #endif
 
     template< typename eos_t >
     void KOKKOS_INLINE_FUNCTION
@@ -600,6 +678,94 @@ struct m1_equations_system_t
         // Per-cell density cutoff: leave near-empty cells untouched.
         if ( rho_min > 0.0 && this->_aux(VEC(i,j,k),RHO_,q) < rho_min ) return ;
 
+        #if GRACE_M1_BACKREACT_HARDSTOP
+        #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 3
+        // Old - new per species.  A species the implicit solve skipped has
+        // new == old bitwise, so it contributes exactly zero: no rate gate needed.
+        auto const x_e    = species_exchange<0>(q,VEC(i,j,k),state_new) ;
+        auto const x_ebar = species_exchange<1>(q,VEC(i,j,k),state_new) ;
+        #if GRACE_M1_NU_SPECIES >= 5
+        auto const x_mu    = species_exchange<2>(q,VEC(i,j,k),state_new) ;
+        auto const x_mubar = species_exchange<3>(q,VEC(i,j,k),state_new) ;
+        auto const x_x     = species_exchange<4>(q,VEC(i,j,k),state_new) ;
+        #else
+        auto const x_x     = species_exchange<2>(q,VEC(i,j,k),state_new) ;
+        #endif
+        double const D = state_new(VEC(i,j,k),DENS_,q) ;
+
+        // Lepton pairs first; the Y* that is checked is the Y* that is written.
+        double const yes_new = state_new(VEC(i,j,k),YESTAR_,q) + ( x_e.N - x_ebar.N ) ;
+        double const ye_new  = yes_new / D ;
+        bool   const acc_e   = ( ye_new >= eos.get_c2p_ye_min() && ye_new <= eos.get_c2p_ye_max() ) ;
+        #if GRACE_M1_NU_SPECIES >= 5
+        double const ymus_new = state_new(VEC(i,j,k),YMUSTAR_,q) + ( x_mu.N - x_mubar.N ) ;
+        double const ymu_new  = ymus_new / D ;
+        bool   const acc_mu   = ( ymu_new >= eos.get_c2p_ymu_min() && ymu_new <= eos.get_c2p_ymu_max() ) ;
+        #endif
+
+        // One energy decision on the summed exchange of the surviving species
+        // (order independent, as in FIL); the momentum follows it.
+        double dE = x_x.E, dSx = x_x.Sx, dSy = x_x.Sy, dSz = x_x.Sz ;
+        if ( acc_e ) {
+            dE  += x_e.E  + x_ebar.E  ; dSx += x_e.Sx + x_ebar.Sx ;
+            dSy += x_e.Sy + x_ebar.Sy ; dSz += x_e.Sz + x_ebar.Sz ;
+        }
+        #if GRACE_M1_NU_SPECIES >= 5
+        if ( acc_mu ) {
+            dE  += x_mu.E  + x_mubar.E  ; dSx += x_mu.Sx + x_mubar.Sx ;
+            dSy += x_mu.Sy + x_mubar.Sy ; dSz += x_mu.Sz + x_mubar.Sz ;
+        }
+        #endif
+        double const tau_new = state_new(VEC(i,j,k),TAU_,q) + dE ;
+        bool   const acc_E   = ( tau_new > 0.0 ) ;
+
+        if ( acc_E ) {
+            state_new(VEC(i,j,k),TAU_,q) = tau_new ;
+            state_new(VEC(i,j,k),SX_,q) += dSx ;
+            state_new(VEC(i,j,k),SY_,q) += dSy ;
+            state_new(VEC(i,j,k),SZ_,q) += dSz ;
+            if ( acc_e ) state_new(VEC(i,j,k),YESTAR_,q) = yes_new ;
+            #if GRACE_M1_NU_SPECIES >= 5
+            if ( acc_mu ) state_new(VEC(i,j,k),YMUSTAR_,q) = ymus_new ;
+            #endif
+        }
+        // Rejected species go back to their pre-collision E, F and N.
+        if ( !( acc_E && acc_e ) ) {
+            revert_species<0>(q,VEC(i,j,k),state_new) ;
+            revert_species<1>(q,VEC(i,j,k),state_new) ;
+        }
+        #if GRACE_M1_NU_SPECIES >= 5
+        if ( !( acc_E && acc_mu ) ) {
+            revert_species<2>(q,VEC(i,j,k),state_new) ;
+            revert_species<3>(q,VEC(i,j,k),state_new) ;
+        }
+        if ( !acc_E ) revert_species<4>(q,VEC(i,j,k),state_new) ;
+        #else
+        if ( !acc_E ) revert_species<2>(q,VEC(i,j,k),state_new) ;
+        #endif
+
+        #ifdef GRACE_M1_DIAGNOSTICS
+        // What was applied, summed raw over the step's implicit stages (not
+        // IMEX-weighted); reset every step.  FIL: m1_heatcool, m1_lepton_source.
+        if ( acc_E ) {
+            this->_aux(VEC(i,j,k),M1_HEATCOOL_,q) += dE / D ;
+            if ( acc_e ) this->_aux(VEC(i,j,k),M1_LEPTON_SOURCE_,q) += ( x_e.N - x_ebar.N ) / D ;
+            #if GRACE_M1_NU_SPECIES >= 5
+            if ( acc_mu ) this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q) += ( x_mu.N - x_mubar.N ) / D ;
+            #endif
+        }
+        int rejected = ( acc_e ? 0 : 1 ) | ( acc_E ? 0 : 4 ) ;
+        #if GRACE_M1_NU_SPECIES >= 5
+        rejected |= ( acc_mu ? 0 : 2 ) ;
+        #endif
+        if ( rejected != 0 ) {
+            double& flag = this->_aux(VEC(i,j,k),M1_BR_REJECT_,q) ;
+            flag = static_cast<double>( static_cast<int>(flag) | rejected ) ;
+        }
+        #endif // GRACE_M1_DIAGNOSTICS
+        #endif // !GRACE_FREEZE_HYDRO && GRACE_M1_NU_SPECIES >= 3
+
+        #else // scaled limiter
         #if GRACE_M1_NU_SPECIES >= 1
         #if (GRACE_M1_NU_SPECIES >= 5)
         constexpr int n_species = 5;
@@ -609,52 +775,7 @@ struct m1_equations_system_t
         constexpr int n_species = 1;
         #endif
 
-        // Whole-cell gate on kappa_a: if NO species has absorption opacity there
-        // was no exchange at all and the deposit is a no-op.  Once any species
-        // is live every species is treated identically below.
-        constexpr double eas_negligible = 1.0e-30 ;
-        bool any_active = false ;
-        #pragma unroll
-        for( int ispec = 0; ispec < n_species; ++ispec ) {
-            any_active = any_active
-                || ( this->_aux(VEC(i,j,k),KAPPAA1_+ispec*GRACE_N_M1_AUX,q)
-                     > eas_negligible ) ;
-        }
-        if ( !any_active ) return ;
-
         #ifndef GRACE_FREEZE_HYDRO
-        #if GRACE_M1_BACKREACT_HARDSTOP
-            // ── FIL-style hard stop, PER SPECIES ─────────────────────────────────
-            // Draw each species' energy from the running fluid state; accept the
-            // exchange only while the fluid stays PHYSICAL (tau > 0), otherwise
-            // revert that species entirely (fluid untouched, radiation restored).
-            // No draining: a cell that cannot afford the exchange keeps its
-            // state.  Momentum rides the energy decision, as in FIL.
-            double tau_run = state_new(VEC(i,j,k),TAU_,q) ;
-            #pragma unroll
-            for( int ispec = 0; ispec < n_species; ++ispec ) {
-                const int off = ispec*GRACE_N_M1_VARS ;
-                const double dE_s  = this->_state(VEC(i,j,k),ERAD1_ +off,q) - state_new(VEC(i,j,k),ERAD1_ +off,q) ;
-                const double dSx_s = this->_state(VEC(i,j,k),FRADX1_+off,q) - state_new(VEC(i,j,k),FRADX1_+off,q) ;
-                const double dSy_s = this->_state(VEC(i,j,k),FRADY1_+off,q) - state_new(VEC(i,j,k),FRADY1_+off,q) ;
-                const double dSz_s = this->_state(VEC(i,j,k),FRADZ1_+off,q) - state_new(VEC(i,j,k),FRADZ1_+off,q) ;
-                const double tau_new = tau_run + dE_s ;
-                if ( tau_new > 0.0 ) {
-                    tau_run = tau_new ;
-                    state_new(VEC(i,j,k),TAU_,q) += dE_s  ;
-                    state_new(VEC(i,j,k),SX_,q)  += dSx_s ;
-                    state_new(VEC(i,j,k),SY_,q)  += dSy_s ;
-                    state_new(VEC(i,j,k),SZ_,q)  += dSz_s ;
-                    // radiation kept at its post-collision value (accepted)
-                } else {
-                    // hard stop this species: revert its radiation, no deposit
-                    state_new(VEC(i,j,k),ERAD1_ +off,q) = this->_state(VEC(i,j,k),ERAD1_ +off,q) ;
-                    state_new(VEC(i,j,k),FRADX1_+off,q) = this->_state(VEC(i,j,k),FRADX1_+off,q) ;
-                    state_new(VEC(i,j,k),FRADY1_+off,q) = this->_state(VEC(i,j,k),FRADY1_+off,q) ;
-                    state_new(VEC(i,j,k),FRADZ1_+off,q) = this->_state(VEC(i,j,k),FRADZ1_+off,q) ;
-                }
-            }
-        #else
             // ── Accumulate dE and dS over all species ────────────────────────────
             double dE = 0., dSx = 0., dSy = 0., dSz = 0. ;
             #pragma unroll
@@ -696,17 +817,14 @@ struct m1_equations_system_t
                 state_new(VEC(i,j,k),FRADY1_+off,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADY1_+off,q) + keep * this->_state(VEC(i,j,k),FRADY1_+off,q) ;
                 state_new(VEC(i,j,k),FRADZ1_+off,q) = limiting_factor_E * state_new(VEC(i,j,k),FRADZ1_+off,q) + keep * this->_state(VEC(i,j,k),FRADZ1_+off,q) ;
             }
-        #endif // GRACE_M1_BACKREACT_HARDSTOP
         #endif // GRACE_FREEZE_HYDRO
         #endif // GRACE_M1_NU_SPECIES >= 1
 
         #if GRACE_M1_NU_SPECIES >= 3
         // Baryon density (densitized): shared by the Ye and Ymu channels.
         double const D = state_new(VEC(i,j,k),DENS_,q) ;
-        #endif
 
         // We define dN in sense Ye. Old - New. Less nrad_e more ye.
-        #if GRACE_M1_NU_SPECIES >= 3
         const double dN1 = this->_state(VEC(i,j,k),NRAD1_,q)
            - state_new(VEC(i,j,k),NRAD1_,q) ;
         const double dN2 = this->_state(VEC(i,j,k),NRAD2_,q)
@@ -721,17 +839,6 @@ struct m1_equations_system_t
         double const ye_new   = dye_new / D ;
         bool const number_e_good = ( ye_new >= yemin && ye_new <= yemax ) ;
 
-        #if GRACE_M1_BACKREACT_HARDSTOP
-        if ( number_e_good ) {
-            state_new(VEC(i,j,k),YESTAR_,q) = dye_new ;
-        }
-        else {
-            // hard stop: revert nue/anue number, leave Ye at its old value
-            state_new(VEC(i,j,k),NRAD1_,q)  = this->_state(VEC(i,j,k),NRAD1_,q) ;
-            state_new(VEC(i,j,k),NRAD2_,q)  = this->_state(VEC(i,j,k),NRAD2_,q) ;
-            state_new(VEC(i,j,k),YESTAR_,q) = dye_old ;
-        }
-        #else
         double const factor_max = (yemax - ye_old) * D / (dN1 - dN2) ;
         double const factor_min = (yemin - ye_old) * D / (dN1 - dN2) ;
 
@@ -751,7 +858,6 @@ struct m1_equations_system_t
                                                 - limiting_factor * dN2 ;
             state_new(VEC(i,j,k),YESTAR_,q) = dye_old + limiting_factor * (dN1 - dN2) ;
         }
-        #endif // GRACE_M1_BACKREACT_HARDSTOP
         #endif // GRACE_M1_NU_SPECIES >= 3
 
         #if GRACE_M1_NU_SPECIES >= 5
@@ -768,16 +874,6 @@ struct m1_equations_system_t
         double const ymu_new    = dymu_new / D ;
         bool const number_mu_good = ( ymu_new >= ymumin && ymu_new <= ymumax ) ;
 
-        #if GRACE_M1_BACKREACT_HARDSTOP
-        if ( number_mu_good ) {
-            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_new ;
-        } else {
-            // hard stop: revert numu/anumu number, leave Ymu at its old value
-            state_new(VEC(i,j,k),NRAD3_,q)   = this->_state(VEC(i,j,k),NRAD3_,q) ;
-            state_new(VEC(i,j,k),NRAD4_,q)   = this->_state(VEC(i,j,k),NRAD4_,q) ;
-            state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old ;
-        }
-        #else
         double const fac_max_mu = (ymumax - ymu_old) * D / (dN3 - dN4) ;
         double const fac_min_mu = (ymumin - ymu_old) * D / (dN3 - dN4) ;
 
@@ -794,8 +890,8 @@ struct m1_equations_system_t
                                               - limiting_factor_mu * dN4 ;
             state_new(VEC(i,j,k),YMUSTAR_,q) = dymu_old + limiting_factor_mu * (dN3 - dN4) ;
         }
-        #endif // GRACE_M1_BACKREACT_HARDSTOP
         #endif // GRACE_M1_NU_SPECIES >= 5
+        #endif // GRACE_M1_BACKREACT_HARDSTOP
     }
 
     #ifdef GRACE_M1_PHOTONS
@@ -941,6 +1037,35 @@ struct m1_equations_system_t
     m1_excision_params_t excision_params;
     //! Parameters for backreaction
     m1_backreaction_params_t backreaction_params;
+
+    //! Pre- minus post-collision change of one radiation block (densitised,
+    //! so sqrtg cancels): what the fluid receives if the block is accepted.
+    struct m1_exchange_t { double E, Sx, Sy, Sz, N ; } ;
+
+    template< int ispec >
+    m1_exchange_t GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    species_exchange( int const q, VEC(int const i, int const j, int const k)
+                    , grace::var_array_t const state_new ) const
+    {
+        return { this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q)  - state_new(VEC(i,j,k),m1_erad_idx<ispec>(),q)
+               , this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradx_idx<ispec>(),q)
+               , this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q)
+               , this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) - state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q)
+               , this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  - state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q) } ;
+    }
+
+    //! Hard-stop revert: the block gets its pre-collision E, F and N back.
+    template< int ispec >
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    revert_species( int const q, VEC(int const i, int const j, int const k)
+                  , grace::var_array_t const state_new ) const
+    {
+        state_new(VEC(i,j,k),m1_erad_idx<ispec>(),q)  = this->_state(VEC(i,j,k),m1_erad_idx<ispec>(),q) ;
+        state_new(VEC(i,j,k),m1_fradx_idx<ispec>(),q) = this->_state(VEC(i,j,k),m1_fradx_idx<ispec>(),q) ;
+        state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q) = this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) ;
+        state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) ;
+        state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
+    }
     /***********************************************************************/
     /***********************************************************************/
     /**
@@ -1312,6 +1437,10 @@ struct m1_equations_system_t
 /**************************************************************************************************/
 //! Per-step count of beta-equilibrium solver failures (see m1.cpp).
 void report_betaeq_failures() ;
+#ifdef GRACE_M1_DIAGNOSTICS
+//! Log how the implicit collision solves of this step ended (from m1_implicit_err/res).
+void report_m1_implicit_failures() ;
+#endif
 
 template < typename eos_t >
 void set_m1_eas(

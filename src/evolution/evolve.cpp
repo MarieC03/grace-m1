@@ -181,6 +181,18 @@ void evolve_impl() {
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
         {
             aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
+            #ifdef GRACE_M1_DIAGNOSTICS
+            // Backreaction diagnostics accumulate over the step's implicit stages.
+            aux(i,j,k,M1_HEATCOOL_,q)      = 0.0 ;
+            aux(i,j,k,M1_LEPTON_SOURCE_,q) = 0.0 ;
+            #if GRACE_M1_NU_SPECIES >= 5
+            aux(i,j,k,M1_MUON_SOURCE_,q)   = 0.0 ;
+            #endif
+            aux(i,j,k,M1_BR_REJECT_,q)     = 0.0 ;
+            aux(i,j,k,M1_IMPLICIT_ERR_,q)  = 0.0 ;
+            aux(i,j,k,M1_IMPLICIT_RES_,q)  = 0.0 ;
+            aux(i,j,k,M1_EXPLICIT_STEP_,q) = 0.0 ;
+            #endif
         });
     }
     #endif
@@ -811,10 +823,8 @@ void flag_fofc_cells(
             // (1+atmo_tol)*floor, so tagging at the bare floor leaves a blind
             // band whose cells get reset without FOFC ever going first-order.
             double const sg_tol = metric.sqrtg() * (1.0 + m1_atmo.atmo_tol) ;
-            double const E_atmo_cons =
-                m1_atmo.E_fl * Kokkos::pow(rtp[0], m1_atmo.E_fl_scaling) * sg_tol ;
-            double const N_atmo_cons =
-                m1_atmo.N_fl * Kokkos::pow(rtp[0], m1_atmo.N_fl_scaling) * sg_tol ;
+            double const E_atmo_cons = m1_atmo.E_floor(rtp[0]) * sg_tol ;
+            double const N_atmo_cons = m1_atmo.N_floor(rtp[0]) * sg_tol ;
             for (int s = 0; s < GRACE_M1_NU_SPECIES; ++s) {
                 int const iE = ERAD1_ + s*GRACE_N_M1_VARS ;
                 int const iN = NRAD1_ + s*GRACE_N_M1_VARS ;

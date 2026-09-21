@@ -438,6 +438,21 @@ enum aux_var_idx : int {
     //   reconstructible offline from the kappa_a*/kappa_s* in the "rates" group,
     //   but dt is not in the output.  Large sentinel when the policy is inactive.
     BETAEQ_TSCALE_,
+    //   Backreaction actually applied, summed over the step's implicit stages:
+    //   specific energy dtau/D, dYe, dYmu, and a sticky reject mask
+    //   (1 = Ye pair, 2 = Ymu pair, 4 = energy).  FIL: m1_heatcool/m1_lepton_source.
+    M1_HEATCOOL_,
+    M1_LEPTON_SOURCE_,
+    #if GRACE_M1_NU_SPECIES >= 5
+    M1_MUON_SOURCE_,
+    #endif
+    M1_BR_REJECT_,
+    //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)
+    //   and the largest estimated relative error |dU|/E of the accepted state.
+    M1_IMPLICIT_ERR_,
+    M1_IMPLICIT_RES_,
+    //   Species (bit s) that took the explicit collision step in some stage of this step.
+    M1_EXPLICIT_STEP_,
     #endif
     #endif
     #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
@@ -465,6 +480,20 @@ enum aux_var_idx : int {
     #endif
     N_AUX_VARS
 } ;
+
+#if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_DIAGNOSTICS)
+// m1_implicit_err: M1_IMPLICIT_ERR_STRIDE bits per species, species s starts at bit
+// M1_IMPLICIT_ERR_STRIDE*s (photons use slot GRACE_M1_NU_SPECIES).  The first three
+// are the error of the FIRST Newton attempt; a set retry-bit means it failed too.
+enum m1_implicit_err_bits_t : unsigned {
+    M1_IMPLICIT_ROUNDOFF    = 1u,   //!< line search: roundoff
+    M1_IMPLICIT_SMALLSTEP   = 2u,   //!< line search: step too small, gradient not
+    M1_IMPLICIT_MAXITER     = 4u,   //!< no convergence within the iteration limit
+    M1_IMPLICIT_LINEAR      = 8u,   //!< thick-closure retry failed: linear step taken
+    M1_IMPLICIT_NONPHYSICAL = 16u   //!< accepted state has E <= 0 or |F| > E
+} ;
+constexpr int M1_IMPLICIT_ERR_STRIDE = 5 ;
+#endif
 
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
 // Per-cell scratch produced by the curvature-pre kernel and consumed by the

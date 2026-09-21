@@ -103,7 +103,7 @@ struct zero_m1_id_t {
             pcoords(VEC(i,j,k),2,q)
         };
 
-        auto E_atmo = atmo.E_fl * Kokkos::pow(rtp[0], atmo.E_fl_scaling) ;
+        auto E_atmo = atmo.E_floor(rtp[0]) ;
         auto eps_atmo = atmo.eps_fl * Kokkos::pow(rtp[0], atmo.eps_fl_scaling) ;
 
         bool excise = excision.excise_by_radius ? rtp[0] <= excision.r_ex : false ; /*we don't have alp here*/
@@ -195,7 +195,7 @@ struct equil_m1_id_t {
             pcoords(VEC(i,j,k),2,q)
         };
 
-        double const E_atmo   = atmo.E_fl   * Kokkos::pow(rtp[0], atmo.E_fl_scaling)   ;
+        double const E_atmo   = atmo.E_floor(rtp[0]) ;
         double const eps_atmo = atmo.eps_fl * Kokkos::pow(rtp[0], atmo.eps_fl_scaling) ;
         double const N_atmo   = E_atmo / eps_atmo ;
 

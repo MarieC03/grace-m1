@@ -517,6 +517,15 @@ void register_variables() {
     register_aux_scalar(ABAR_,"Abar") ;
     register_aux_scalar(ZBAR_,"Zbar") ;
     register_aux_scalar(BETAEQ_TSCALE_,"beta_eq_tscale") ;
+    register_aux_scalar(M1_HEATCOOL_,     "m1_heatcool") ;
+    register_aux_scalar(M1_LEPTON_SOURCE_,"m1_lepton_source") ;
+    #if GRACE_M1_NU_SPECIES >= 5
+    register_aux_scalar(M1_MUON_SOURCE_,  "m1_muon_source") ;
+    #endif
+    register_aux_scalar(M1_BR_REJECT_,    "m1_br_reject") ;
+    register_aux_scalar(M1_IMPLICIT_ERR_, "m1_implicit_err") ;
+    register_aux_scalar(M1_IMPLICIT_RES_, "m1_implicit_res") ;
+    register_aux_scalar(M1_EXPLICIT_STEP_, "m1_explicit_step") ;
     #endif
     #endif
 

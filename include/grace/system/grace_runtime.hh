@@ -642,6 +642,14 @@ class grace_runtime_impl_t
             // Nuclear composition + beta-equilibration timescale ratio.
             , "X_n", "X_p", "X_a", "X_h", "Abar", "Zbar"
             , "beta_eq_tscale"
+            // Backreaction applied this step and its rejections.
+            , "m1_heatcool", "m1_lepton_source"
+            #if GRACE_M1_NU_SPECIES >= 5
+            , "m1_muon_source"
+            #endif
+            , "m1_br_reject"
+            // Implicit collision solve: failure mask and exit residual.
+            , "m1_implicit_err", "m1_implicit_res", "m1_explicit_step"
             #endif // GRACE_ENABLE_M1 && GRACE_M1_DIAGNOSTICS
         };
         auto out_cell_vars_volume = get_param<std::vector<std::string>>("IO","volume_output_cell_variables") ;

@@ -40,6 +40,18 @@ m1:
       description: >
         Radial dependence of energy density floor
 
+    r_damping:
+      type: double
+      range: "(0,*)"
+      default: 1.e100
+      description: >
+        Beyond this radius both floors are multiplied by (r_damping/r)^2, never
+        below 1e-20 (FIL: frankfurt_m1::r_atmo_damping).  A constant floor is a
+        luminosity threshold 4 pi r^2 E_fl that GROWS with radius (1e52 erg/s per
+        species at r = 500 for E_fl = 1e-14) and erases the tail of a burst on
+        its way out; with damping the threshold stays at 4 pi r_damping^2 E_fl.
+        The default is so large that the floors are unchanged.
+
     N_fl:
       type: double
       range: "(0,*)"
@@ -95,7 +107,9 @@ m1:
       default: 1.e-14
       range: "(0,*)"
       description: >
-        Value of energy density inside excised regions
+        Value of the EVOLVED (densitised) energy density inside excised regions,
+        i.e. what the output shows there; no factor sqrt(gamma) is applied, so
+        the region appears at exactly this value.
 
     eps_excision:
       type: double
@@ -252,7 +266,7 @@ m1:
 
         eikonal: Neilsen+ 2014 min-path relaxation -- the physically
         best-motivated option, and the only one that is not a geometric
-        estimate.  Solves |grad tau| = kappa by a monotone Jacobi sweep over
+        estimate.  Solves |grad tau| = kappa by a min-path Jacobi sweep over
         the OPTD* fields once per substep, ordered tau -> ghost exchange ->
         kappa so the fugacities see a freshly exchanged tau.
         REQUIRES the build flag -DGRACE_M1_OPTICAL_DEPTH=ON (OFF by default);
