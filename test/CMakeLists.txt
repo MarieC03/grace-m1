@@ -151,6 +151,16 @@ if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
 
+# Eikonal optical-depth relaxation kernel on a small flat block: tau must rise when
+# opacity appears (moving stars), fall when matter leaves, and stay a fixed point.
+if(GRACE_M1_OPTICAL_DEPTH)
+    add_kokkos_test(m1_optical_depth_test test_m1_optical_depth.cpp)
+    add_test(NAME m1_optical_depth_test COMMAND mpirun -n 1 ./m1_optical_depth_test)
+    set_tests_properties(m1_optical_depth_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # Golden-node check of the PRODUCTION Weakhub loader against the raw HDF5
 # contents of a real opacity table: lookup at exact grid nodes must return
 # the stored values (catches axis-ordering / reorder-loop / metadata bugs
