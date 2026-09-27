@@ -106,7 +106,7 @@ struct fuka_id_t {
 
         auto& coord_system = grace::coordinate_system::get() ;
 
-        const bool has_matter = (id_type=="NS" || id_type=="BNS" || id_type=="BHNS");
+        const bool has_matter = (id_type=="NS" || id_type=="BNS" || id_type=="BNS_MIRRORED" || id_type=="BHNS");
         int64_t const nfields= has_matter? 4+6+6+4 : 4+6+6 ;
 
         _data  = vview_t("data_fuka", nfields, nx+2*ngz,ny+2*ngz,nz+2*ngz,nq) ;

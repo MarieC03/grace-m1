@@ -616,9 +616,14 @@ grmhd:
     fuka_id_type:
       type: keyword
       default: "BNS"
-      allowed: ["BH", "BBH", "NS", "BNS", "BHNS"]
+      allowed: ["BH", "BBH", "NS", "BNS", "BNS_MIRRORED", "BHNS"]
       description: >
-        type of FUKA data
+        type of FUKA data.  "BNS_MIRRORED" reads a BNS solution only in the octant
+        x,y,z >= 0 and mirrors it into the other seven with the reflection sign of
+        each component (beta^i, v^i odd along i; gamma_ij, K_ij odd when exactly one
+        index is a mirrored axis), so the initial data are mirror symmetric to the
+        last bit.  Only valid for an equal-mass head-on with both stars on the x
+        axis; an orbiting binary is symmetric under a rotation, not a mirror.
     id_interpolation_offset:
       type: double
       default: 0.0

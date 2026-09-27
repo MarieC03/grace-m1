@@ -70,6 +70,7 @@
 #include <Kokkos_Core.hpp>
 
 #include <algorithm>
+#include <utility>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -662,7 +663,8 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // Axes.  yle and ymu are read in as the linear-valued axes used
     // by the lepton interpolators.  logrho_table / logtemp_table are
     // read in only to verify that the leptonic file lives on the
-    // same physical (rho, T) grid as the baryon table -- they're
+    // same physical (rho, T) grid as the baryon table (in either of
+    // the two log conventions, see below) -- they're
     // *not* used as axes downstream (the lepton interpolators reuse
     // the baryon table's already-unit-converted natural-log axes).
     std::vector<double> yle(nyle), ymu(nymu) ;
@@ -678,15 +680,19 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     h5_read(file, "eos_ymumax",    &ymumax_f,        H5T_NATIVE_DOUBLE) ;
 
     // -------------------------------------------------------
-    //  Verify the leptonic file's (rho, T) grid matches the baryon
-    //  table's pointwise.  The leptonic file stores log10 of CGS
-    //  values; the baryon axes were already converted to natural log
-    //  in geometric units by read_eos_table().  The mapping is:
-    //      bt._logrho[i] = log(10) * logrho10[i]  + log(RHOGF)
-    //      bt._logT  [i] = log(10) * logtemp10[i]
-    //
-    //  A mismatch here means the two HDF5 files were generated on
-    //  different grids and the additive sum is unphysical.
+    //  Verify the leptonic file's (rho, T) grid against the baryon
+    //  table's.  The lepton data are used ROW-ALIGNED with the baryon
+    //  table (the interpolators reuse the baryon axes); these axes are
+    //  read only to check that alignment.  Two label conventions exist:
+    //    log10 of CGS   (the regenerated ken tables)
+    //        bt._logrho[i] = log(10) * logrho10[i] + log(RHOGF)
+    //        bt._logT  [i] = log(10) * logtemp10[i]
+    //    natural log in GEOMETRIC units (the Bollig tables)
+    //        bt._logrho[i] = logrho10[i] ,  bt._logT[i] = logtemp10[i]
+    //  In the right convention the difference is a CONSTANT: the same
+    //  n_b rows labelled with another n_b -> rho constant (baryon mass,
+    //  unit system), harmless for row alignment.  Only a difference that
+    //  VARIES along the axis means the grids really differ.
     // -------------------------------------------------------
     {
         auto const uconv = CGS_units / GEOM_units ;  // for log(RHOGF) == log(uconv.mass_density)
@@ -698,31 +704,58 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         auto h_bar_lT = Kokkos::create_mirror_view_and_copy(
                             Kokkos::HostSpace(), bt._logT) ;
 
+        // Signed range [lo, hi] of (file label - baryon axis) along one axis.
+        struct axis_fit { double lo, hi ; } ;
+        auto fit = [&](bool const log10_cgs, bool const rho_axis) {
+            axis_fit f{ std::numeric_limits<double>::max(),
+                       -std::numeric_limits<double>::max() } ;
+            int const n = rho_axis ? nrho : ntemp ;
+            for (int i=0; i<n; ++i) {
+                double const raw = rho_axis ? logrho10[i] : logtemp10[i] ;
+                double const expected = log10_cgs
+                    ? ln10 * raw + (rho_axis ? lnRHOGF : 0.)
+                    : raw ;
+                double const observed = rho_axis ? h_bar_lr(i) : h_bar_lT(i) ;
+                f.lo = std::min(f.lo, expected - observed) ;
+                f.hi = std::max(f.hi, expected - observed) ;
+            }
+            return f ;
+        } ;
+        auto spread = [](axis_fit const& f) { return f.hi - f.lo ; } ;
+
+        // The right convention is the one whose difference is closest to constant.
+        axis_fit const cr = fit(true,  true), cT = fit(true,  false) ;
+        axis_fit const gr = fit(false, true), gT = fit(false, false) ;
+        bool const is_log10_cgs = spread(cr) + spread(cT) <= spread(gr) + spread(gT) ;
+        axis_fit const fr = is_log10_cgs ? cr : gr ;
+        axis_fit const fT = is_log10_cgs ? cT : gT ;
+        char const* const conv = is_log10_cgs ? "log10 of CGS values"
+                                              : "natural log in geometric units" ;
+
+        double const dlrho = (nrho  > 1) ? std::abs(h_bar_lr(1) - h_bar_lr(0)) : 1. ;
+        double const dlT   = (ntemp > 1) ? std::abs(h_bar_lT(1) - h_bar_lT(0)) : 1. ;
+        double const off_r = 0.5 * (fr.lo + fr.hi) ;
+        double const off_T = 0.5 * (fT.lo + fT.hi) ;
+
         constexpr double axis_tol = 1e-8 ;  // log-axis spacing is typically ~1e-2
-        double max_drho = 0., max_dT = 0. ;
-        for (int i=0; i<nrho;  ++i) {
-            double const expected = ln10 * logrho10[i] + lnRHOGF ;
-            double const observed = h_bar_lr(i) ;
-            double const d = std::abs(expected - observed) ;
-            if (d > max_drho) max_drho = d ;
-        }
-        for (int i=0; i<ntemp; ++i) {
-            double const expected = ln10 * logtemp10[i] ;
-            double const observed = h_bar_lT(i) ;
-            double const d = std::abs(expected - observed) ;
-            if (d > max_dT)   max_dT   = d ;
-        }
-        if (max_drho > axis_tol || max_dT > axis_tol) {
-            GRACE_WARN("Leptonic and baryon (rho, T) grids differ pointwise:"
-                       " max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}."
-                       " The lepton tables will be evaluated on the baryon"
-                       " grid regardless; results may be inconsistent if"
-                       " the two HDF5 files were generated on different grids.",
-                       max_drho, max_dT) ;
+        if (spread(fr) > axis_tol || spread(fT) > axis_tol) {
+            GRACE_WARN("Leptonic axes (read as {}) do NOT lie on the baryon grid: "
+                       "the offset varies by {:.3g} of a rho cell and {:.3g} of a T cell "
+                       "along the axes.  The lepton data are used row-aligned with the "
+                       "baryon table, so they are evaluated at the wrong states.",
+                       conv, spread(fr)/dlrho, spread(fT)/dlT) ;
+        } else if (std::abs(off_r) > axis_tol || std::abs(off_T) > axis_tol) {
+            GRACE_INFO("Leptonic axes read as {}; they label the baryon rows with a "
+                       "constant factor of {:.7f} in rho and {:.7f} in T (a different "
+                       "n_b -> rho constant).  The data are row-aligned, so this does "
+                       "not shift the states they are used at.",
+                       conv, std::exp(off_r), std::exp(off_T)) ;
         } else {
-            GRACE_INFO("Leptonic and baryon (rho, T) grids agree pointwise"
-                       " (max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}).",
-                       max_drho, max_dT) ;
+            GRACE_INFO("Leptonic axes read as {}; (rho, T) grids agree with the "
+                       "baryon table pointwise (max |dlogrho| = {:.3e}, "
+                       "max |dlogT| = {:.3e}).", conv,
+                       std::max(std::abs(fr.lo), std::abs(fr.hi)),
+                       std::max(std::abs(fT.lo), std::abs(fT.hi))) ;
         }
     }
 
