@@ -48,6 +48,9 @@
  *             (GMUNU dilute-Ymu prescription).  See muons_resolved.
  *           - the Y_le axis is linear; the Y_mu axis is log-spaced
  *             (ymu_table in the HDF5 stores log(Ymu)).
+ *           - the baryon pressure is interpolated as ln(P_b + P_e(Y_e=Y_q))
+ *             (log_baryon_press, eos.tabulated_eos.linear_pressure=false) or
+ *             as the signed linear P_b (linear_pressure=true).  See total_press.
  *
  *         The class follows the existing GRACE CRTP / eos_base_t pattern.
  *
@@ -84,6 +87,9 @@
 #include <grace/physics/eos/tabulated_eos.hh>   // tabeos_linterp_t, cold_eos_linterp_t
 
 #include <Kokkos_Core.hpp>
+
+#include <array>
+#include <cstdint>
 
 namespace grace {
 
@@ -205,7 +211,10 @@ class leptonic_eos_4d_t
         // electron contribution; the electronic table is used only for
         // mu_e.  Set true only if the baryon table was generated
         // without electrons and the electronic table must be added.
-        bool   add_ele_contribution_ = false
+        bool   add_ele_contribution_ = false,
+        // true: TABPRESS already holds ln(P_b + P_e(Y_e=Y_q)), see
+        // convert_baryon_press_to_log.  false: signed linear P_b.
+        bool   log_baryon_press_ = false
     )
     : base_t( rhomax, rhomin,
               tempmax, tempmin,
@@ -226,6 +235,7 @@ class leptonic_eos_4d_t
     , nye(ele_yle.size()),     nymu(mu_ymu.size())
     , energy_shift(energy_shift_)
     , add_ele_contribution(add_ele_contribution_)
+    , log_baryon_press(log_baryon_press_)
     {
         lrhomin  = bar_logrho[0] ; lrhomax  = bar_logrho[bar_logrho.size()-1] ;
         ltempmin = bar_logT[0]   ; ltempmax = bar_logT[bar_logT.size()-1]    ;
@@ -748,6 +758,20 @@ class leptonic_eos_4d_t
     // contains the electron contribution (the usual case for SFHo,
     // DD2, etc.).  Mirrors Margherita's add_ele_contribution flag.
     bool add_ele_contribution = false ;
+    // Baryon pressure storage.  false (linear_pressure=true): TABPRESS is the
+    // signed P_b.  true: TABPRESS = ln(P_b + P_e(Y_e=Y_q)), see total_press.
+    bool log_baryon_press = false ;
+
+    // Electron + positron pressure of the lepton table.  The same function adds
+    // the shift into TABPRESS and removes it again in total_press.
+    static GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
+    ele_press(tabeos_linterp_t const& ele, double lrho, double ltemp, double yle)
+    {
+        std::array<int,2> const idx{ TABPRESS_E_MINUS, TABPRESS_E_PLUS } ;
+        std::array<double,2> p ;
+        ele.interp<2>(lrho, ltemp, yle, idx, p) ;
+        return p[0] + p[1] ;
+    }
 
   private:
 
@@ -866,17 +890,24 @@ class leptonic_eos_4d_t
     total_press(double lrho, double ltemp, double ye, double ymu) const
     {
         double const yp   = table_yp(ye, ymu) ;
-        // The baryon table is loaded with linear_pressure=true (read_leptonic),
-        // so TABPRESS is the SIGNED linear pressure — not log(P).  It is
-        // negative in the nuclear spinodal (sub-saturation); the (positive)
-        // lepton pressures below make the additive total positive.
-        double const pb   = baryon_table.interp(lrho, ltemp, yp, TABPRESS) ;
         double       pmu  = 0.0 ;
         if ( muons_resolved(ymu) ) {   // dilute-Ymu: skip the lookup entirely
             double const lymu = Kokkos::log(ymu) ;
             pmu = muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_MINUS)
                 + muon_table.interp(lrho, ltemp, lymu, MUON_VIDX::TABPRESS_MU_PLUS) ;
         }
+        if ( log_baryon_press ) {
+            // TABPRESS = ln(P_b + P_e(Y_e=Y_q)), exact for power laws.  The electrons
+            // move from Y_p to the true Y_e as a difference, so P_b is never formed alone.
+            double const pbe = Kokkos::exp(baryon_table.interp(lrho, ltemp, yp, TABPRESS)) ;
+            double const dpe = add_ele_contribution
+                ? ele_press(ele_table, lrho, ltemp, ye) - ele_press(ele_table, lrho, ltemp, yp)
+                : 0.0 ;
+            return pbe + dpe + pmu ;
+        }
+        // linear_pressure=true: TABPRESS is the SIGNED linear pressure, negative in
+        // the nuclear spinodal; the positive lepton pressures make the total positive.
+        double const pb   = baryon_table.interp(lrho, ltemp, yp, TABPRESS) ;
         double const pe   = add_ele_contribution
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_PLUS)
@@ -1165,6 +1196,84 @@ class leptonic_eos_4d_t
     }
 
 } ; // class leptonic_eos_4d_t
+
+namespace detail {
+// Argument of the log stored at baryon node (i,j,k): P_b plus the electrons at Y_e = Y_q.
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
+log_press_argument(tabeos_linterp_t const& bar, tabeos_linterp_t const& ele,
+                   bool const add_ele, int const i, int const j, int const k)
+{
+    double const pe = add_ele
+        ? leptonic_eos_4d_t::ele_press(ele, bar._logrho(i), bar._logT(j), bar._ye(k))
+        : 0.0 ;
+    return bar._tables(i,j,k,leptonic_eos_4d_t::TABPRESS) + pe ;
+}
+} // namespace detail
+
+// Outcome of convert_baryon_press_to_log: how many nodes have a log argument that is
+// not positive and finite, and the first of them (lowest (i*nT + j)*nY + k).
+struct leptonic_log_press_report_t {
+    std::int64_t n_bad = 0 ;
+    int i = -1, j = -1, k = -1 ;
+    double lrho = 0., ltemp = 0., yq = 0., p_baryon = 0., p_ele = 0. ;
+} ;
+
+// Rewrite the baryon TABPRESS from signed P_b to ln(P_b + P_e(Y_e=Y_q)), the form
+// total_press reads with log_baryon_press (no P_e without add_ele: that table has the
+// electrons already).  If any argument is <= 0 or not finite the table is left untouched.
+inline leptonic_log_press_report_t
+convert_baryon_press_to_log(tabeos_linterp_t const& baryon,
+                            tabeos_linterp_t const& ele, bool const add_ele)
+{
+    using exec_t = Kokkos::DefaultExecutionSpace ;
+    tabeos_linterp_t const bar = baryon ;
+    tabeos_linterp_t const lep = ele ;
+    int const nr = static_cast<int>(bar._logrho.extent(0)) ;
+    int const nt = static_cast<int>(bar._logT.extent(0)) ;
+    int const ny = static_cast<int>(bar._ye.extent(0)) ;
+    Kokkos::MDRangePolicy<exec_t, Kokkos::Rank<3>> const nodes({0,0,0}, {nr,nt,ny}) ;
+
+    leptonic_log_press_report_t rep ;
+    Kokkos::parallel_reduce("leptonic_logp_count", nodes,
+        KOKKOS_LAMBDA (int const i, int const j, int const k, std::int64_t& nbad) {
+            double const s = detail::log_press_argument(bar, lep, add_ele, i, j, k) ;
+            if ( !(s > 0.) || !Kokkos::isfinite(s) ) nbad += 1 ;
+        }, rep.n_bad) ;
+
+    if ( rep.n_bad > 0 ) {
+        std::int64_t first = 0 ;
+        Kokkos::parallel_reduce("leptonic_logp_first", nodes,
+            KOKKOS_LAMBDA (int const i, int const j, int const k, std::int64_t& f) {
+                double const s = detail::log_press_argument(bar, lep, add_ele, i, j, k) ;
+                std::int64_t const flat = (static_cast<std::int64_t>(i)*nt + j)*ny + k ;
+                if ( (!(s > 0.) || !Kokkos::isfinite(s)) && flat < f ) f = flat ;
+            }, Kokkos::Min<std::int64_t>(first)) ;
+        rep.k = static_cast<int>(first % ny) ;
+        rep.j = static_cast<int>((first / ny) % nt) ;
+        rep.i = static_cast<int>(first / (static_cast<std::int64_t>(ny)*nt)) ;
+        int const i = rep.i, j = rep.j, k = rep.k ;
+        Kokkos::View<double[5]> vals("leptonic_logp_first_node") ;
+        Kokkos::parallel_for("leptonic_logp_first_values", Kokkos::RangePolicy<exec_t>(0,1),
+            KOKKOS_LAMBDA (int const) {
+                vals(0) = bar._logrho(i) ; vals(1) = bar._logT(j) ; vals(2) = bar._ye(k) ;
+                vals(3) = bar._tables(i,j,k,leptonic_eos_4d_t::TABPRESS) ;
+                vals(4) = add_ele
+                    ? leptonic_eos_4d_t::ele_press(lep, vals(0), vals(1), vals(2)) : 0.0 ;
+            }) ;
+        auto const h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), vals) ;
+        rep.lrho = h(0) ; rep.ltemp = h(1) ; rep.yq = h(2) ;
+        rep.p_baryon = h(3) ; rep.p_ele = h(4) ;
+        return rep ;
+    }
+
+    Kokkos::parallel_for("leptonic_logp_convert", nodes,
+        KOKKOS_LAMBDA (int const i, int const j, int const k) {
+            bar._tables(i,j,k,leptonic_eos_4d_t::TABPRESS) =
+                Kokkos::log(detail::log_press_argument(bar, lep, add_ele, i, j, k)) ;
+        }) ;
+    Kokkos::fence() ;
+    return rep ;
+}
 
 } /* namespace grace */
 

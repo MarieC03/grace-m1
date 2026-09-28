@@ -216,18 +216,15 @@ eos_storage_t::eos_storage_t() {
             ERROR("Unsupported cold_eos_type.") ;
         }
     } else if ( eos_type == "tabulated") {
-        // linear_pressure (signed-LINEAR pressure storage) is a leptonic-only
-        // mode: the leptonic EOS reads TABPRESS directly to carry the negative
-        // nuclear spinodal of the electron-free baryon table.  The tabulated EOS
-        // instead stores and exp()s log(P), so linear_pressure=true would feed it
-        // exp(P) -> garbage.  read_eos_table() is shared with the leptonic baryon
-        // read, so the check belongs here where eos_type is known.
+        // The tabulated EOS stores and exp()s log(P), so linear_pressure=true
+        // would feed it exp(P) -> garbage.  linear_pressure=true selects the
+        // leptonic EOS's signed-linear baryon pressure; it is rejected here.
         if ( get_param<bool>("eos","tabulated_eos","linear_pressure") )
             ERROR("eos.tabulated_eos.linear_pressure=true is only valid with "
                   "eos_type=leptonic.  The tabulated EOS stores log(P) and exp()s "
                   "it, so set eos.tabulated_eos.linear_pressure=false for "
                   "eos_type=tabulated.") ;
-        _tabulated = read_eos_table() ;
+        _tabulated = read_eos_table(/*linear_pressure=*/false) ;
     } else if ( eos_type == "leptonic") {
         #ifndef GRACE_ENABLE_MUONS
         // The leptonic 4D EOS *is* the muon EOS: it carries the muon table and

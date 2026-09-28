@@ -607,14 +607,12 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // -------------------------------------------------------
     //  1) Load the baryon EOS via the existing GRACE pipeline.
     //     Honours [eos.tabulated_eos.*] settings in the parfile.
-    //     NB: the electron-free baryon table has NEGATIVE pressure in the
-    //     nuclear spinodal, so [eos.tabulated_eos.linear_pressure] MUST be true
-    //     for muonic / leptonic runs (signed-linear storage, not log P) — the
-    //     reader aborts with an actionable message otherwise.  total_press then
-    //     sums the signed baryon pressure with the positive lepton pressures.
+    //     Always read with the SIGNED pressure: the electron-free table is
+    //     negative in the nuclear spinodal.  eos.tabulated_eos.linear_pressure
+    //     then picks the interpolation (step 7b): false = ln(P_b + P_e).
     // -------------------------------------------------------
     GRACE_INFO("Reading baryon EOS for leptonic_4d setup...") ;
-    tabulated_eos_t baryon_eos = read_eos_table() ;
+    tabulated_eos_t baryon_eos = read_eos_table(/*linear_pressure=*/true) ;
     auto const& bt = baryon_eos.tables ;
 
     int const nrho_b  = baryon_eos.nrho ;
@@ -856,6 +854,8 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // DD2 / BHBlp tables the baryon table already includes electrons,
     // so this must stay false to avoid double-counting.
     bool const add_ele = grace::get_param<bool>("eos","leptonic","add_ele_contribution") ;
+    // The table is read signed either way (step 1); false = interpolate in log (step 7b).
+    bool const log_press = !grace::get_param<bool>("eos","tabulated_eos","linear_pressure") ;
 
     GRACE_INFO("4D leptonic EOS rho [{:.4e}, {:.4e}]  T [{:.4e}, {:.4e}]  "
                "Ye [{:.3f}, {:.3f}]  Ymu [{:.3e}, {:.3e}]  add_ele={}",
@@ -914,8 +914,33 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         temp_atm,
         ye_atm, ymu_atm,
         atm_beta_eq,
-        add_ele
+        add_ele,
+        log_press
     ) ;
+
+    // -------------------------------------------------------
+    //  7b) Baryon pressure interpolation.  log_press: TABPRESS becomes
+    //      ln(P_b + P_e(Y_e=Y_q)), positive everywhere and exact for power
+    //      laws; must happen before anything evaluates the EOS (step 8).
+    // -------------------------------------------------------
+    if ( log_press ) {
+        auto const rep = convert_baryon_press_to_log(eos.baryon_table, eos.ele_table, add_ele) ;
+        if ( rep.n_bad > 0 ) {
+            ERROR("Cannot interpolate the baryon pressure in log: P_b"
+                  << (add_ele ? " + P_e(Y_e=Y_q)" : "") << " <= 0 or not finite at "
+                  << rep.n_bad << " table nodes, the first at (i,j,k) = (" << rep.i << ","
+                  << rep.j << "," << rep.k << "): rho = " << std::exp(rep.lrho)
+                  << ", T = " << std::exp(rep.ltemp) << " MeV, Y_q = " << rep.yq
+                  << ", P_b = " << rep.p_baryon << ", P_e = " << rep.p_ele
+                  << " (code units).  Set eos.tabulated_eos.linear_pressure=true.") ;
+        }
+        GRACE_INFO("Leptonic EOS: baryon pressure interpolated as ln({}) "
+                   "(eos.tabulated_eos.linear_pressure=false).",
+                   add_ele ? "P_b + P_e(Y_e=Y_q)" : "P_b") ;
+    } else {
+        GRACE_INFO("Leptonic EOS: baryon pressure interpolated linearly, signed "
+                   "(eos.tabulated_eos.linear_pressure=true).") ;
+    }
 
     // -------------------------------------------------------
     //  8) Resolve the working temperature floor, then generate the cold

@@ -33,12 +33,12 @@ eos: {
   eos_type: "leptonic",
 
   tabulated_eos: {
-    # electron-free baryon table (muonic runs).  linear_pressure: true keeps the
-    # signed-linear baryon pressure; c2p_test_leptonic_logp.yaml covers false.
+    # c2p_test_leptonic.yaml with the baryon pressure interpolated as
+    # ln(P_b + P_e(Y_e=Y_q)) (linear_pressure: false).
     table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
     table_format: "compose",
     cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
-    linear_pressure: true
+    linear_pressure: false
   },
 
   leptonic: {
@@ -49,7 +49,8 @@ eos: {
     table_filename: "/Users/miler/Codes/eos/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
     cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
     add_ele_contribution: true,
-    cold_table_temperature: 0.100001
+    cold_table_temperature: 0.100001,
+    cold_table_output_filename: "generated_cold_table_logp.grace"
   },
 
   # c2p validity ceiling (c2p_eps_max).  The round-trip sweep includes hot

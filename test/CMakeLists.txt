@@ -202,6 +202,15 @@ add_test(NAME z4c_regrouping_test COMMAND mpirun -n 1 ./z4c_regrouping_test)
 add_kokkos_test(z4c_partner_equivariance_test test_z4c_partner_equivariance.cpp)
 add_test(NAME z4c_partner_equivariance_test COMMAND mpirun -n 1 ./z4c_partner_equivariance_test)
 
+# Leptonic EOS baryon pressure interpolated as ln(P_b + P_e(Y_e=Y_q)) on synthetic
+# in-memory tables: node agreement with the linear mode, power-law exactness, the
+# add_ele=false path, the positivity guard, P->T and cs2.  No table file needed.
+add_kokkos_test(leptonic_logpress_test test_leptonic_logpress.cpp)
+add_test(NAME leptonic_logpress_test COMMAND mpirun -n 1 ./leptonic_logpress_test)
+set_tests_properties(leptonic_logpress_test PROPERTIES
+    LABELS "fast;physics;eos"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+
 add_standalone_test(hermite_polynomial_test test_hermite_polynomial.cpp)
 
 add_standalone_test(hermite_interp_test test_hermite_interp.cpp)
@@ -430,6 +439,12 @@ if(GRACE_ENABLE_MUONS)
     add_test(NAME leptonic_c2p_test COMMAND
             mpirun -n 1 ./c2p_test "[leptonic]~[halo]~[replay]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
     set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+
+    # The same suite with the baryon pressure interpolated as ln(P_b + P_e(Y_e=Y_q))
+    # (linear_pressure: false); runs the [logpress] case, which SKIPs in the linear run.
+    add_test(NAME leptonic_logp_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[leptonic]~[halo]~[replay]" --grace-parfile ./configs/c2p_test_leptonic_logp.yaml )
+    set_tests_properties(leptonic_logp_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
 
     # The two [determinism] cases (EOS entry points, full conservs_to_prims)
     # again under the PRODUCTION atmosphere: rho_fl 1e-14, temp_fl on the table

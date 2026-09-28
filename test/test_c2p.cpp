@@ -3064,3 +3064,94 @@ TEST_CASE("c2p leptonic: replay of production cells (GRACE_C2P_REPLAY_FILE)",
     }
 }
 #endif // GRACE_ENABLE_MUONS
+
+#ifdef GRACE_ENABLE_MUONS
+// ---------------------------------------------------------------------------
+//  eos.tabulated_eos.linear_pressure = false: TABPRESS holds ln(P_b + P_e(Y_e=Y_q)).
+//  With T and Y_q on table nodes, the pressure at the log-midpoint of two density
+//  rows must then be the geometric mean of the rows, once the P_e(Y_e) - P_e(Y_p)
+//  correction (linear in the lepton table, Y_p - Y_e >= Ymu_min) is taken out.
+//  Rows: the star centre and the nuclear spinodal, where P_b < 0.
+// ---------------------------------------------------------------------------
+namespace {
+struct logp_query_t { double rho, temp, ye, ymu ; } ;
+struct logp_result_t { double press, dpe, csnd2 ; } ;
+}
+
+TEST_CASE("leptonic EOS: log-P interpolation is geometric between density rows",
+          "[c2p][eos][leptonic][logpress]")
+{
+    using E = grace::leptonic_eos_4d_t ;
+    auto const eos = grace::eos::get().get_eos<E>() ;
+    if ( !eos.log_baryon_press )
+        SKIP("EOS loaded with eos.tabulated_eos.linear_pressure=true") ;
+    REQUIRE(eos.add_ele_contribution) ;
+
+    auto const lr = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), eos.baryon_table._logrho) ;
+    auto const lt = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), eos.baryon_table._logT) ;
+    auto const yq = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), eos.baryon_table._ye) ;
+    int const nr = static_cast<int>(lr.extent(0)) ;
+
+    // Code density of n_b [fm^-3] (m_u, G = c = M_sun = 1); only used to pick rows.
+    auto row_of = [&](double nb) {
+        double const rho = nb * 1e39 * 1.66053906660e-24 * 1.61887093132742e-18 ;
+        int best = 0 ;
+        for (int i=0; i<nr-1; ++i)
+            if (std::fabs(lr(i) - std::log(rho)) < std::fabs(lr(best) - std::log(rho))) best = i ;
+        return std::min(best, nr-2) ;
+    } ;
+    std::vector<int> const rows { row_of(0.385), row_of(0.06), row_of(0.02), row_of(0.005) } ;
+    std::vector<int> const tnodes { 1, 50 } ;   // node 0 lies below the config's temperature floor
+    std::vector<int> const ynodes { 6, 35 } ;
+    double const ymu = eos.get_c2p_ymu_min() ;  // dilute: no muon pressure
+
+    // For each (row, T, Y) three densities: row i, the log-midpoint, row i+1.
+    std::vector<logp_query_t> q ;
+    for (int i : rows) for (int j : tnodes) for (int k : ynodes) {
+        double const x[3] = { lr(i), 0.5*(lr(i) + lr(i+1)), lr(i+1) } ;
+        for (double xx : x) q.push_back({ std::exp(xx), std::exp(lt(j)), yq(k) - ymu, ymu }) ;
+    }
+    // Atmosphere corner: the sound speed must survive the log interpolation there.
+    double const rho_atm = std::max(1e-14, 1.01*eos.density_minimum()) ;
+    q.push_back({ rho_atm, eos.temperature_floor(), eos.ye_atmosphere(), eos.ymu_atmosphere() }) ;
+
+    Kokkos::View<logp_query_t*>  dq("logp_q", q.size()) ;
+    Kokkos::View<logp_result_t*> dr("logp_r", q.size()) ;
+    auto hq = Kokkos::create_mirror_view(dq) ;
+    for (std::size_t n=0; n<q.size(); ++n) hq(n) = q[n] ;
+    Kokkos::deep_copy(dq, hq) ;
+    Kokkos::parallel_for("logp_eval", Kokkos::RangePolicy<>(0, q.size()),
+        KOKKOS_LAMBDA (int const n) {
+            grace::eos_err_t err ;
+            logp_query_t c = dq(n) ;
+            double const lrho = Kokkos::log(c.rho), ltemp = Kokkos::log(c.temp) ;
+            dr(n).dpe = E::ele_press(eos.ele_table, lrho, ltemp, c.ye)
+                      - E::ele_press(eos.ele_table, lrho, ltemp, c.ye + c.ymu) ;
+            double eps, cs2 ;
+            dr(n).press = eos.press_eps_csnd2__temp_rho_ye_ymu(eps, cs2, c.temp, c.rho, c.ye, c.ymu, err) ;
+            dr(n).csnd2 = cs2 ;
+        }) ;
+    auto const r = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), dr) ;
+
+    for (std::size_t n=0; n+1<q.size(); n+=3) {
+        double const G0 = r(n).press   - r(n).dpe ;
+        double const G2 = r(n+2).press - r(n+2).dpe ;
+        double const geo   = std::sqrt(G0*G2) + r(n+1).dpe ;
+        double const arith = 0.5*(G0 + G2) + r(n+1).dpe ;
+        INFO("rho " << q[n+1].rho << "  T " << q[n+1].temp << "  Y_e " << q[n+1].ye
+             << "  P_mid " << r(n+1).press << "  geometric " << geo
+             << "  arithmetic/P_mid - 1 = " << arith/r(n+1).press - 1.) ;
+        REQUIRE(G0 > 0.) ;
+        REQUIRE(G2 > 0.) ;
+        REQUIRE(std::fabs(r(n+1).press - geo)
+                <= 1e-12*(std::fabs(r(n+1).press) + std::fabs(r(n+1).dpe) + G0 + G2)) ;
+    }
+    auto const& atm = r(q.size()-1) ;
+    INFO("atmosphere rho " << rho_atm << "  P " << atm.press << "  cs2 " << atm.csnd2) ;
+    REQUIRE(std::isfinite(atm.press)) ;
+    REQUIRE(atm.press > 0.) ;
+    REQUIRE(std::isfinite(atm.csnd2)) ;
+    REQUIRE(atm.csnd2 > 0.) ;
+    REQUIRE(atm.csnd2 <= 1.) ;
+}
+#endif // GRACE_ENABLE_MUONS
