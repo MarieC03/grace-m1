@@ -113,6 +113,17 @@ grmhd:
       default: true
       description: >
         Fall back to entropy prescription on c2p failure
+    entropy_backup_trigger:
+      type: keyword
+      allowed: ["distrust", "failure"]
+      default: "distrust"
+      description: >
+        When the entropy backup runs (with use_c2p_entropy_backup).  "distrust":
+        after a failed energy inversion, when eps lands below the EOS floor
+        (EPS_TOO_LOW), or when beta <= beta_fallback.  "failure" (FIL's rule):
+        only after a failed inversion or when beta <= beta_fallback; a cell
+        below the energy floor is clamped to it, and tau, S_i and the entropy
+        are rewritten from the clamped state.
     beta_fallback:
       type: double
       range: "[0,*)"

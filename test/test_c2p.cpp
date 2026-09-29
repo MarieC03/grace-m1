@@ -612,6 +612,13 @@ struct cons_set_ymu_star {           // advected Ymu out of table bounds
         c[YMUSL] = ymu * c[DENSL] ;
     }
 } ;
+struct cons_scale_tau_entropy {      // energy below the floor, optionally noisy entropy
+    double f_tau, f_ent ;
+    KOKKOS_INLINE_FUNCTION void operator()(grmhd_cons_array_t& c) const {
+        c[TAUL]  *= f_tau ;
+        c[ENTSL] *= f_ent ;
+    }
+} ;
 
 /// Build one primitive state from (rho, T, Ye, Ymu, W), P2C it, apply
 /// `mutate` to the conservatives, run the production c2p, and report the
@@ -920,6 +927,78 @@ TEST_CASE("c2p leptonic: corrupted advected entropy does not perturb the "
         REQUIRE(r[LEP_FLOORED]  == 0.0) ;
         REQUIRE(std::isfinite(r[LEP_EPS])) ;
         REQUIRE(r[LEP_H] > 0.0) ;
+    }
+}
+
+
+TEST_CASE("c2p leptonic: entropy_backup_trigger=failure keeps the backup off below "
+          "the energy floor", "[c2p][leptonic][backuptrigger]")
+{
+    auto eos       = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    auto atmo      = get_atmo_params() ;
+    auto excision  = get_excision_params() ;
+    auto c2p_pars  = get_c2p_params() ;
+    atmo.temp_fl   = 0.99 * eos.temperature_minimum() ;
+    c2p_pars.use_ent_backup = true ;
+
+    double const rho = std::exp(
+        std::log(eos.density_minimum())
+        + 0.7 * (std::log(eos.density_maximum())
+               - std::log(eos.density_minimum()))) ;
+    double const ye0  = eos.get_c2p_ye_min()
+        + 0.4 * (eos.get_c2p_ye_max() - eos.get_c2p_ye_min()) ;
+    double const ymu0 = std::exp(std::log(eos.get_c2p_ymu_min())
+        + 0.3 * (std::log(eos.get_c2p_ymu_max())
+               - std::log(eos.get_c2p_ymu_min()))) ;
+    double const t_min = eos.temperature_minimum() ;
+    double const W = 1.2 ;
+    // A cold cell at the temperature floor whose energy dipped below it.
+    cons_scale_tau_entropy const below_floor{ 1. - 1e-4, 1. } ;
+
+    SECTION("distrust (default): the dip goes to the entropy backup") {
+        c2p_pars.ent_backup_on_failure_only = false ;
+        auto const r = leptonic_c2p_single(
+            eos, atmo, excision, c2p_pars, rho, t_min, ye0, ymu0, W, below_floor) ;
+        REQUIRE(r[LEP_BIT_BACKUP] == 1.0) ;
+        REQUIRE(r[LEP_BIT_ATMO]   == 0.0) ;
+    }
+
+    SECTION("failure: the dip is clamped to the floor, no backup") {
+        c2p_pars.ent_backup_on_failure_only = true ;
+        auto const r = leptonic_c2p_single(
+            eos, atmo, excision, c2p_pars, rho, t_min, ye0, ymu0, W, below_floor) ;
+        REQUIRE(r[LEP_BIT_BACKUP] == 0.0) ;
+        REQUIRE(r[LEP_BIT_ATMO]   == 0.0) ;
+        REQUIRE(r[LEP_SIG_EPS_LO] == 1.0) ;
+        // Unclamped, the dip would lower eps by ~1e-5; the clamp lands within 1e-9.
+        REQUIRE(std::fabs(r[LEP_EPS] - r[LEP_REF_EPS])
+                <= std::max(1e-8, 1e-6 * std::fabs(r[LEP_REF_EPS]))) ;
+        REQUIRE(std::fabs(r[LEP_TEMP]/eos.temperature_minimum() - 1.) < 1e-10) ;   // bottom of the table
+    }
+
+    SECTION("failure: a noisy advected entropy cannot move a cold cell") {
+        // The same dip with the entropy conservative x7: only the backup reads it.
+        c2p_pars.ent_backup_on_failure_only = true ;
+        auto const r = leptonic_c2p_single(
+            eos, atmo, excision, c2p_pars, rho, t_min, ye0, ymu0, W,
+            cons_scale_tau_entropy{ 1. - 1e-4, 7. }) ;
+        REQUIRE(r[LEP_BIT_BACKUP] == 0.0) ;
+        REQUIRE(std::fabs(r[LEP_EPS] - r[LEP_REF_EPS])
+                <= std::max(1e-8, 1e-6 * std::fabs(r[LEP_REF_EPS]))) ;
+    }
+
+    SECTION("failure: a warm cell is untouched by either rule") {
+        double const t_warm = std::exp(0.5 * (std::log(eos.temperature_minimum())
+                                            + std::log(eos.temperature_maximum()))) ;
+        for (bool failure_only : {false, true}) {
+            c2p_pars.ent_backup_on_failure_only = failure_only ;
+            auto const r = leptonic_c2p_single(
+                eos, atmo, excision, c2p_pars, rho, t_warm, ye0, ymu0, W, cons_mutate_none{}) ;
+            INFO("failure_only=" << failure_only) ;
+            REQUIRE(r[LEP_BIT_BACKUP] == 0.0) ;
+            REQUIRE(std::fabs(r[LEP_EPS] - r[LEP_REF_EPS])
+                    <= std::max(1e-10, 1e-8 * std::fabs(r[LEP_REF_EPS]))) ;
+        }
     }
 }
 

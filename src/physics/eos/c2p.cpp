@@ -356,8 +356,11 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
 
         double beta = compute_beta(prims,metric) ;
 
+        // entropy_backup_trigger="failure" (FIL): a cell below the energy floor
+        // is not distrusted; it stays clamped and tau, S_i, S* are rewritten.
         bool const c2p_distrust = c2p_failed
-                    || (c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW))
+                    || (!c2p_pars.ent_backup_on_failure_only
+                        && c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW))
                     || (beta <= c2p_pars.beta_fallback) ;
 
         #ifdef GRACE_C2P_DEBUG
