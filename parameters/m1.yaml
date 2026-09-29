@@ -455,6 +455,19 @@ m1:
         bounds.  This is FIL's M1_rho_floor.  0 (default) disables the cutoff.
         A few x the atmosphere floor grmhd.atmosphere.rho_fl is a typical value.
 
+    muon_partial_at_bound:
+      type: bool
+      default: false
+      description: >
+        5-species hard-stop builds only.  When the muon pair's exchange would take
+        Ymu outside the table, accept the fraction f of the WHOLE pair exchange
+        (E, F and N of numu and anti-numu alike) that lands Ymu just inside the
+        bound, instead of reverting the pair.  The radiation keeps old + f (new -
+        old), so energy, momentum and muon lepton number are conserved and E/N
+        does not drift.  The electron pair keeps the all-or-nothing hard stop.
+        Partly accepted cells carry bit 8 in m1_br_reject.  false (default)
+        reverts the pair as before.
+
   trigger:
     type: schema
     description: >

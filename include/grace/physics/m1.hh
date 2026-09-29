@@ -668,7 +668,10 @@ struct m1_equations_system_t
                          // TABLE EDGES; an in-bounds drift (e.g. Ymu -> 0.02) is
                          // applied in full by both.  Only skipping the coupling
                          // in these cells preserves the halo.  <= 0 disables.
-                         , double const rho_min ) const
+                         , double const rho_min
+                         // Hard stop only: a muon pair that would leave the Ymu table is
+                         // accepted in the fraction that lands Ymu on the bound (E, F, N alike).
+                         , bool const muon_partial = false ) const
     {
         using namespace grace  ;
         using namespace Kokkos ;
@@ -677,6 +680,7 @@ struct m1_equations_system_t
 
         // Per-cell density cutoff: leave near-empty cells untouched.
         if ( rho_min > 0.0 && this->_aux(VEC(i,j,k),RHO_,q) < rho_min ) return ;
+        (void)muon_partial ;   // hard stop with 5 species only
 
         #if GRACE_M1_BACKREACT_HARDSTOP
         #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 3
@@ -701,6 +705,17 @@ struct m1_equations_system_t
         double const ymus_new = state_new(VEC(i,j,k),YMUSTAR_,q) + ( x_mu.N - x_mubar.N ) ;
         double const ymu_new  = ymus_new / D ;
         bool   const acc_mu   = ( ymu_new >= eos.get_c2p_ymu_min() && ymu_new <= eos.get_c2p_ymu_max() ) ;
+        // Partial acceptance (muon_partial): the fraction f_mu of the whole pair exchange
+        // that lands Ymu just inside the bound it would cross; 0 means a full revert.
+        double f_mu = 0.0 ;
+        if ( !acc_mu && muon_partial ) {
+            double const ymu_old = state_new(VEC(i,j,k),YMUSTAR_,q) / D ;
+            double const bound   = ( ymu_new < eos.get_c2p_ymu_min() ) ? eos.get_c2p_ymu_min()
+                                                                       : eos.get_c2p_ymu_max() ;
+            double const f = ( bound - ymu_old ) / ( ymu_new - ymu_old ) * ( 1.0 - 1.0e-10 ) ;
+            f_mu = ( Kokkos::isfinite(f) && f > 0.0 ) ? Kokkos::fmin(f, 1.0) : 0.0 ;
+        }
+        bool const part_mu = !acc_mu && f_mu > 0.0 ;
         #endif
 
         // One energy decision on the summed exchange of the surviving species
@@ -714,6 +729,9 @@ struct m1_equations_system_t
         if ( acc_mu ) {
             dE  += x_mu.E  + x_mubar.E  ; dSx += x_mu.Sx + x_mubar.Sx ;
             dSy += x_mu.Sy + x_mubar.Sy ; dSz += x_mu.Sz + x_mubar.Sz ;
+        } else if ( part_mu ) {
+            dE  += f_mu * ( x_mu.E  + x_mubar.E  ) ; dSx += f_mu * ( x_mu.Sx + x_mubar.Sx ) ;
+            dSy += f_mu * ( x_mu.Sy + x_mubar.Sy ) ; dSz += f_mu * ( x_mu.Sz + x_mubar.Sz ) ;
         }
         #endif
         double const tau_new = state_new(VEC(i,j,k),TAU_,q) + dE ;
@@ -727,6 +745,8 @@ struct m1_equations_system_t
             if ( acc_e ) state_new(VEC(i,j,k),YESTAR_,q) = yes_new ;
             #if GRACE_M1_NU_SPECIES >= 5
             if ( acc_mu ) state_new(VEC(i,j,k),YMUSTAR_,q) = ymus_new ;
+            else if ( part_mu )
+                state_new(VEC(i,j,k),YMUSTAR_,q) += f_mu * ( x_mu.N - x_mubar.N ) ;
             #endif
         }
         // Rejected species go back to their pre-collision E, F and N.
@@ -735,7 +755,10 @@ struct m1_equations_system_t
             revert_species<1>(q,VEC(i,j,k),state_new) ;
         }
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( !( acc_E && acc_mu ) ) {
+        if ( acc_E && part_mu ) {           // radiation keeps the complementary fraction
+            blend_species<2>(q,VEC(i,j,k),state_new,f_mu) ;
+            blend_species<3>(q,VEC(i,j,k),state_new,f_mu) ;
+        } else if ( !( acc_E && acc_mu ) ) {
             revert_species<2>(q,VEC(i,j,k),state_new) ;
             revert_species<3>(q,VEC(i,j,k),state_new) ;
         }
@@ -752,11 +775,14 @@ struct m1_equations_system_t
             if ( acc_e ) this->_aux(VEC(i,j,k),M1_LEPTON_SOURCE_,q) += ( x_e.N - x_ebar.N ) / D ;
             #if GRACE_M1_NU_SPECIES >= 5
             if ( acc_mu ) this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q) += ( x_mu.N - x_mubar.N ) / D ;
+            else if ( part_mu )
+                this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q) += f_mu * ( x_mu.N - x_mubar.N ) / D ;
             #endif
         }
         int rejected = ( acc_e ? 0 : 1 ) | ( acc_E ? 0 : 4 ) ;
         #if GRACE_M1_NU_SPECIES >= 5
-        rejected |= ( acc_mu ? 0 : 2 ) ;
+        // 8: the muon pair was accepted only in part (muon_partial), 2: not at all.
+        rejected |= acc_mu ? 0 : ( ( acc_E && part_mu ) ? 8 : 2 ) ;
         #endif
         if ( rejected != 0 ) {
             double& flag = this->_aux(VEC(i,j,k),M1_BR_REJECT_,q) ;
@@ -1065,6 +1091,21 @@ struct m1_equations_system_t
         state_new(VEC(i,j,k),m1_frady_idx<ispec>(),q) = this->_state(VEC(i,j,k),m1_frady_idx<ispec>(),q) ;
         state_new(VEC(i,j,k),m1_fradz_idx<ispec>(),q) = this->_state(VEC(i,j,k),m1_fradz_idx<ispec>(),q) ;
         state_new(VEC(i,j,k),m1_nrad_idx<ispec>(),q)  = this->_state(VEC(i,j,k),m1_nrad_idx<ispec>(),q) ;
+    }
+
+    //! Partial acceptance: the block keeps old + f (post - old) of E, F and N alike,
+    //! so the fluid's share f of the exchange conserves energy and lepton number.
+    template< int ispec >
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    blend_species( int const q, VEC(int const i, int const j, int const k)
+                 , grace::var_array_t const state_new, double const f ) const
+    {
+        auto const blend = [&](int const v) {
+            state_new(VEC(i,j,k),v,q) = this->_state(VEC(i,j,k),v,q)
+                                      + f * ( state_new(VEC(i,j,k),v,q) - this->_state(VEC(i,j,k),v,q) ) ;
+        } ;
+        blend(m1_erad_idx<ispec>()) ; blend(m1_fradx_idx<ispec>()) ; blend(m1_frady_idx<ispec>()) ;
+        blend(m1_fradz_idx<ispec>()) ; blend(m1_nrad_idx<ispec>()) ;
     }
     /***********************************************************************/
     /***********************************************************************/

@@ -542,6 +542,7 @@ struct m1_backreaction_params_t {
     bool do_backreaction ;
     double t_backreact ;
     double rho_min ;   ///< skip the radiation->fluid coupling below this rho
+    bool muon_partial ; ///< accept a muon pair that leaves the Ymu table in part
 };
 
 static m1_backreaction_params_t
@@ -550,6 +551,7 @@ get_m1_backreaction_params() {
     m1_backreaction_params.do_backreaction = grace::get_param<bool>("m1", "backreaction", "enabled") ;
     m1_backreaction_params.t_backreact = grace::get_param<double>("m1", "backreaction", "t_start") ;
     m1_backreaction_params.rho_min = grace::get_param<double>("m1", "backreaction", "rho_min") ;
+    m1_backreaction_params.muon_partial = grace::get_param<bool>("m1", "backreaction", "muon_partial_at_bound") ;
     return m1_backreaction_params ;
 }
 

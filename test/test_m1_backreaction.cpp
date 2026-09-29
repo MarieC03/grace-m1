@@ -112,13 +112,13 @@ struct cell_t {
     // rho_min defaults to 0 (density cutoff disabled) so the coupling-logic
     // tests exercise add_backreaction unconditionally; the cutoff has its own
     // dedicated test that sets aux(RHO_) and a positive threshold.
-    void run(mock_bounds_eos_t const& eos, double rho_min = 0.0)
+    void run(mock_bounds_eos_t const& eos, double rho_min = 0.0, bool muon_partial = false)
     {
         m1_equations_system_t sys(old_state, staggered_variable_arrays_t{}, aux);
         auto ns = new_state;
         scalar_array_t<GRACE_NSPACEDIM> idx;   // unused by add_backreaction
         Kokkos::parallel_for("br_single", 1, KOKKOS_LAMBDA(int) {
-            sys.add_backreaction<mock_bounds_eos_t>(0, VEC(0, 0, 0), idx, ns, eos, rho_min);
+            sys.add_backreaction<mock_bounds_eos_t>(0, VEC(0, 0, 0), idx, ns, eos, rho_min, muon_partial);
         });
         Kokkos::fence();
     }
@@ -864,6 +864,116 @@ TEST_CASE("M1 backreaction: a Ymu rejection restores the whole numu/numubar pair
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
     require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
+}
+
+namespace {
+/// muon_partial_at_bound: species s holds old + f (post-collision - old) in every field.
+void require_blended(cell_t const& c, std::vector<double> const& pre, int s, double f)
+{
+    for (int v : species_fields(s)) {
+        INFO("species " << s << " field " << v);
+        REQUIRE_THAT(c.get_new(v), WithinAbs(c.get_old(v) + f * (pre[v] - c.get_old(v)), 1e-17));
+    }
+}
+}  // namespace
+
+TEST_CASE("M1 backreaction: muon_partial_at_bound lands Ymu on the floor with the whole pair",
+          "[m1][backreaction][lepton][muon][partial]")
+{
+    cell_t c; mock_bounds_eos_t eos;
+    double const tau0 = 0.5, ymu0 = 6.0e-4;
+    c.set_new(TAU_, tau0); c.set_new(DENS_, 1.0);
+    c.set_new(YESTAR_, 0.30); c.set_new(YMUSTAR_, ymu0);
+    // Same pair as the rejection test: Ymu would drop to -4e-4, so f = 0.1.
+    c.set_old(ERAD3_, 1.0e-3); c.set_new(ERAD3_, 1.2e-3);
+    c.set_old(FRADY3_, 0.0);   c.set_new(FRADY3_, 3.0e-5);
+    c.set_old(ERAD4_, 1.0e-3); c.set_new(ERAD4_, 0.8e-3);
+    c.set_old(NRAD4_, 1.0e-2); c.set_new(NRAD4_, 0.9e-2);
+    c.set_old(ERAD1_, 1.0e-3); c.set_new(ERAD1_, 0.9e-3);   // nue pair in bounds: kept
+    c.set_old(NRAD1_, 0.10);   c.set_new(NRAD1_, 0.09);
+    auto const pre = c.dump_new();
+
+    c.run(eos, 0.0, /*muon_partial=*/true);
+
+    double const f = 0.1 * (1.0 - 1.0e-10);
+    REQUIRE(c.get_new(YMUSTAR_) >= eos.ymumin);
+    REQUIRE_THAT(c.get_new(YMUSTAR_), WithinRel(eos.ymumin, 1e-6));
+    require_blended(c, pre, 2, f);
+    require_blended(c, pre, 3, f);
+    require_kept(c, pre, 0);
+    REQUIRE_THAT(c.get_new(YESTAR_), WithinRel(0.31, 1e-14));
+    require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
+    require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
+    require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
+    #ifdef GRACE_M1_DIAGNOSTICS
+    REQUIRE(c.get_aux(M1_BR_REJECT_) == 8.0);
+    #endif
+}
+
+TEST_CASE("M1 backreaction: muon_partial_at_bound lands Ymu on the ceiling",
+          "[m1][backreaction][lepton][muon][partial]")
+{
+    cell_t c; mock_bounds_eos_t eos;
+    double const tau0 = 0.5, ymu0 = 0.199;
+    c.set_new(TAU_, tau0); c.set_new(DENS_, 1.0);
+    c.set_new(YESTAR_, 0.30); c.set_new(YMUSTAR_, ymu0);
+    // numu absorbed: Ymu would rise to 0.201 > 0.2, so f = 0.5.
+    c.set_old(ERAD3_, 2.0e-3); c.set_new(ERAD3_, 1.5e-3);
+    c.set_old(NRAD3_, 1.0e-2); c.set_new(NRAD3_, 0.8e-2);
+    auto const pre = c.dump_new();
+
+    c.run(eos, 0.0, /*muon_partial=*/true);
+
+    REQUIRE(c.get_new(YMUSTAR_) <= eos.ymumax);
+    REQUIRE_THAT(c.get_new(YMUSTAR_), WithinRel(eos.ymumax, 1e-9));
+    require_blended(c, pre, 2, 0.5 * (1.0 - 1.0e-10));
+    require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
+    require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
+}
+
+TEST_CASE("M1 backreaction: muon_partial_at_bound reverts a pair already on the bound",
+          "[m1][backreaction][lepton][muon][partial]")
+{
+    cell_t c; mock_bounds_eos_t eos;
+    double const tau0 = 0.5, ymu0 = 5.0e-4;           // exactly on the floor
+    c.set_new(TAU_, tau0); c.set_new(DENS_, 1.0);
+    c.set_new(YESTAR_, 0.30); c.set_new(YMUSTAR_, ymu0);
+    c.set_old(ERAD4_, 1.0e-3); c.set_new(ERAD4_, 0.8e-3);
+    c.set_old(NRAD4_, 1.0e-2); c.set_new(NRAD4_, 0.9e-2);   // would go below: f = 0
+
+    c.run(eos, 0.0, /*muon_partial=*/true);
+
+    require_restored(c, 2);
+    require_restored(c, 3);
+    REQUIRE(c.get_new(YMUSTAR_) == ymu0);
+    REQUIRE_THAT(c.get_new(TAU_), WithinAbs(tau0, 1e-15));
+    #ifdef GRACE_M1_DIAGNOSTICS
+    REQUIRE(c.get_aux(M1_BR_REJECT_) == 2.0);
+    #endif
+}
+
+TEST_CASE("M1 backreaction: muon_partial_at_bound still yields to the energy decision",
+          "[m1][backreaction][lepton][muon][partial]")
+{
+    cell_t c; mock_bounds_eos_t eos;
+    double const tau0 = 1.0e-5, ymu0 = 6.0e-4;
+    c.set_new(TAU_, tau0); c.set_new(DENS_, 1.0);
+    c.set_new(YESTAR_, 0.30); c.set_new(YMUSTAR_, ymu0);
+    c.set_old(ERAD4_, 1.0e-3); c.set_new(ERAD4_, 0.8e-3);
+    c.set_old(NRAD4_, 1.0e-2); c.set_new(NRAD4_, 0.9e-2);   // partial candidate
+    c.set_old(ERAD1_ + kNux * GRACE_N_M1_VARS, 1.0e-3);
+    c.set_new(ERAD1_ + kNux * GRACE_N_M1_VARS, 1.5e-3);      // nux cooling -5e-4 > tau
+
+    c.run(eos, 0.0, /*muon_partial=*/true);
+
+    require_restored(c, 2);
+    require_restored(c, 3);
+    require_restored(c, kNux);
+    REQUIRE(c.get_new(YMUSTAR_) == ymu0);
+    REQUIRE(c.get_new(TAU_) == tau0);
+    #ifdef GRACE_M1_DIAGNOSTICS
+    REQUIRE(c.get_aux(M1_BR_REJECT_) == 6.0);   // energy | muon pair
+    #endif
 }
 #endif
 
