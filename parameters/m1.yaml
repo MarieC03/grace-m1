@@ -209,20 +209,55 @@ m1:
         optical depth — set tau_policy='none' when using 'gieg'.  Both
         conditions emit a runtime warning at M1 setup.
 
+    betaeq_partial_e_fallback:
+      type: bool
+      default: false
+      description: >
+        betaeq_policy = 'timescale', 5-species builds only.  When the joint
+        (Ye, Ymu, T) equilibrium solve fails, retry it for (Ye, T) with Ymu held
+        at its current value (the 'gieg' PARTIAL_E solve) and use that result.
+        Typical rescue: cool matter whose muon equilibrium lies below the Ymu
+        table floor.  FIL reaches the same state by setting eta_numu = 0 for
+        Ymu < 0.005.  Solves that already succeed are unchanged; rescued cells
+        carry BETAEQ_PARTIAL_E_FALLBACK in betaeq_err and are counted separately
+        in the per-step log.  Ignored in other builds and policies.
+
+    betaeq_fallback_ymu_floor:
+      type: bool
+      default: false
+      description: >
+        Only with betaeq_partial_e_fallback = true.  In a cell whose joint solve
+        failed, hold Ymu at the table floor instead of at its current value when
+        the muon equilibrium lies below the floor (muon-lepton residual positive
+        at the floor), so the muon rates target the floor state and the lagged
+        exchange stops overshooting.  Affects the rates only (the closure writes
+        no grid function).  Such cells also carry BETAEQ_YMU_FLOOR_HOLD.
+
     temperature_correction:
       type: bool
       default: true
       description: >
-        Apply a spectral temperature correction to the neutrino opacities and
-        emission rates (FIL parity).  The effective neutrino temperature T_nu
-        is derived from the radiation field's fluid-frame mean energy via the
-        Fermi-Dirac ratio FD(2)/FD(3), and all rates are rescaled by
-        (T_nu / T_fluid)^2 when T_nu > T_fluid.  For nue and nuebar this
-        scales Q, R, kappa_a, kappa_n and kappa_s; for nux only kappa_s is
-        corrected; muon species are not corrected (the weakhub table already
-        carries the spectral information).  When no radiation is present
-        (eps_rad = 0, e.g. at it=0 or in the atmosphere) the correction is
-        inert (factor = 1).
+        Apply a spectral temperature correction to the neutrino opacities.
+        The effective neutrino temperature T_nu is derived from the radiation
+        field's fluid-frame mean energy via the Fermi-Dirac ratio FD(2)/FD(3),
+        and the opacities are rescaled by (T_nu / T_fluid)^2 when
+        T_nu > T_fluid.  For nue and nuebar this scales kappa_a, kappa_n and
+        kappa_s (Q and R only with temperature_correction_emission); for nux
+        only kappa_s is corrected; muon species are not corrected (the weakhub
+        table already carries the spectral information).  When no radiation
+        is present (eps_rad = 0, e.g. at it=0 or in the atmosphere) the
+        correction is inert (factor = 1).
+
+    temperature_correction_emission:
+      type: bool
+      default: false
+      description: >
+        Also multiply the nue/nuebar emissivities Q and R by the
+        temperature_correction factor, as FIL's Weakhub and analytic
+        'corrected' EAS routines do (driver_get_eas.cc).  Off (default): the
+        factor acts on the opacities only (absorption of hot neutrinos by
+        colder matter); the emission depends on the matter alone.  Only
+        matters with temperature_correction = true.
 
     tau_outer_radius_code:
       type: double

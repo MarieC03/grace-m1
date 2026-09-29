@@ -103,28 +103,47 @@ void report_betaeq_failures() {
     // broken solve, and the two used to be indistinguishable in the log.
     uint64_t constexpr at_bound_mask = uint64_t(1) << BETAEQ_AT_BOUND ;
     uint64_t constexpr res_large_mask = uint64_t(1) << BETAEQ_RESIDUAL_LARGE ;
-    int64_t local_failed = 0, local_bound = 0, local_res = 0 ;
+    // The electron-only fallback bit marks a rescued cell, not a failure.
+    #ifdef GRACE_ENABLE_MUONS
+    uint64_t constexpr floor_mask   = uint64_t(1) << BETAEQ_YMU_FLOOR_HOLD ;
+    uint64_t constexpr rescued_mask = ( uint64_t(1) << BETAEQ_PARTIAL_E_FALLBACK ) | floor_mask ;
+    #else
+    uint64_t constexpr floor_mask   = 0 ;
+    uint64_t constexpr rescued_mask = 0 ;
+    #endif
+    int64_t local_failed = 0, local_bound = 0, local_res = 0, local_rescued = 0, local_floor = 0 ;
     parallel_reduce( GRACE_EXECUTION_TAG("DIAG","betaeq_failure_count")
                    , policy
                    , KOKKOS_LAMBDA(VEC(int const& i, int const& j, int const& k),
                                    int const& q, int64_t& acc, int64_t& acc_b,
-                                   int64_t& acc_r)
+                                   int64_t& acc_r, int64_t& acc_e, int64_t& acc_f)
     {
         double const f = aux(VEC(i,j,k),BETAEQ_ERR_,q) ;
         if ( f != 0.0 ) {
-            ++acc ;
             uint64_t const bits = static_cast<uint64_t>(f) ;
-            if ( bits & at_bound_mask ) ++acc_b ;
-            if ( bits & res_large_mask ) ++acc_r ;
+            if ( bits & rescued_mask ) ++acc_e ;
+            if ( bits & floor_mask ) ++acc_f ;
+            if ( bits & ~rescued_mask ) {
+                ++acc ;
+                if ( bits & at_bound_mask ) ++acc_b ;
+                if ( bits & res_large_mask ) ++acc_r ;
+            }
         }
-    }, local_failed, local_bound, local_res ) ;
+    }, local_failed, local_bound, local_res, local_rescued, local_floor ) ;
 
-    uint64_t local_u64[3]  = { static_cast<uint64_t>(local_failed)
+    uint64_t local_u64[5]  = { static_cast<uint64_t>(local_failed)
                              , static_cast<uint64_t>(local_bound)
-                             , static_cast<uint64_t>(local_res) } ;
-    uint64_t global_u64[3] = { 0, 0, 0 } ;
-    parallel::mpi_allreduce(local_u64, global_u64, 3, sc_MPI_SUM) ;
+                             , static_cast<uint64_t>(local_res)
+                             , static_cast<uint64_t>(local_rescued)
+                             , static_cast<uint64_t>(local_floor) } ;
+    uint64_t global_u64[5] = { 0, 0, 0, 0, 0 } ;
+    parallel::mpi_allreduce(local_u64, global_u64, 5, sc_MPI_SUM) ;
 
+    if ( global_u64[3] > 0 )
+        GRACE_INFO("Beta-equilibrium: the electron-only fallback (Ymu held) equilibrated "
+                   "{} cells at iteration {} where the joint solve failed ({} of them with "
+                   "Ymu held at the table floor).",
+                   global_u64[3], grace::get_iteration(), global_u64[4]) ;
     if ( global_u64[0] == 0 ) return ;
     GRACE_WARN("Beta-equilibrium solver failed in {} cells at iteration {} "
                "({} ran into a variable bound; {} of those settled there but "

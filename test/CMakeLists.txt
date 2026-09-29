@@ -151,6 +151,16 @@ if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
 
+# Timescale beta-eq closure with the electron-only fallback: a successful joint
+# solve is untouched, a failed one is rescued with Ymu held (5 species only).
+if(GRACE_M1_NU_SPECIES EQUAL 5)
+    add_kokkos_test(betaeq_fallback_test test_betaeq_fallback.cpp)
+    add_test(NAME betaeq_fallback_test COMMAND mpirun -n 1 ./betaeq_fallback_test)
+    set_tests_properties(betaeq_fallback_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # Eikonal optical-depth relaxation kernel on a small flat block: tau must rise when
 # opacity appears (moving stars), fall when matter leaves, and stay a fixed point.
 if(GRACE_M1_OPTICAL_DEPTH)

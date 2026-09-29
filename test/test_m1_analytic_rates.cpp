@@ -798,6 +798,123 @@ TEST_CASE("compute_all_species: the neutrino-temperature factor scales the opaci
     // colder radiation never lowers an opacity
     REQUIRE(on.out[NUX].kappa_s == off.out[NUX].kappa_s);
     REQUIRE(on.out[NUX].eta_E   == off.out[NUX].eta_E);
+
+    SECTION("temperature_correction_emission also scales Q and R (FIL 'corrected' routine)") {
+        const nu_rates_all_out emis = compute_all_species(
+            F, true, true, true, true, kXyzOrigin, tau, true, eps, /*temp_correction_emission=*/true);
+        for (int s : {int(NUE), int(NUEBAR)}) {
+            INFO("species " << s);
+            REQUIRE_THAT(emis.out[s].eta_E, WithinRel(fact[s] * off.out[s].eta_E, 1e-12));
+            REQUIRE_THAT(emis.out[s].eta_N, WithinRel(fact[s] * off.out[s].eta_N, 1e-12));
+            REQUIRE(emis.out[s].kappa_a == on.out[s].kappa_a);
+            REQUIRE(emis.out[s].kappa_n == on.out[s].kappa_n);
+            REQUIRE(emis.out[s].kappa_s == on.out[s].kappa_s);
+        }
+        for (int s : {int(NUMU), int(NUMUBAR), int(NUX)}) {
+            INFO("species " << s);
+            REQUIRE(emis.out[s].eta_E   == on.out[s].eta_E);
+            REQUIRE(emis.out[s].eta_N   == on.out[s].eta_N);
+            REQUIRE(emis.out[s].kappa_a == on.out[s].kappa_a);
+            REQUIRE(emis.out[s].kappa_s == on.out[s].kappa_s);
+        }
+    }
+}
+
+namespace {
+// Constant-valued 5-species Weakhub table on a 2^4 grid bracketing (lrho, lT); the
+// lookup returns the same opacities anywhere inside, so only the assembly is tested.
+weakhub::device_handle constant_weakhub_handle(double lrho, double ltemp)
+{
+    weakhub::device_handle h;
+    h.n_species_table = 5;
+    h.nrho = 2; h.ntemp = 2; h.nye = 2; h.nymu = 2;
+    const double ax[4][2] = {{lrho - 1.0, lrho + 1.0}, {ltemp - 1.0, ltemp + 1.0},
+                             {0.01, 0.5}, {-12.0, -1.0}};
+    h.logrho_min = ax[0][0]; h.logrho_max = ax[0][1];
+    h.logtemp_min = ax[1][0]; h.logtemp_max = ax[1][1];
+    h.ye_min = ax[2][0]; h.ye_max = ax[2][1];
+    h.logymu_min = ax[3][0]; h.logymu_max = ax[3][1];
+    Kokkos::View<double*>* axes[4] = {&h.logrho_axis, &h.logtemp_axis, &h.ye_axis, &h.logymu_axis};
+    for (int a = 0; a < 4; ++a) {
+        *axes[a] = Kokkos::View<double*>("wh_axis", 2);
+        auto m = Kokkos::create_mirror_view(*axes[a]);
+        m(0) = ax[a][0]; m(1) = ax[a][1];
+        Kokkos::deep_copy(*axes[a], m);
+    }
+    const int ntot = 5 * 16;
+    Kokkos::View<double*>* tabs[3] = {&h.kappa_a_en_table, &h.kappa_a_num_table, &h.kappa_s_table};
+    for (int t = 0; t < 3; ++t) {
+        *tabs[t] = Kokkos::View<double*>("wh_tab", ntot);
+        auto m = Kokkos::create_mirror_view(*tabs[t]);
+        for (int i = 0; i < ntot; ++i) m(i) = 1.0e-6 * (1 + t) * (1 + i % 5);   // cm^-1
+        Kokkos::deep_copy(*tabs[t], m);
+    }
+    h.valid = true;
+    return h;
+}
+}  // namespace
+
+TEST_CASE("compute_all_species_weakhub: temperature_correction_emission scales Q and R "
+          "of nue/nuebar only", "[m1rates][integration][tnu][weakhub]") {
+    // FIL's Weakhub routine multiplies Q, R and all kappas of nue/nuebar by the factor;
+    // GRACE's default scales the kappas only.
+    using namespace nu_constants;
+    mock_eos_t eos;
+    tau_policy_analytic_density tau;
+    const double T_mev = 5.0;
+    const fugacity_state F = make_fugacity_state(
+        eos, 1.0e11 * RHOGF, T_mev, 0.1, 1.0e-3, 1.0, kXyzOrigin, tau);
+    const weakhub::device_handle h = constant_weakhub_handle(std::log(F.rho_code), std::log(T_mev));
+
+    double eps[NUMSPECIES] = {0.0};
+    eps[NUE]    =  3.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUE]);
+    eps[NUEBAR] = 10.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUEBAR]);
+    const double fact[2] = {9.0, 100.0};
+
+    // Device-side assembly (production call site), three variants copied back.
+    Kokkos::View<double*> out("wh_tnu_out", 3 * NUMSPECIES * 5);
+    Kokkos::View<double*> eps_d("wh_tnu_eps", NUMSPECIES);
+    {
+        auto m = Kokkos::create_mirror_view(eps_d);
+        for (int s = 0; s < NUMSPECIES; ++s) m(s) = eps[s];
+        Kokkos::deep_copy(eps_d, m);
+    }
+    Kokkos::parallel_for("wh_tnu", 1, KOKKOS_LAMBDA(int) {
+        double e[NUMSPECIES];
+        for (int s = 0; s < NUMSPECIES; ++s) e[s] = eps_d(s);
+        const double xyz[3] = {0.0, 0.0, 0.0};
+        for (int v = 0; v < 3; ++v) {
+            const nu_rates_all_out r = compute_all_species_weakhub(
+                h, F, false, false, false, xyz, tau, v > 0, e, v == 2);
+            for (int s = 0; s < NUMSPECIES; ++s) {
+                const int o = (v * NUMSPECIES + s) * 5;
+                out(o) = r.out[s].eta_E; out(o + 1) = r.out[s].eta_N;
+                out(o + 2) = r.out[s].kappa_a; out(o + 3) = r.out[s].kappa_n;
+                out(o + 4) = r.out[s].kappa_s;
+            }
+        }
+    });
+    Kokkos::fence();
+    auto m = Kokkos::create_mirror_view(out);
+    Kokkos::deep_copy(m, out);
+    auto val = [&](int v, int s, int q) { return m((v * NUMSPECIES + s) * 5 + q); };
+
+    for (int s : {int(NUE), int(NUEBAR)}) {
+        INFO("species " << s);
+        REQUIRE(val(0, s, 0) > 1.0e-50);                         // a real rate, not the floor
+        REQUIRE(val(1, s, 0) == val(0, s, 0));                   // default: Q, R untouched
+        REQUIRE(val(1, s, 1) == val(0, s, 1));
+        for (int q = 2; q < 5; ++q)                             // kappas scaled in both
+            REQUIRE_THAT(val(1, s, q), WithinRel(fact[s] * val(0, s, q), 1e-12));
+        REQUIRE_THAT(val(2, s, 0), WithinRel(fact[s] * val(0, s, 0), 1e-12));
+        REQUIRE_THAT(val(2, s, 1), WithinRel(fact[s] * val(0, s, 1), 1e-12));
+        for (int q = 2; q < 5; ++q) REQUIRE(val(2, s, q) == val(1, s, q));
+    }
+    for (int s : {int(NUMU), int(NUMUBAR), int(NUX)})
+        for (int q = 0; q < 5; ++q) {
+            INFO("species " << s << " quantity " << q);
+            REQUIRE(val(2, s, q) == val(1, s, q));
+        }
 }
 
 TEST_CASE("compute_species wrapper agrees with compute_all_species",
