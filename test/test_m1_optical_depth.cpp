@@ -132,4 +132,23 @@ TEST_CASE("eikonal tau is a fixed point: more sweeps do not inflate it", "[m1][o
     REQUIRE(blk.tau(4,4,4) == t10) ;
 }
 
+#if GRACE_M1_NU_SPECIES >= 3
+TEST_CASE("eikonal opacity includes separately stored evolved pair damping", "[m1][optd][decay]") {
+    block_t reference,split;
+    reference.set_tau(SEED,SEED); split.set_tau(SEED,SEED);
+    reference.set_kappa_core(100); split.set_kappa_core(20);
+    auto aux=split.aux;
+    Kokkos::parallel_for("optd_pair_opacity",Kokkos::MDRangePolicy<Kokkos::Rank<3>>({0,0,0},{NB,NB,NB}),
+        KOKKOS_LAMBDA(int i,int j,int k) {
+            bool const core=i>=3 && i<=5 && j>=3 && j<=5 && k>=3 && k<=5;
+            aux(i,j,k,PAIR_KAPPA1_,0)=core?80:0;
+        });
+    reference.sweep(10); split.sweep(10);
+    REQUIRE_THAT(split.tau(4,4,4),WithinRel(reference.tau(4,4,4),1e-14));
+    REQUIRE_THAT(split.tau(5,4,4),WithinRel(reference.tau(5,4,4),1e-14));
+    auto ax=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),split.aux);
+    REQUIRE(ax(4,4,4,KAPPAA1_,0)==20);
+}
+#endif
+
 #endif  // GRACE_M1_OPTICAL_DEPTH && GRACE_M1_NU_SPECIES >= 1

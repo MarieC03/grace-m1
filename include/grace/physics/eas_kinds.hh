@@ -217,9 +217,38 @@ inline tau_policy_kind_t get_tau_policy_kind()
 
 enum class pair_treatment_t : int { legacy, equilibrium, evolved };
 
+inline bool get_muon_decay()
+{
+    try { return get_param<bool>("m1","eas","muon_decay"); } catch(...) { return false; }
+}
+
+inline int get_muon_decay_kernel_order()
+{
+    int n=24;
+    try { n=get_param<int>("m1","eas","muon_decay_kernel_order"); } catch(...) {}
+    if(n<8 || n>64) ERROR("muon_decay_kernel_order must be between 8 and 64");
+    return n;
+}
+
 inline pair_treatment_t get_pair_treatment()
 {
     auto const name=detail::get_eas_param_or("legacy", "pair_treatment");
+    bool const decay=get_muon_decay();
+    if(decay) {
+#if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
+        ERROR("muon_decay requires five neutrino species and GRACE_ENABLE_MUONS");
+#endif
+        if(name=="legacy") ERROR("muon_decay requires pair_treatment: equilibrium or evolved");
+        if(get_param<std::string>("eos","eos_type")!="leptonic")
+            ERROR("muon_decay requires the leptonic EOS");
+        if(get_param<bool>("eos","leptonic","dilute_muon_suppression")
+           || !get_param<bool>("eos","leptonic","add_ele_contribution"))
+            ERROR("muon_decay requires dilute_muon_suppression=false and add_ele_contribution=true with an electron-free baryonic EOS");
+        if(get_eas_selection().contains(eas_kind_t::neutrino_weakhub)
+           && detail::get_eas_param_or("unknown","weakhub_muon_decay_content")!="none")
+            ERROR("Declare weakhub_muon_decay_content: none only after verifying table provenance");
+        (void)get_muon_decay_kernel_order();
+    }
     if(name=="legacy") return pair_treatment_t::legacy;
     if(name!="equilibrium" && name!="evolved")
         ERROR("m1.eas.pair_treatment must be legacy, equilibrium or evolved");
@@ -237,6 +266,15 @@ inline pair_treatment_t get_pair_treatment()
     if(get_param<bool>("m1","eas","plasmon_decay")
        && detail::get_eas_param_or("none","pair_plasmon_model")!="transverse_mass")
         ERROR("New plasmon pairs require pair_plasmon_model: transverse_mass; see the documented approximation, or disable plasmon_decay");
+    if(decay && name=="equilibrium") {
+        static bool warned=false;
+        if(!warned) {
+            GRACE_WARN("Muon decay with equilibrium partners is a comparison approximation: "
+                       "it does not preserve equal daughter counts away from LTE. "
+                       "Use evolved partners for event conservation; monitor decay_equilibrium_charge_defect.");
+            warned=true;
+        }
+    }
     return name=="equilibrium" ? pair_treatment_t::equilibrium : pair_treatment_t::evolved;
 }
 

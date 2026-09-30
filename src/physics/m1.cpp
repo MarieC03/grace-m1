@@ -398,7 +398,7 @@ void set_m1_eas(
                 coords.get_physical_coordinates(i,j,k,q,xyz) ;
                 op(VEC(i,j,k),q,xyz) ;
             };
-        if(pair_mode==pair_treatment_t::equilibrium) {
+        if(pair_mode!=pair_treatment_t::legacy) {
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
                 {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
             parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);

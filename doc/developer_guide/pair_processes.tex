@@ -40,9 +40,12 @@ not creation of charged muons:
 \end{itemize}
 These thermal channels do not require charged muons to be present. They must
 not be multiplied by the charged-muon abundance/density/temperature gate.
-Charged-current muon reactions remain the responsibility of the ordinary
-emission/absorption/scattering (EAS) provider. This change does not implement
-muon decay, muon--antimuon annihilation, flavour conversion, or missing
+Muonic nucleon charged-current reactions remain the responsibility of the
+ordinary emission/absorption/scattering (EAS) provider. Muon decay/inverse
+decay is a separate, optional extension documented in
+\path{doc/developer_guide/muon_decay.rst}; it connects four species and changes
+their source/backreaction workflow. The thermal-pair module described here
+does not add muon--antimuon annihilation, flavour conversion, or missing
 electron-flavour pair channels in the baseline.
 
 This is an \emph{isotropic-kernel grey closure}, not an exact Boltzmann
@@ -321,6 +324,9 @@ kernels on this tensor quadrature.
 
 \section{EAS and evolution workflows}
 
+These steps describe \code{muon\_decay: false}; see the separate decay guide
+for the connected four-species extension.
+
 \subsection{Equilibrium mode}
 \begin{enumerate}
 \item Read EOS and ordinary analytic/WeakHub rates; suppress old thermal extras.
@@ -338,6 +344,9 @@ kernels on this tensor quadrature.
 \item Perform the same ordinary EAS calculation, excluding old thermal extras.
 \item Store physical $T,\mu_e,n_b,X_n,X_p$ and enabled channels in pair
   auxiliaries. Ordinary EAS slots deliberately contain \emph{no pair terms}.
+  Store current-state pair damping separately in \code{pair\_transport\_kappa*};
+  flux corrections and optical-depth estimates use ordinary plus pair damping,
+  while the collision solve reads only ordinary EAS coefficients.
 \item In each implicit stage construct/cache one kernel matrix per physical pair.
 \item Reconstruct both spectra from each trial $J,N/\Gamma$; compute
   Eqs.~\eqref{eq:event}--\eqref{eq:eulerian}.

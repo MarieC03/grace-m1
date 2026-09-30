@@ -34,7 +34,8 @@
  *             fraction.
  *           - yp is clamped to the baryon table's [yemin, yemax] before
  *             every baryon lookup (charge neutrality + Y_e axis range).
- *           - when yp >= yemax, mu_e is taken from the baryon table (the
+ *           - with dilute_muon_suppression=true, when yp >= yemax,
+ *             mu_e is taken from the baryon table (the
  *             leptonic mu_e is unreliable in that corner) and mu_mu falls
  *             back to the muon rest mass -- which then goes through the
  *             dilute-Ymu ramp like any other raw value (see mumu_core).
@@ -43,7 +44,8 @@
  *             electron-free baryon table it is rebuilt from the additive
  *             P and eps, because TABCSND2 is then baryons-only and goes
  *             NEGATIVE across the spinodal.  See total_csnd2.
- *           - Y_mu at or below the dilute threshold contributes nothing to
+ *           - with dilute_muon_suppression=true, Y_mu at or below the
+ *             dilute threshold contributes nothing to
  *             P/eps/entropy and its table lookup is skipped entirely
  *             (GMUNU dilute-Ymu prescription).  See muons_resolved.
  *           - the Y_le axis is linear; the Y_mu axis is log-spaced
@@ -545,7 +547,7 @@ class leptonic_eos_4d_t
         // the yp-saturation corner, where the leptonic mu_e itself becomes
         // unreliable (Margherita's convention) and mumu_core already reported
         // mu_mu as its rest mass, so fall back to the baryon table there too.
-        if (!add_ele_contribution || raw_yp(ye, ymu) >= this->eos_yemax) {
+        if (!add_ele_contribution || (dilute_muon_suppression && raw_yp(ye, ymu) >= this->eos_yemax)) {
             return baryon_table.interp(lrho,ltemp,yp,TABMUE)  ;
         }
         return ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABMUELE) ;
@@ -674,7 +676,7 @@ class leptonic_eos_4d_t
         }
         double const lym = utils::brent(outer, lym_lo, lym_hi, 1e-12) ;
         ymu = Kokkos::exp(lym) ;
-        if ( ymu <= dilute_ymu0_ ) {
+        if ( dilute_muon_suppression && ymu <= dilute_ymu0_ ) {
             solve_npe() ;
             return ;
         }
@@ -758,6 +760,7 @@ class leptonic_eos_4d_t
     // contains the electron contribution (the usual case for SFHo,
     // DD2, etc.).  Mirrors Margherita's add_ele_contribution flag.
     bool add_ele_contribution = false ;
+    bool dilute_muon_suppression = true ;
     // Baryon pressure storage.  false (linear_pressure=true): TABPRESS is the
     // signed P_b.  true: TABPRESS = ln(P_b + P_e(Y_e=Y_q)), see total_press.
     bool log_baryon_press = false ;
@@ -831,6 +834,7 @@ class leptonic_eos_4d_t
     // tabulated P/eps/s are used raw -- the tanh ramp applies to mu_mu ONLY.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     block_mumu(double ymu, double mm_raw) const {
+        if (!dilute_muon_suppression) return mm_raw;
         return ( ymu <= dilute_ymu0_ ) ? 0.0
              : mm_raw * Kokkos::tanh((ymu - dilute_ymu0_) / dilute_dymu_) ;
     }
@@ -843,7 +847,7 @@ class leptonic_eos_4d_t
     // total_* call everywhere Y_mu sits at the floor, which is most of a
     // cold star's envelope and all of the atmosphere.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE bool
-    muons_resolved(double ymu) const { return ymu > dilute_ymu0_ ; }
+    muons_resolved(double ymu) const { return !dilute_muon_suppression || ymu > dilute_ymu0_ ; }
 
     // Full mu_mu accessor: table lookup + atmosphere/saturation fallback +
     // dilute-Ymu blocking, all in one place so mue_mumu_mup_mun_... and
@@ -869,7 +873,7 @@ class leptonic_eos_4d_t
     // enough negative for the Kirchhoff FD denominators to underflow.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     mumu_core(double lrho, double ltemp, double ye, double ymu) const {
-        double const mm_raw = ( raw_yp(ye, ymu) >= this->eos_yemax )
+        double const mm_raw = ( dilute_muon_suppression && raw_yp(ye, ymu) >= this->eos_yemax )
             ? 105.6583755              // atmosphere / saturation corner
             : muon_table.interp(lrho, ltemp, Kokkos::log(ymu), MUON_VIDX::TABMUMU) ;
         return block_mumu(ymu, mm_raw) ;

@@ -1832,6 +1832,57 @@ TEST_CASE("M1 implicit diagnostic: the record is per species and sticky over sta
 }
 #endif  // GRACE_M1_DIAGNOSTICS
 
+#if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_ENABLE_MUONS)
+TEST_CASE("Decay backreaction accepts connected daughter species with one factor",
+          "[m1][backreaction][decay]")
+{
+    for(int limit: {0,1,2,3}) {
+        cell_t c; mock_bounds_eos_t eos;
+        c.set_aux(PAIR_DECAY_,1);
+        double const D=2,ye0=0.3,ym0=limit==1?eos.ymumin+0.002:0.02;
+        double const tau0=limit==2?0.01:1;
+        c.set_new(DENS_,D); c.set_new(YESTAR_,D*ye0); c.set_new(YMUSTAR_,D*ym0);
+        c.set_new(TAU_,tau0);
+        // mu- decay: equal antinue and numu creation, different energies.
+        c.set_new(NRAD2_,0.02); c.set_new(NRAD3_,0.02);
+        c.set_new(ERAD2_,0.03); c.set_new(ERAD3_,0.04);
+        c.set_new(FRADX2_,0.004); c.set_new(FRADX3_,0.005);
+        if(limit==3) c.set_new(YMUSTAR_,D*eos.ymumin);
+        double const ym_before=c.get_new(YMUSTAR_);
+        c.run(eos);
+        REQUIRE(c.get_new(NRAD2_)==c.get_new(NRAD3_));
+        REQUIRE_THAT(c.get_new(YESTAR_)+c.get_new(YMUSTAR_),WithinAbs(D*ye0+ym_before,1e-14));
+        require_lepton_identity(c,NRAD1_,NRAD2_,YESTAR_,D*ye0);
+        require_lepton_identity(c,NRAD3_,NRAD4_,YMUSTAR_,ym_before);
+        require_em_conserved(c,tau0,0,0,0);
+        REQUIRE(c.get_new(YMUSTAR_)>=D*eos.ymumin);
+        REQUIRE(c.get_new(TAU_)>0);
+        double const factor=c.get_new(NRAD2_)/0.02;
+        if(limit==0) REQUIRE(factor==1);
+        else if(limit==3) REQUIRE(factor==0);
+        else { REQUIRE(factor>0); REQUIRE(factor<1); }
+        REQUIRE_THAT(c.get_new(ERAD3_),WithinAbs(0.04*factor,1e-15));
+        REQUIRE_THAT(c.get_new(FRADX2_),WithinAbs(0.004*factor,1e-15));
+    }
+}
+
+TEST_CASE("Decay backreaction respects the combined baryonic charge axis",
+          "[m1][backreaction][decay]")
+{
+    cell_t c; mock_bounds_eos_t eos;
+    c.set_aux(PAIR_DECAY_,1); c.set_new(TAU_,1);
+    c.set_new(YESTAR_,0.48); c.set_new(YMUSTAR_,0.019);
+    // An ordinary CC contribution is present in the same network step.
+    c.set_old(NRAD1_,0.01); c.set_new(NRAD1_,0);
+    c.set_old(ERAD1_,0.02); c.set_new(ERAD1_,0.01);
+    c.run(eos);
+    REQUIRE(c.get_new(YESTAR_)+c.get_new(YMUSTAR_)<=eos.yemax);
+    REQUIRE(c.get_new(NRAD1_)>0);
+    require_lepton_identity(c,NRAD1_,NRAD2_,YESTAR_,0.48);
+    require_em_conserved(c,1,0,0,0);
+}
+#endif
+
 #endif  // GRACE_ENABLE_M1 && GRACE_M1_NU_SPECIES >= 3
 
 #if defined(GRACE_ENABLE_M1) && GRACE_M1_NU_SPECIES >= 3

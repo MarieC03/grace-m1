@@ -963,7 +963,8 @@ nu_rates_all_out compute_all_species_weakhub(
     const tau_policy_t& tau_policy,
     bool apply_temp_correction,
     const double* eps_rad,
-    bool temp_correction_emission = false)
+    bool temp_correction_emission = false,
+    bool apply_muon_gate = true)
 {
     //const auto tbl = weakhub.lookup(F.rho_cgs, F.temp_mev, F.ye, F.ymu);
     const auto tbl = weakhub.lookup(F.rho_code, F.temp_mev, F.ye, F.ymu);
@@ -1014,7 +1015,7 @@ nu_rates_all_out compute_all_species_weakhub(
     // equilibrium they encode is unchanged and only the relaxation rate
     // drops in the cold, dilute regime.  kappa_s is untouched.
     {
-        double const S = muon_rate_gate(F.rho_cgs, F.temp_mev) ;
+        double const S = apply_muon_gate ? muon_rate_gate(F.rho_cgs, F.temp_mev) : 1.0;
         rates.Q[NUMU]          *= S ; rates.kappa_a[NUMU]    *= S ;
         rates.R[NUMU]          *= S ; rates.kappa_n[NUMU]    *= S ;
         rates.Q[NUMUBAR]       *= S ; rates.kappa_a[NUMUBAR] *= S ;
@@ -1110,7 +1111,8 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     const tau_policy_t& tau_policy,
     bool apply_temp_correction,
     const double* eps_rad = nullptr,
-    bool temp_correction_emission = false)
+    bool temp_correction_emission = false,
+    bool apply_muon_gate = true)
 {
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
 #if GRACE_M1_NU_SPECIES >= 5
@@ -1193,7 +1195,7 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     // -------------------------------------------------------------------------
 #if GRACE_M1_NU_SPECIES >= 5
     {
-        double const S = muon_rate_gate(F.rho_cgs, F.temp_mev) ;
+        double const S = apply_muon_gate ? muon_rate_gate(F.rho_cgs, F.temp_mev) : 1.0;
         rates.Q[NUMU]    *= S ; rates.kappa_a[NUMU]    *= S ;
         rates.R[NUMU]    *= S ; rates.kappa_n[NUMU]    *= S ;
         rates.Q[NUMUBAR] *= S ; rates.kappa_a[NUMUBAR] *= S ;

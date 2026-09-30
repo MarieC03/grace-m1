@@ -133,3 +133,5 @@ Contents
    amr_regrid
    checkpointing
    unit_testing
+   muon_decay
+   muon_decay_plan

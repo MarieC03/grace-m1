@@ -2022,6 +2022,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
 #endif
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
+    bool const coupled_leptons=evolved_pairs && get_muon_decay();
     int const pair_order=get_pair_quadrature_order();
     #if GRACE_M1_NU_SPECIES >= 3
     // Separate small-tile launch: do not impose the ordinary 256-thread
@@ -2032,7 +2033,9 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 {VEC(0,0,0),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}, {VEC(4,2,2),1}),
             KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q) {
                 #if GRACE_M1_NU_SPECIES >= 5
-                m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                if(coupled_leptons)
+                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 #else
                 m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
@@ -2044,11 +2047,11 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
           GRACE_EXECUTION_TAG("evol", "m1_implicit_sources")
         , policy
         , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
-            m1_eq_system.compute_implicit_update<0>(
+            if (!coupled_leptons) m1_eq_system.compute_implicit_update<0>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #if GRACE_M1_NU_SPECIES >= 3
-            m1_eq_system.compute_implicit_update<1>(
+            if (!coupled_leptons) m1_eq_system.compute_implicit_update<1>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             if (!evolved_pairs) m1_eq_system.compute_implicit_update<2>(

@@ -133,6 +133,20 @@ GRACE_M1_IDX_FN(m1_etan_idx,    ETAN1_,    GRACE_N_M1_AUX,  ETANPH_)
 GRACE_M1_IDX_FN(m1_kappaan_idx, KAPPAAN1_, GRACE_N_M1_AUX,  KAPPAANPH_)
 #undef GRACE_M1_IDX_FN
 
+// Opacity for transport/diffusion and optical-depth estimates, NOT the
+// ordinary collision EAS. Evolved pair/decay damping has its own slots.
+template<int ispec>
+KOKKOS_INLINE_FUNCTION double m1_transport_opacity(var_array_t const& aux,int64_t q,
+    VEC(int i,int j,int k)) {
+    double kappa=aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q)
+                +aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q);
+    #if GRACE_M1_NU_SPECIES >= 3
+    if constexpr(ispec<GRACE_M1_NU_SPECIES)
+        kappa+=aux(VEC(i,j,k),PAIR_KAPPA1_+ispec,q);
+    #endif
+    return kappa;
+}
+
 #ifdef GRACE_M1_OPTICAL_DEPTH
 #if GRACE_M1_NU_SPECIES < 1
 template<int ispec>

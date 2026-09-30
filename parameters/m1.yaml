@@ -193,6 +193,32 @@ m1:
         Nodes per energy dimension. Check convergence with 24 and 32,
         especially for degeneracy or the plasmon threshold.
 
+    muon_decay:
+      type: bool
+      default: false
+      description: >
+        Include mu- <-> e- + numu + anti-nue and the charge conjugate.
+        Requires five species, leptonic EOS without dilute-muon suppression,
+        additive electron thermodynamics and non-legacy pair_treatment.
+        Equilibrium partners are a non-stoichiometric comparison approximation
+        away from LTE; evolved partners use a connected four-species solve.
+
+    muon_decay_kernel_order:
+      type: int
+      range: "[8,64]"
+      default: 24
+      description: >
+        Gauss nodes for each inner decay-kernel integral (angle and charged
+        lepton energy). Independent of pair_quadrature_order. Check convergence.
+
+    weakhub_muon_decay_content:
+      type: keyword
+      allowed: ["unknown", "none", "included"]
+      default: "unknown"
+      description: >
+        Table provenance declaration, not a filter. Explicit muon decay requires
+        none so that inclusive grey tables cannot silently double count decay.
+
     weakhub_pair_content:
       type: keyword
       allowed: ["unknown", "none", "included"]
@@ -501,7 +527,9 @@ m1:
         old), so energy, momentum and muon lepton number are conserved and E/N
         does not drift.  The electron pair keeps the all-or-nothing hard stop.
         Partly accepted cells carry bit 8 in m1_br_reject.  false (default)
-        reverts the pair as before.
+        reverts the pair as before. With muon_decay enabled, a shared connected
+        limiter supersedes this option; all neutrino species then use one
+        acceptance fraction and bit 16 records limiting.
 
   trigger:
     type: schema

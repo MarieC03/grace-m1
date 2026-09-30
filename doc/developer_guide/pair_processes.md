@@ -12,9 +12,12 @@ charged muons:
 
 These thermal channels do not require charged muons to be present. They must
 not be multiplied by the charged-muon abundance/density/temperature gate.
-Charged-current muon reactions remain the responsibility of the ordinary EAS
-provider. This change does not implement muon decay, muon-antimuon annihilation,
-flavour conversion, or missing electron-flavour pair channels in the baseline.
+Muonic nucleon charged-current reactions remain the responsibility of the
+ordinary EAS provider. Muon decay/inverse decay is a separate, optional
+extension documented in [muon_decay.rst](muon_decay.rst); it connects four
+species and changes their source/backreaction workflow. The thermal-pair
+module described here does not add muon-antimuon annihilation, flavour
+conversion, or missing electron-flavour pair channels in the baseline.
 
 This is an **isotropic-kernel grey closure**, not an exact Boltzmann solution.
 Conservation and detailed balance can be checked independently of the accuracy
@@ -285,6 +288,9 @@ converge more slowly than smooth ee/NN kernels on this tensor quadrature.
 
 ## EAS and evolution workflows
 
+These steps describe `muon_decay: false`; see the separate decay guide for
+the connected four-species extension.
+
 Equilibrium mode:
 
 1. Read EOS and ordinary analytic/WeakHub rates; suppress old thermal extras.
@@ -300,6 +306,9 @@ Evolved mode:
 1. Perform the same ordinary EAS calculation, excluding old thermal extras.
 2. Store physical `T,mu_e,nb,Xn,Xp` and enabled channels in pair auxiliaries.
    Ordinary EAS slots deliberately contain **no pair terms**.
+   Store current-state pair damping separately in `pair_transport_kappa*`;
+   flux corrections and optical-depth estimates use ordinary plus pair damping,
+   while the collision solve reads only ordinary EAS coefficients.
 3. In each implicit stage construct/cache one kernel matrix per physical pair.
 4. Reconstruct both spectra from each trial `J,N/Gamma`; compute (7)-(10).
 5. Solve (11), including ordinary EAS, simultaneously for the two partners.

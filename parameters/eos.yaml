@@ -165,6 +165,14 @@ eos:
       The baryon contribution is loaded via [eos.tabulated_eos.*];
       these parameters control the lepton tables that are layered on top.
 
+    dilute_muon_suppression:
+      type: bool
+      default: true
+      description: >
+        Historical dilute-Ymu chemical-potential ramp and removal of muon
+        thermodynamics. Set false for muon decay: use the tabulated muon gas
+        and chemical potential throughout the supported table domain.
+
     table_filename:
       type: string
       default: "leptonic.h5"

@@ -161,28 +161,16 @@ tau_policy_fixed make_lagged_kappa_tau(
     const double r  = Kokkos::sqrt(
         xyz[0]*xyz[0] + xyz[1]*xyz[1] + xyz[2]*xyz[2]) ;
     const double dr = Kokkos::fmax(0.0, r_outer_code - r) ;
-    tf.tau[NUE] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ) * dr ;
+    tf.tau[NUE] = m1_transport_opacity<0>(aux,q,VEC(i,j,k))*dr;
     #if GRACE_M1_NU_SPECIES >= 3
-    tf.tau[NUEBAR] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ) * dr ;
+    tf.tau[NUEBAR] = m1_transport_opacity<1>(aux,q,VEC(i,j,k))*dr;
     #endif
     #if GRACE_M1_NU_SPECIES >= 5
-    tf.tau[NUMU] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ) * dr ;
-    tf.tau[NUMUBAR] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<3>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<3>(),q) ) * dr ;
-    tf.tau[NUX] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<4>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<4>(),q) ) * dr ;
+    tf.tau[NUMU] = m1_transport_opacity<2>(aux,q,VEC(i,j,k))*dr;
+    tf.tau[NUMUBAR] = m1_transport_opacity<3>(aux,q,VEC(i,j,k))*dr;
+    tf.tau[NUX] = m1_transport_opacity<4>(aux,q,VEC(i,j,k))*dr;
     #elif (GRACE_M1_NU_SPECIES >= 3)
-    tf.tau[NUX] =
-        ( aux(VEC(i,j,k),m1_kappaa_idx<2>(),q)
-        + aux(VEC(i,j,k),m1_kappas_idx<2>(),q) ) * dr ;
+    tf.tau[NUX] = m1_transport_opacity<2>(aux,q,VEC(i,j,k))*dr;
     #endif
     return tf ;
 }
@@ -269,12 +257,12 @@ void relax_cell(
     // cell's own old tau in the min, tau could only fall and never followed moving
     // matter.  It stays bounded by the min path to the transparent exterior.
     #if GRACE_M1_NU_SPECIES >= 1
-    double const kc0 = aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)+aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ;
+    double const kc0 = m1_transport_opacity<0>(aux,q,VEC(i,j,k));
     double b0 = 1.0e200 ;
     #endif
     // Electron flavours only -- see m1_optd_idx / variable_indices.hh.
     #if GRACE_M1_NU_SPECIES >= 3
-    double const kc1 = aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)+aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ;
+    double const kc1 = m1_transport_opacity<1>(aux,q,VEC(i,j,k));
     double b1 = 1.0e200 ;
     #endif
 
@@ -296,13 +284,13 @@ void relax_cell(
 
         #if GRACE_M1_NU_SPECIES >= 1
         {
-            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<0>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<0>(),q) ;
+            double const kn = m1_transport_opacity<0>(aux,q,VEC(ii,jj,kk));
             b0 = Kokkos::fmin(b0, 0.5*(kc0+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<0>(),q)) ;
         }
         #endif
         #if GRACE_M1_NU_SPECIES >= 3
         {
-            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<1>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<1>(),q) ;
+            double const kn = m1_transport_opacity<1>(aux,q,VEC(ii,jj,kk));
             b1 = Kokkos::fmin(b1, 0.5*(kc1+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<1>(),q)) ;
         }
         #endif

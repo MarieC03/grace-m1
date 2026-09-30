@@ -942,6 +942,9 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
                    "(eos.tabulated_eos.linear_pressure=true).") ;
     }
 
+    eos.dilute_muon_suppression = grace::get_param<bool>(
+        "eos","leptonic","dilute_muon_suppression");
+
     // -------------------------------------------------------
     //  8) Resolve the working temperature floor, then generate the cold
     //     slice AT THAT SAME TEMPERATURE.

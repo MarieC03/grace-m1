@@ -386,6 +386,8 @@ enum aux_var_idx : int {
     #if GRACE_M1_NU_SPECIES >= 3
     // Pair material snapshot: physical units, no optical-depth fugacity factors.
     PAIR_T_, PAIR_MUE_, PAIR_NB_, PAIR_YN_, PAIR_YP_, PAIR_ACTIVE_,
+    PAIR_MUMU_, PAIR_DECAY_, PAIR_DORDER_, PAIR_DECAY_QDEF_,
+    PAIR_KAPPA1_, PAIR_KAPPA2_, PAIR_KAPPA3_, PAIR_KAPPA4_, PAIR_KAPPA5_,
     PAIR_RES_,
     #endif
     #ifdef GRACE_M1_PHOTONS
@@ -451,7 +453,7 @@ enum aux_var_idx : int {
     #if GRACE_M1_NU_SPECIES >= 5
     M1_MUON_SOURCE_,
     #endif
-    M1_BR_REJECT_,
+    M1_BR_REJECT_, // additionally 16: connected decay-network limiting
     //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)
     //   and the largest estimated relative error |dU|/E of the accepted state.
     M1_IMPLICIT_ERR_,

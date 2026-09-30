@@ -119,6 +119,16 @@ endif()
 
 if( GRACE_ENABLE_M1 )
 if(GRACE_HAVE_BNS_NURATES AND GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
+    add_kokkos_test(muon_decay_test test_muon_decay.cpp)
+    add_test(NAME muon_decay_test COMMAND mpirun -n 1 ./muon_decay_test)
+    set_tests_properties(muon_decay_test PROPERTIES LABELS "physics;m1;decay"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+    if(GRACE_M1_NU_SPECIES GREATER_EQUAL 5 AND GRACE_ENABLE_MUONS)
+        add_test(NAME muon_decay_setup_rejection COMMAND ${CMAKE_COMMAND}
+            -DTEST_PROGRAM=$<TARGET_FILE:muon_decay_test>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/check_muon_decay_setup.cmake)
+        set_tests_properties(muon_decay_setup_rejection PROPERTIES LABELS "physics;m1;decay")
+    endif()
     add_kokkos_test(m1_pair_test test_m1_pairs.cpp)
     add_test(NAME m1_pair_test COMMAND mpirun -n 1 ./m1_pair_test)
     set_tests_properties(m1_pair_test PROPERTIES LABELS "physics;m1;pairs"

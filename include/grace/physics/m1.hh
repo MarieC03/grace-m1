@@ -46,6 +46,7 @@
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/neutrino_pair_update.hh>
+#include <grace/physics/neutrino_leptonic_update.hh>
 #include "fd_subexpressions.hh"
 #include <Kokkos_Core.hpp>
 
@@ -691,6 +692,120 @@ struct m1_equations_system_t
     }
     #endif
 
+    #if GRACE_M1_NU_SPECIES >= 5
+    KOKKOS_INLINE_FUNCTION void compute_leptonic_implicit_update(
+        int q,VEC(int i,int j,int k),scalar_array_t<GRACE_NSPACEDIM> const idx,
+        var_array_t state_new,double dt,double dtfact,int order) const {
+        if(this->_aux(VEC(i,j,k),PAIR_DECAY_,q)==0) {
+            compute_implicit_update<0>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
+            compute_implicit_update<1>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
+            compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order);
+            return;
+        }
+        metric_array_t metric; FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k));
+        m1_prims_array_t p[4]; m1_eas_array_t eas[4]; double old[20],out[20];
+        auto const read=[&](auto species) {
+            constexpr int s=decltype(species)::value;
+            FILL_M1_PRIMS_ARRAY(p[s],this->_state,this->_aux,q,s,VEC(i,j,k));
+            constexpr int v[5]={ERADL,FXL,FYL,FZL,NRADL};
+            for(int a=0;a<5;++a) { p[s][v[a]]/=metric.sqrtg(); old[5*s+a]=p[s][v[a]]; }
+            eas[s][KAL]=this->_aux(VEC(i,j,k),m1_kappaa_idx<s>(),q);
+            eas[s][KSL]=this->_aux(VEC(i,j,k),m1_kappas_idx<s>(),q);
+            eas[s][KANL]=this->_aux(VEC(i,j,k),m1_kappaan_idx<s>(),q);
+            eas[s][ETAL]=this->_aux(VEC(i,j,k),m1_eta_idx<s>(),q);
+            eas[s][ETANL]=this->_aux(VEC(i,j,k),m1_etan_idx<s>(),q);
+        };
+        read(std::integral_constant<int,0>{}); read(std::integral_constant<int,1>{});
+        read(std::integral_constant<int,2>{}); read(std::integral_constant<int,3>{});
+        pairs::material const mat{this->_aux(VEC(i,j,k),PAIR_T_,q),
+            this->_aux(VEC(i,j,k),PAIR_MUE_,q),this->_aux(VEC(i,j,k),PAIR_NB_,q),
+            this->_aux(VEC(i,j,k),PAIR_YN_,q),this->_aux(VEC(i,j,k),PAIR_YP_,q)};
+        double scale=Kokkos::fmax(mat.T,pairs::muon_mass/3);
+        for(int s=0;s<4;++s) if(old[5*s+4]>0) {
+            m1_closure_t cl{p[s],metric}; cl.update_closure(0);
+            double const mean=cl.J*cl.Gamma/old[5*s+4]*pairs::number_unit/pairs::energy_unit;
+            scale=Kokkos::fmax(scale,Kokkos::sqrt(mat.T*mean/3));
+        }
+        int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q));
+        pairs::kernel thermal; pairs::decay_kernel decay;
+        if(!thermal.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale)
+           || !decay.init(thermal.g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),
+                          int(this->_aux(VEC(i,j,k),PAIR_DORDER_,q))))
+            Kokkos::abort("Invalid four-species leptonic kernel");
+        double residual=0;
+        if(!pairs::leptonic_implicit_update(thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual))
+            Kokkos::abort("Coupled leptonic source solve failed: check timestep and quadrature");
+        this->_aux(VEC(i,j,k),PAIR_RES_,q)=Kokkos::fmax(
+            this->_aux(VEC(i,j,k),PAIR_RES_,q),residual);
+        auto const write=[&](auto species) {
+            constexpr int s=decltype(species)::value;
+            constexpr int v[5]={m1_erad_idx<s>(),m1_fradx_idx<s>(),m1_frady_idx<s>(),m1_fradz_idx<s>(),m1_nrad_idx<s>()};
+            for(int a=0;a<5;++a) state_new(VEC(i,j,k),v[a],q)=metric.sqrtg()*out[5*s+a];
+        };
+        write(std::integral_constant<int,0>{}); write(std::integral_constant<int,1>{});
+        write(std::integral_constant<int,2>{}); write(std::integral_constant<int,3>{});
+    }
+
+    // A single convex factor preserves EVERY reaction's stoichiometry, also
+    // when both Ye and Ymu are close to EOS bounds. Tau pairs share the energy
+    // acceptance for simplicity. No change to the historical no-decay limiter.
+    template<typename eos_t>
+    KOKKOS_INLINE_FUNCTION void add_leptonic_backreaction(int q,VEC(int i,int j,int k),
+        var_array_t state_new,eos_t const& eos) const {
+        auto const e=species_exchange<0>(q,VEC(i,j,k),state_new);
+        auto const eb=species_exchange<1>(q,VEC(i,j,k),state_new);
+        auto const m=species_exchange<2>(q,VEC(i,j,k),state_new);
+        auto const mb=species_exchange<3>(q,VEC(i,j,k),state_new);
+        auto const x=species_exchange<4>(q,VEC(i,j,k),state_new);
+        double const D=state_new(VEC(i,j,k),DENS_,q);
+        if(!(D>0) || !Kokkos::isfinite(D))
+            Kokkos::abort("Invalid baryon density in leptonic backreaction");
+        double const ye=state_new(VEC(i,j,k),YESTAR_,q)/D;
+        double const ym=state_new(VEC(i,j,k),YMUSTAR_,q)/D;
+        double const dye=(e.N-eb.N)/D,dym=(m.N-mb.N)/D;
+        double const dE=e.E+eb.E+m.E+mb.E+x.E;
+        double const tau=state_new(VEC(i,j,k),TAU_,q);
+        if(!Kokkos::isfinite(dE+dye+dym+tau+e.Sx+eb.Sx+m.Sx+mb.Sx+x.Sx
+                            +e.Sy+eb.Sy+m.Sy+mb.Sy+x.Sy+e.Sz+eb.Sz+m.Sz+mb.Sz+x.Sz))
+            Kokkos::abort("Non-finite leptonic exchange");
+        double theta=1;
+        auto const bound=[&](double v,double dv,double lo,double hi) {
+            if(v<lo || v>hi || !Kokkos::isfinite(v+dv)) { theta=0; return; }
+            if(dv>0 && v+dv>hi) theta=Kokkos::fmin(theta,(hi-v)/dv*(1-1e-10));
+            if(dv<0 && v+dv<lo) theta=Kokkos::fmin(theta,(lo-v)/dv*(1-1e-10));
+        };
+        bound(ye,dye,eos.get_c2p_ye_min(),eos.get_c2p_ye_max());
+        bound(ym,dym,eos.get_c2p_ymu_min(),eos.get_c2p_ymu_max());
+        bound(ye+ym,dye+dym,0,eos.get_c2p_ye_max());
+        if(!(tau>0)) theta=0;
+        if(dE<0 && tau+dE<=0) theta=Kokkos::fmin(theta,tau/(-dE)*(1-1e-10));
+        theta=Kokkos::fmax(0.0,theta);
+        state_new(VEC(i,j,k),TAU_,q)+=theta*dE;
+        state_new(VEC(i,j,k),SX_,q)+=theta*(e.Sx+eb.Sx+m.Sx+mb.Sx+x.Sx);
+        state_new(VEC(i,j,k),SY_,q)+=theta*(e.Sy+eb.Sy+m.Sy+mb.Sy+x.Sy);
+        state_new(VEC(i,j,k),SZ_,q)+=theta*(e.Sz+eb.Sz+m.Sz+mb.Sz+x.Sz);
+        state_new(VEC(i,j,k),YESTAR_,q)+=theta*(e.N-eb.N);
+        state_new(VEC(i,j,k),YMUSTAR_,q)+=theta*(m.N-mb.N);
+        if(theta<1) {
+            blend_species<0>(q,VEC(i,j,k),state_new,theta); blend_species<1>(q,VEC(i,j,k),state_new,theta);
+            blend_species<2>(q,VEC(i,j,k),state_new,theta); blend_species<3>(q,VEC(i,j,k),state_new,theta);
+            blend_species<4>(q,VEC(i,j,k),state_new,theta);
+        }
+        #ifdef GRACE_M1_DIAGNOSTICS
+        this->_aux(VEC(i,j,k),M1_HEATCOOL_,q)+=theta*dE/D;
+        this->_aux(VEC(i,j,k),M1_LEPTON_SOURCE_,q)+=theta*dye;
+        this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q)+=theta*dym;
+        if(theta<1) this->_aux(VEC(i,j,k),M1_BR_REJECT_,q)=
+            double(int(this->_aux(VEC(i,j,k),M1_BR_REJECT_,q))|16);
+        #endif
+    }
+    #endif
+
+    template<int ispec>
+    KOKKOS_INLINE_FUNCTION double transport_opacity(int q,VEC(int i,int j,int k)) const {
+        return m1_transport_opacity<ispec>(this->_aux,q,VEC(i,j,k));
+    }
+
     // ----------------------------------------------------------------------
     // Backreaction limiter policy (override with -DGRACE_M1_BACKREACT_HARDSTOP=0)
     //   1 = HARD STOP: every species is accepted or rejected whole (E, F, N).
@@ -743,6 +858,13 @@ struct m1_equations_system_t
         // Per-cell density cutoff: leave near-empty cells untouched.
         if ( rho_min > 0.0 && this->_aux(VEC(i,j,k),RHO_,q) < rho_min ) return ;
         (void)muon_partial ;   // hard stop with 5 species only
+
+        #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 5
+        if(this->_aux(VEC(i,j,k),PAIR_DECAY_,q)>0) {
+            add_leptonic_backreaction(q,VEC(i,j,k),state_new,eos);
+            return;
+        }
+        #endif
 
         #if GRACE_M1_BACKREACT_HARDSTOP
         #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 3
@@ -1307,10 +1429,8 @@ struct m1_equations_system_t
         #ifdef GRACE_3D
         int const km = k - utils::delta(2,idir) ;
         #endif
-        double const kappa_R = this->_aux(VEC(i ,j ,k ),m1_kappaa_idx<ispec>(),q)
-                             + this->_aux(VEC(i ,j ,k ),m1_kappas_idx<ispec>(),q) ;
-        double const kappa_L = this->_aux(VEC(im,jm,km),m1_kappaa_idx<ispec>(),q)
-                             + this->_aux(VEC(im,jm,km),m1_kappas_idx<ispec>(),q) ;
+        double const kappa_R = transport_opacity<ispec>(q,VEC(i,j,k));
+        double const kappa_L = transport_opacity<ispec>(q,VEC(im,jm,km));
         double const _dx = dx(idir,q);
         // the fmax clamps A to [0,1] and guards the division
         double const A = 1./( _dx * Kokkos::fmax(Kokkos::sqrt(kappa_L*kappa_R),1./_dx) ) ;

@@ -47,6 +47,7 @@
 #include <grace/config/config_parser.hh>
 #include <grace/physics/eas_kinds.hh>
 #include <grace/physics/neutrino_pair_collision.hh>
+#include <grace/physics/neutrino_muon_decay.hh>
 #include <grace/system/runtime_functions.hh>
 
 #include <string>
@@ -387,6 +388,8 @@ struct neutrinos_eas_op
         betaeq_mode(get_betaeq_mode()),
         pair_treatment(get_pair_treatment()),
         pair_order(get_pair_quadrature_order()),
+        muon_decay(get_muon_decay()),
+        decay_order(get_muon_decay_kernel_order()),
         betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
         betaeq_ymu_floor(grace::get_param<bool>("m1", "eas", "betaeq_fallback_ymu_floor")),
         tau_kind(get_tau_policy_kind()),
@@ -913,6 +916,61 @@ struct neutrinos_eas_op
         return true;
     }
 
+    // Read physical, individual-species moments for current-state transport
+    // damping. This is separate from the ordinary-only collision coefficients.
+    template<int sp>
+    GRACE_HOST_DEVICE void pair_fluid_moments(VEC(const int i,const int j,const int k),
+        int64_t q,double multiplicity,double& n,double& J) const {
+        metric_array_t metric; FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k));
+        m1_prims_array_t p; FILL_M1_PRIMS_ARRAY(p,state,aux,q,sp,VEC(i,j,k));
+        for(int v: {ERADL,FXL,FYL,FZL,NRADL}) p[v]/=metric.sqrtg();
+        m1_closure_t cl{p,metric}; cl.update_closure(0);
+        n=p[NRADL]/cl.Gamma/pairs::number_unit/multiplicity;
+        J=cl.J/pairs::energy_unit/multiplicity;
+    }
+
+    GRACE_HOST_DEVICE void prepare_pair_transport(pairs::material const& m,double mumu,
+        int active,VEC(const int i,const int j,const int k),int64_t q) const {
+        #if GRACE_M1_NU_SPECIES >= 3
+        if(active==0 && !muon_decay) return;
+        #if GRACE_M1_NU_SPECIES >= 5
+        double n[4]={},J[4]={},opacity[4];
+        pair_fluid_moments<2>(VEC(i,j,k),q,1,n[2],J[2]);
+        pair_fluid_moments<3>(VEC(i,j,k),q,1,n[3],J[3]);
+        if(muon_decay) {
+            pair_fluid_moments<0>(VEC(i,j,k),q,1,n[0],J[0]);
+            pair_fluid_moments<1>(VEC(i,j,k),q,1,n[1],J[1]);
+        }
+        double scale=muon_decay?Kokkos::fmax(m.T,pairs::muon_mass/3):m.T;
+        for(int s=0;s<4;++s) if(n[s]>0)
+            scale=Kokkos::fmax(scale,Kokkos::sqrt(m.T*J[s]/n[s]/3));
+        pairs::kernel thermal; pairs::decay_kernel decay;
+        if(!thermal.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale)
+           || (muon_decay && !decay.init(thermal.g,m.T,m.mu_e,mumu,decay_order))
+           || !pairs::leptonic_transport_opacities(thermal,muon_decay?&decay:nullptr,active!=0,n,J,opacity))
+            Kokkos::abort("Invalid evolved-pair transport moments or kernel");
+        for(int s=0;s<4;++s) aux(VEC(i,j,k),PAIR_KAPPA1_+s,q)=opacity[s];
+        #endif
+        // The aggregate uses its symmetric kernel and per-physical-species
+        // moments, exactly as in compute_pair_implicit_update.
+        if(active!=0) {
+            #if GRACE_M1_NU_SPECIES >= 5
+            constexpr int sp=4,multiplicity=2;
+            #else
+            constexpr int sp=2,multiplicity=4;
+            #endif
+            double n,J; pair_fluid_moments<sp>(VEC(i,j,k),q,multiplicity,n,J);
+            double const scale=n>0?Kokkos::fmax(m.T,Kokkos::sqrt(m.T*J/n/3)):m.T;
+            pairs::kernel kpair; double f[pairs::max_order];
+            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,true)
+               || !pairs::reconstruct(kpair.g,n,J,f))
+                Kokkos::abort("Invalid aggregate-pair transport moments or kernel");
+            auto const src=pairs::evaluate(kpair,f,f);
+            aux(VEC(i,j,k),PAIR_KAPPA1_+sp,q)=J>0?src.loss[0]/J/pairs::time_unit:0;
+        }
+        #endif
+    }
+
     // New pair rates bypass charged-muon gates and ordinary-rate corrections.
     GRACE_HOST_DEVICE void prepare_pairs(fugacity_state const& F, nu_rates_all_out& all,
         VEC(const int i, const int j, const int k), int64_t q) const {
@@ -925,16 +983,22 @@ struct neutrinos_eas_op
         aux(VEC(i,j,k),PAIR_NB_,q)=m.nb;
         aux(VEC(i,j,k),PAIR_YN_,q)=m.yn;
         aux(VEC(i,j,k),PAIR_YP_,q)=m.yp;
+        aux(VEC(i,j,k),PAIR_MUMU_,q)=F.mu_mu;
+        aux(VEC(i,j,k),PAIR_DECAY_,q)=muon_decay;
+        aux(VEC(i,j,k),PAIR_DORDER_,q)=decay_order;
         int const active=int(pair_annihilation)+2*int(bremsstrahlung)+4*int(plasmon_decay);
         if(pair_treatment==pair_treatment_t::evolved) {
             aux(VEC(i,j,k),PAIR_ACTIVE_,q)=active;
+            prepare_pair_transport(m,F.mu_mu,active,VEC(i,j,k),q);
             return;
         }
-        if(active==0) return;
+        if(active==0 && !muon_decay) return;
         double const mu=F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp;
         pairs::kernel kernel;
-        if(!kernel.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,
-                        Kokkos::fmax(m.T,Kokkos::fabs(mu)/5)))
+        double scale=Kokkos::fmax(m.T,Kokkos::fabs(mu)/5);
+        if(muon_decay) scale=Kokkos::fmax(scale,Kokkos::fmax(pairs::muon_mass/3,
+            Kokkos::fabs(F.eta_nu[NUE])*m.T/5));
+        if(!kernel.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale))
             Kokkos::abort("Invalid equilibrium pair kernel");
         auto const add=[&](int s, double multiplicity, double eta) {
             double f[2][pairs::max_order], n[2]={0,0}, J[2]={0,0};
@@ -961,6 +1025,39 @@ struct neutrinos_eas_op
         #if GRACE_M1_NU_SPECIES >= 5
         add(NUMU,1,mu/m.T);
         add(NUX,2,0);
+        if(muon_decay) {
+            pairs::decay_kernel decay;
+            if(!decay.init(kernel.g,m.T,m.mu_e,F.mu_mu,decay_order))
+                Kokkos::abort("Invalid equilibrium muon decay kernel");
+            // Each oriented decay connects a different flavour; NEVER use
+            // opposite chemical potentials for these two partners.
+            auto const add_decay=[&](auto sp0,auto sp1,int charge) {
+                constexpr int a=decltype(sp0)::value,b=decltype(sp1)::value;
+                pairs::decay_lte_rates rates;
+                if(!pairs::equilibrium_decay_rates(decay,charge,F.eta_nu[a],F.eta_nu[b],rates))
+                    Kokkos::abort("Muon decay LTE moments underflow");
+                double source[2];
+                auto const put=[&](auto sp,int s) {
+                    constexpr int dst=decltype(sp)::value;
+                    all.out[dst].eta_E+=rates.eta_E[s]*pairs::energy_unit/pairs::time_unit;
+                    all.out[dst].eta_N+=rates.eta_N[s]*pairs::number_unit/pairs::time_unit;
+                    all.out[dst].kappa_a+=rates.kappa_E[s]/pairs::time_unit;
+                    all.out[dst].kappa_n+=rates.kappa_N[s]/pairs::time_unit;
+                    metric_array_t metric; FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k));
+                    m1_prims_array_t p; FILL_M1_PRIMS_ARRAY(p,state,aux,q,dst,VEC(i,j,k));
+                    for(int v: {ERADL,FXL,FYL,FZL,NRADL}) p[v]/=metric.sqrtg();
+                    m1_closure_t cl{p,metric}; cl.update_closure(0);
+                    double const now=p[NRADL]/cl.Gamma/pairs::number_unit;
+                    source[s]=(rates.eta_N[s]-rates.kappa_N[s]*now)*pairs::number_unit/pairs::time_unit;
+                };
+                put(sp0,0); put(sp1,1);
+                // Baryon-mass-weighted d(nb*(Ye+Ymu))/dproper_time, code units,
+                // from decay only at the pre-update radiation state.
+                aux(VEC(i,j,k),PAIR_DECAY_QDEF_,q)+=(charge==0?1:-1)*(source[1]-source[0]);
+            };
+            add_decay(std::integral_constant<int,NUMU>{},std::integral_constant<int,NUEBAR>{},0);
+            add_decay(std::integral_constant<int,NUMUBAR>{},std::integral_constant<int,NUE>{},1);
+        }
         #else
         add(NUX,4,0);
         #endif
@@ -1034,9 +1131,9 @@ struct neutrinos_eas_op
         // fugacity_state F that was already built above, so this costs stores
         // and (for the two mu_delta) two subtractions, nothing else.
         //
-        // Per-species equilibrium fugacity eta_nu = mu_nu / T (already
-        // (1-exp(-tau))-suppressed and +/-5-clamped in make_fugacity_state) so
-        // it can be compared cell-by-cell against the reference evolution.
+        // Per-species equilibrium fugacity eta_nu = mu_nu / T. Historical
+        // suppression/clamping applies only to the legacy sectors; with
+        // decay enabled all four lepton-carrying species use physical values.
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
         #endif
@@ -1139,10 +1236,14 @@ struct neutrinos_eas_op
                 // Keep the historical +/-5 clamp only in legacy mode.
                 F.eta_nu[NUMU]=(F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
                 F.eta_nu[NUMUBAR]=-F.eta_nu[NUMU];
+                if(muon_decay) {
+                    F.eta_nu[NUE]=(F.mu_e+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
+                    F.eta_nu[NUEBAR]=-F.eta_nu[NUE];
+                }
             }
             return (use_weakhub && weakhub.valid)
-                ? compute_all_species_weakhub(weakhub, F, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission)
-                : compute_all_species(F, beta_decay, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission);
+                ? compute_all_species_weakhub(weakhub, F, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay)
+                : compute_all_species(F, beta_decay, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay);
         };
 
         auto const evaluate_rates = [&]() {
@@ -1449,6 +1550,8 @@ struct neutrinos_eas_op
   betaeq_mode_t betaeq_mode;
   pair_treatment_t pair_treatment;
   int pair_order;
+  bool muon_decay;
+  int decay_order;
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
   bool betaeq_ymu_floor;    // ... held at the table floor when the muon equilibrium is below it
   tau_policy_kind_t tau_kind;
