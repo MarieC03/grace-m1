@@ -29,12 +29,18 @@ function(add_kokkos_test target_name source_file)
     target_include_directories(${target_name} PRIVATE "${HEADER_DIR}")
     target_compile_options(${target_name} PRIVATE -g)
 
-    # Common linking libraries
+    # Common linking libraries.  MPI::MPI_CXX is here for its INCLUDE path, not
+    # its library: p4est's sc.h includes <mpi.h>, and kokkos_tests_main links MPI
+    # PRIVATE, so nothing else hands these sources the MPI include directory.
     target_link_libraries(${target_name} PRIVATE 
     kokkos_tests_main
     Catch2::Catch2
     Kokkos::kokkos
+    MPI::MPI_CXX
     p4est::sc 
+    p4est::p4est
+    yaml_cpp::yaml
+    HDF5::HDF5
     spdlog::spdlog 
     ZLIB::ZLIB
     )
@@ -91,6 +97,9 @@ function(add_grace_test target_name source_file)
     $<$<BOOL:${GRACE_ENABLE_PROFILING}>:GRACE_GPUProfiling>
     $<$<BOOL:${GRACE_ENABLE_VTK}>:VTK::VTK>
     $<$<BOOL:${GRACE_ENABLE_LORENE}>:LORENE::LORENE>
+    # grace_objects carries import_kadath.cpp whenever FUKA is on, so the tests
+    # need the same Kadath link the grace target has (CMakeLists.txt).
+    $<$<BOOL:${GRACE_ENABLE_FUKA}>:Kadath::kadath>
     $<$<BOOL:${GRACE_ENABLE_TWO_PUNCTURES}>:TwoPunctures::TwoPunctures>
     )
     if ( GRACE_ENABLE_VTK )

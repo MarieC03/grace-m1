@@ -1,0 +1,69 @@
+name: "grace"
+# ---------------------------------------------------------------------------
+# Production-cell replay config: drives the "[c2p][leptonic][replay]" TEST_CASE.
+#
+# The replayed cells come from a real run (scripts/extract_c2p_replay_cells.py
+# on one of its surface_out_plane_*.h5 files, path via GRACE_C2P_REPLAY_FILE),
+# so the eos / atmosphere / c2p blocks below MUST match that run's parfile or
+# the inversion takes different branches and the round-trip check fails.
+#
+# As written this mirrors examples/grmhd/fil_headon_sfho_muons_m1.yaml (FUKA
+# head-on, Bollig lepton table, no electron contribution, T floor 0.1) with the
+# entropy backup ON as in the Hunter runs.  Table paths are absolute and
+# machine-local, as in c2p_test_leptonic.yaml -- edit them for your machine.
+# ---------------------------------------------------------------------------
+system: {
+  master_rank: 0,
+  console_log_level: "warn"
+}
+amr: {
+  npoints_block_x: 6,
+  npoints_block_y: 6,
+  npoints_block_z: 6,
+  n_ghostzones: 2,
+  initial_refinement_level: 0
+}
+eos: {
+  eos_type: "leptonic",
+
+  tabulated_eos: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",
+    linear_pressure: true
+  },
+
+  leptonic: {
+    table_filename: "/Users/miler/Codes/eos/4D/sfhoele_0-5ye_newformat_1000mev_mu_max_fullfermi_allfixed_Bollig_typeIII_hotfixMuon_electron_tables.h5",
+    cold_table_filename: "/Users/miler/Codes/eos/cold_sfho_muons.grace",
+    add_ele_contribution: false,
+    cold_table_temperature: 0.100001
+  },
+
+  eps_maximum: 1.e+05
+}
+grmhd: {
+  atmosphere: {
+    rho_fl: 1.e-14,
+    atmo_tol: 1.e-2,
+    temp_fl: 0.1,
+    ye_fl: 0.05,
+    atmosphere_is_beta_eq: true
+  },
+  excision: {
+    excision_criterion: "lapse",
+    excision_lapse: 0.05
+  },
+  c2p: {
+    tolerance: 1.e-09,
+    use_c2p_entropy_backup: true
+  }
+}
+m1: {
+  eas: {
+    kind: "neutrino_analytic"
+  }
+}
+checkpoints: {
+  checkpoint_at_termination: false
+}

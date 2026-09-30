@@ -70,6 +70,7 @@
 #include <Kokkos_Core.hpp>
 
 #include <algorithm>
+#include <utility>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -290,7 +291,7 @@ write_leptonic_cold_table(
     const std::string& filename,
     const Kokkos::View<double**, Kokkos::HostSpace>& h_data,
     const Kokkos::View<double*,  Kokkos::HostSpace>& h_rho,
-    double T_cold)
+    double T_cold, double energy_shift, double baryon_mass)
 {
     int const nrho  = static_cast<int>(h_rho .extent(0)) ;
     int const ncols = static_cast<int>(h_data.extent(1)) ;
@@ -308,6 +309,16 @@ write_leptonic_cold_table(
         << "  ncols=" << ncols + 1   // +1 because reader expects rho prepended
         << "  col0=log(rho)  col1=log(T)  col2=Ye  col3=Ymu"
            "  col4=log(P)  col5=log(eps+shift)  col6=cs2  col7=entropy\n" ;
+
+    // Metadata in the reader's "key = value" form (read_eos_table.cpp), so the
+    // table is self-describing: col5 is log(eps + energy_shift), and rho is a
+    // rest-mass density built with THIS baryon mass -- both are needed to
+    // recover a physical eps, and to convert n_B <-> rho consistently.
+    out << std::scientific << std::setprecision(17)
+        << "# energy_shift = " << energy_shift << "\n"
+        << "# baryon_mass = "  << baryon_mass  << "\n"
+        << "# npoints = "      << nrho         << "\n" ;
+    out << std::defaultfloat ;
 
     // Line 2: number of rows
     out << nrho << "\n" ;
@@ -462,7 +473,8 @@ void generate_leptonic_cold_table(
 
     // ---- Optional .grace dump ----
     if (!output_filename.empty() && parallel::mpi_comm_rank() == 0) {
-        write_leptonic_cold_table(output_filename, h_data, h_rho, T_cold) ;
+        write_leptonic_cold_table(output_filename, h_data, h_rho, T_cold,
+                                  eos.energy_shift, eos.get_baryon_mass()) ;
     }
 }
 
@@ -595,14 +607,12 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // -------------------------------------------------------
     //  1) Load the baryon EOS via the existing GRACE pipeline.
     //     Honours [eos.tabulated_eos.*] settings in the parfile.
-    //     NB: the electron-free baryon table has NEGATIVE pressure in the
-    //     nuclear spinodal, so [eos.tabulated_eos.linear_pressure] MUST be true
-    //     for muonic / leptonic runs (signed-linear storage, not log P) — the
-    //     reader aborts with an actionable message otherwise.  total_press then
-    //     sums the signed baryon pressure with the positive lepton pressures.
+    //     Always read with the SIGNED pressure: the electron-free table is
+    //     negative in the nuclear spinodal.  eos.tabulated_eos.linear_pressure
+    //     then picks the interpolation (step 7b): false = ln(P_b + P_e).
     // -------------------------------------------------------
     GRACE_INFO("Reading baryon EOS for leptonic_4d setup...") ;
-    tabulated_eos_t baryon_eos = read_eos_table() ;
+    tabulated_eos_t baryon_eos = read_eos_table(/*linear_pressure=*/true) ;
     auto const& bt = baryon_eos.tables ;
 
     int const nrho_b  = baryon_eos.nrho ;
@@ -615,7 +625,14 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     auto const cold_fname = grace::get_param<std::string>("eos","leptonic","cold_table_filename") ;
 
     GRACE_INFO("Reading 4D leptonic EOS table: {}", fname) ;
-    GRACE_INFO("Leptonic cold table:           {}", cold_fname) ;
+    // NB eos.leptonic.cold_table_filename is NOT read: the cold slice is
+    // regenerated from the 4D tables at the temperature floor in step 8 and
+    // replaces whatever a file would have supplied.  Saying so beats parsing
+    // a file and silently discarding it, which is what this used to do.
+    if ( !cold_fname.empty() ) {
+        GRACE_INFO("Leptonic cold table:           generated at the temperature "
+                   "floor; '{}' is ignored.", cold_fname) ;
+    }
 
     hid_t file = H5Fopen(fname.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT) ;
     ASSERT(file >= 0, "Could not open leptonic HDF5: " << fname) ;
@@ -644,7 +661,8 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // Axes.  yle and ymu are read in as the linear-valued axes used
     // by the lepton interpolators.  logrho_table / logtemp_table are
     // read in only to verify that the leptonic file lives on the
-    // same physical (rho, T) grid as the baryon table -- they're
+    // same physical (rho, T) grid as the baryon table (in either of
+    // the two log conventions, see below) -- they're
     // *not* used as axes downstream (the lepton interpolators reuse
     // the baryon table's already-unit-converted natural-log axes).
     std::vector<double> yle(nyle), ymu(nymu) ;
@@ -660,15 +678,19 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     h5_read(file, "eos_ymumax",    &ymumax_f,        H5T_NATIVE_DOUBLE) ;
 
     // -------------------------------------------------------
-    //  Verify the leptonic file's (rho, T) grid matches the baryon
-    //  table's pointwise.  The leptonic file stores log10 of CGS
-    //  values; the baryon axes were already converted to natural log
-    //  in geometric units by read_eos_table().  The mapping is:
-    //      bt._logrho[i] = log(10) * logrho10[i]  + log(RHOGF)
-    //      bt._logT  [i] = log(10) * logtemp10[i]
-    //
-    //  A mismatch here means the two HDF5 files were generated on
-    //  different grids and the additive sum is unphysical.
+    //  Verify the leptonic file's (rho, T) grid against the baryon
+    //  table's.  The lepton data are used ROW-ALIGNED with the baryon
+    //  table (the interpolators reuse the baryon axes); these axes are
+    //  read only to check that alignment.  Two label conventions exist:
+    //    log10 of CGS   (the regenerated ken tables)
+    //        bt._logrho[i] = log(10) * logrho10[i] + log(RHOGF)
+    //        bt._logT  [i] = log(10) * logtemp10[i]
+    //    natural log in GEOMETRIC units (the Bollig tables)
+    //        bt._logrho[i] = logrho10[i] ,  bt._logT[i] = logtemp10[i]
+    //  In the right convention the difference is a CONSTANT: the same
+    //  n_b rows labelled with another n_b -> rho constant (baryon mass,
+    //  unit system), harmless for row alignment.  Only a difference that
+    //  VARIES along the axis means the grids really differ.
     // -------------------------------------------------------
     {
         auto const uconv = CGS_units / GEOM_units ;  // for log(RHOGF) == log(uconv.mass_density)
@@ -680,31 +702,58 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         auto h_bar_lT = Kokkos::create_mirror_view_and_copy(
                             Kokkos::HostSpace(), bt._logT) ;
 
+        // Signed range [lo, hi] of (file label - baryon axis) along one axis.
+        struct axis_fit { double lo, hi ; } ;
+        auto fit = [&](bool const log10_cgs, bool const rho_axis) {
+            axis_fit f{ std::numeric_limits<double>::max(),
+                       -std::numeric_limits<double>::max() } ;
+            int const n = rho_axis ? nrho : ntemp ;
+            for (int i=0; i<n; ++i) {
+                double const raw = rho_axis ? logrho10[i] : logtemp10[i] ;
+                double const expected = log10_cgs
+                    ? ln10 * raw + (rho_axis ? lnRHOGF : 0.)
+                    : raw ;
+                double const observed = rho_axis ? h_bar_lr(i) : h_bar_lT(i) ;
+                f.lo = std::min(f.lo, expected - observed) ;
+                f.hi = std::max(f.hi, expected - observed) ;
+            }
+            return f ;
+        } ;
+        auto spread = [](axis_fit const& f) { return f.hi - f.lo ; } ;
+
+        // The right convention is the one whose difference is closest to constant.
+        axis_fit const cr = fit(true,  true), cT = fit(true,  false) ;
+        axis_fit const gr = fit(false, true), gT = fit(false, false) ;
+        bool const is_log10_cgs = spread(cr) + spread(cT) <= spread(gr) + spread(gT) ;
+        axis_fit const fr = is_log10_cgs ? cr : gr ;
+        axis_fit const fT = is_log10_cgs ? cT : gT ;
+        char const* const conv = is_log10_cgs ? "log10 of CGS values"
+                                              : "natural log in geometric units" ;
+
+        double const dlrho = (nrho  > 1) ? std::abs(h_bar_lr(1) - h_bar_lr(0)) : 1. ;
+        double const dlT   = (ntemp > 1) ? std::abs(h_bar_lT(1) - h_bar_lT(0)) : 1. ;
+        double const off_r = 0.5 * (fr.lo + fr.hi) ;
+        double const off_T = 0.5 * (fT.lo + fT.hi) ;
+
         constexpr double axis_tol = 1e-8 ;  // log-axis spacing is typically ~1e-2
-        double max_drho = 0., max_dT = 0. ;
-        for (int i=0; i<nrho;  ++i) {
-            double const expected = ln10 * logrho10[i] + lnRHOGF ;
-            double const observed = h_bar_lr(i) ;
-            double const d = std::abs(expected - observed) ;
-            if (d > max_drho) max_drho = d ;
-        }
-        for (int i=0; i<ntemp; ++i) {
-            double const expected = ln10 * logtemp10[i] ;
-            double const observed = h_bar_lT(i) ;
-            double const d = std::abs(expected - observed) ;
-            if (d > max_dT)   max_dT   = d ;
-        }
-        if (max_drho > axis_tol || max_dT > axis_tol) {
-            GRACE_WARN("Leptonic and baryon (rho, T) grids differ pointwise:"
-                       " max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}."
-                       " The lepton tables will be evaluated on the baryon"
-                       " grid regardless; results may be inconsistent if"
-                       " the two HDF5 files were generated on different grids.",
-                       max_drho, max_dT) ;
+        if (spread(fr) > axis_tol || spread(fT) > axis_tol) {
+            GRACE_WARN("Leptonic axes (read as {}) do NOT lie on the baryon grid: "
+                       "the offset varies by {:.3g} of a rho cell and {:.3g} of a T cell "
+                       "along the axes.  The lepton data are used row-aligned with the "
+                       "baryon table, so they are evaluated at the wrong states.",
+                       conv, spread(fr)/dlrho, spread(fT)/dlT) ;
+        } else if (std::abs(off_r) > axis_tol || std::abs(off_T) > axis_tol) {
+            GRACE_INFO("Leptonic axes read as {}; they label the baryon rows with a "
+                       "constant factor of {:.7f} in rho and {:.7f} in T (a different "
+                       "n_b -> rho constant).  The data are row-aligned, so this does "
+                       "not shift the states they are used at.",
+                       conv, std::exp(off_r), std::exp(off_T)) ;
         } else {
-            GRACE_INFO("Leptonic and baryon (rho, T) grids agree pointwise"
-                       " (max |dlogrho| = {:.3e}, max |dlogT| = {:.3e}).",
-                       max_drho, max_dT) ;
+            GRACE_INFO("Leptonic axes read as {}; (rho, T) grids agree with the "
+                       "baryon table pointwise (max |dlogrho| = {:.3e}, "
+                       "max |dlogT| = {:.3e}).", conv,
+                       std::max(std::abs(fr.lo), std::abs(fr.hi)),
+                       std::max(std::abs(fT.lo), std::abs(fT.hi))) ;
         }
     }
 
@@ -765,11 +814,11 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     Kokkos::deep_copy(v_ymu, h_ymu) ;
 
     // -------------------------------------------------------
-    //  5) Cold slice.
+    //  5) Cold slice placeholder.  The real slice is generated in step 8
+    //     at the temperature floor; the ctor just needs well-formed views.
     // -------------------------------------------------------
-    Kokkos::View<double**, grace::default_execution_space> cold_tabs ;
-    Kokkos::View<double*,  grace::default_execution_space> cold_lrho ;
-    read_leptonic_cold_table(cold_fname, cold_tabs, cold_lrho,leptonic_eos_4d_t::COLD_VIDX::N_CTAB_VARS+1) ;
+    Kokkos::View<double**, grace::default_execution_space> cold_tabs("cold_tabs_placeholder", 0, 0) ;
+    Kokkos::View<double*,  grace::default_execution_space> cold_lrho("cold_lrho_placeholder", 0) ;
 
     // -------------------------------------------------------
     //  6) Limits.  rho/T/Y_e/eps/h/atmosphere come from the
@@ -805,6 +854,8 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     // DD2 / BHBlp tables the baryon table already includes electrons,
     // so this must stay false to avoid double-counting.
     bool const add_ele = grace::get_param<bool>("eos","leptonic","add_ele_contribution") ;
+    // The table is read signed either way (step 1); false = interpolate in log (step 7b).
+    bool const log_press = !grace::get_param<bool>("eos","tabulated_eos","linear_pressure") ;
 
     GRACE_INFO("4D leptonic EOS rho [{:.4e}, {:.4e}]  T [{:.4e}, {:.4e}]  "
                "Ye [{:.3f}, {:.3f}]  Ymu [{:.3e}, {:.3e}]  add_ele={}",
@@ -863,15 +914,76 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         temp_atm,
         ye_atm, ymu_atm,
         atm_beta_eq,
-        add_ele
+        add_ele,
+        log_press
     ) ;
 
     // -------------------------------------------------------
-    //  8) Generate cold slice via beta equilibrium and patch in.
+    //  7b) Baryon pressure interpolation.  log_press: TABPRESS becomes
+    //      ln(P_b + P_e(Y_e=Y_q)), positive everywhere and exact for power
+    //      laws; must happen before anything evaluates the EOS (step 8).
     // -------------------------------------------------------
-    double T_cold = grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
-    if ( T_cold < std::exp(eos.ltempmin) ) {
-        T_cold = std::exp(eos.ltempmin) ;
+    if ( log_press ) {
+        auto const rep = convert_baryon_press_to_log(eos.baryon_table, eos.ele_table, add_ele) ;
+        if ( rep.n_bad > 0 ) {
+            ERROR("Cannot interpolate the baryon pressure in log: P_b"
+                  << (add_ele ? " + P_e(Y_e=Y_q)" : "") << " <= 0 or not finite at "
+                  << rep.n_bad << " table nodes, the first at (i,j,k) = (" << rep.i << ","
+                  << rep.j << "," << rep.k << "): rho = " << std::exp(rep.lrho)
+                  << ", T = " << std::exp(rep.ltemp) << " MeV, Y_q = " << rep.yq
+                  << ", P_b = " << rep.p_baryon << ", P_e = " << rep.p_ele
+                  << " (code units).  Set eos.tabulated_eos.linear_pressure=true.") ;
+        }
+        GRACE_INFO("Leptonic EOS: baryon pressure interpolated as ln({}) "
+                   "(eos.tabulated_eos.linear_pressure=false).",
+                   add_ele ? "P_b + P_e(Y_e=Y_q)" : "P_b") ;
+    } else {
+        GRACE_INFO("Leptonic EOS: baryon pressure interpolated linearly, signed "
+                   "(eos.tabulated_eos.linear_pressure=true).") ;
+    }
+
+    // -------------------------------------------------------
+    //  8) Resolve the working temperature floor, then generate the cold
+    //     slice AT THAT SAME TEMPERATURE.
+    //
+    //     One number drives three things that must agree: the EOS clamp
+    //     (limit_temp), the cold slice the FUKA/TOV importers invert
+    //     against, and the temperature those importers write into the ID.
+    //     They used to be set independently -- cold_table_temperature for
+    //     the slice, the raw table boundary for the clamp -- which let a
+    //     cold star be initialised exactly on ltempmin, where eps equals
+    //     the table's own minimum and every c2p call raises
+    //     EOS_EPS_TOO_LOW -> C2P_RESET_TAU/STILDE.
+    //
+    //     Unset (<= 0) means "use the table minimum" (FIL parity).
+    // -------------------------------------------------------
+    double const T_requested =
+        grace::get_param<double>("eos","leptonic","cold_table_temperature") ;
+    double const T_cold = eos.set_temperature_floor(T_requested) ;
+    double const T_tab_min = std::exp(eos.ltempmin) ;
+
+    if ( T_requested > 0. && T_requested <= T_tab_min ) {
+        GRACE_WARN("eos.leptonic.cold_table_temperature = {} is below the table "
+                   "minimum {}; the interpolator has nothing there.  Using {}.",
+                   T_requested, T_tab_min, T_cold) ;
+    } else if ( T_requested <= 0. ) {
+        GRACE_INFO("Temperature floor = the table minimum, {:.6g} MeV (FIL "
+                   "parity).  Set eos.leptonic.cold_table_temperature to raise "
+                   "it.", T_cold) ;
+    } else {
+        GRACE_INFO("Temperature floor set to {:.6g} MeV (table minimum {:.6g}); "
+                   "used for the EOS clamp and the cold slice alike.",
+                   T_cold, T_tab_min) ;
+    }
+    // Relative tolerance: T_cold is exp(log(T_min)) and comes back as
+    // 0.10000000000000002 for a table whose first point is 0.1, so an exact
+    // compare against a parfile temp_fl of 0.1 warns about a 2e-17 gap.
+    if ( temp_atm < T_cold * (1. - 1e-12) ) {
+        GRACE_WARN("grmhd.atmosphere.temp_fl = {} is below the EOS temperature "
+                   "floor {}; EOS lookups clamp up to the floor, so the "
+                   "atmosphere and any ID written at temp_fl will not be "
+                   "thermodynamically consistent with it.  Set temp_fl >= {}.",
+                   temp_atm, T_cold, T_cold) ;
     }
 
     std::string cold_out_fname = "" ;

@@ -1,0 +1,457 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=25mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage{microtype}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\lstset{basicstyle=\small\ttfamily,columns=fullflexible,
+  keepspaces=true,breaklines=true,showstringspaces=false,
+  frame=single,rulecolor=\color{black!20},aboveskip=1em,belowskip=1em}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\eq}{\mathrm{eq}}
+\newcommand{\ordinary}{\mathrm{ordinary}}
+\newcommand{\pair}{\mathrm{pair}}
+\setlength{\emergencystretch}{2em}
+\title{Grey heavy-flavour pair processes\\\large GRACE implementation report}
+\author{}
+\date{LaTeX edition: 30 September 2026}
+
+\begin{document}
+\maketitle
+\noindent This document reproduces the explanation in
+\path{doc/developer_guide/pair_processes.md}, with typeset equations and
+a clarification of the effective-opacity convention. The build and test
+record below is the existing record from 29 September 2026, not a new run.
+
+\section{Scope and status}
+
+This implementation adds selectable \code{equilibrium} and \code{evolved}
+treatments; \code{legacy} remains the default. It treats \emph{neutrino pairs},
+not creation of charged muons:
+\begin{itemize}
+\item electron--positron annihilation, $e^-+e^+\leftrightarrow\nu+\bar\nu$;
+\item nucleon bremsstrahlung, $N+N\leftrightarrow N+N+\nu+\bar\nu$;
+\item an explicitly optional transverse-plasmon model,
+  $\gamma^*\leftrightarrow\nu+\bar\nu$.
+\end{itemize}
+These thermal channels do not require charged muons to be present. They must
+not be multiplied by the charged-muon abundance/density/temperature gate.
+Charged-current muon reactions remain the responsibility of the ordinary
+emission/absorption/scattering (EAS) provider. This change does not implement
+muon decay, muon--antimuon annihilation, flavour conversion, or missing
+electron-flavour pair channels in the baseline.
+
+This is an \emph{isotropic-kernel grey closure}, not an exact Boltzmann
+solution. Conservation and detailed balance can be checked independently of
+the accuracy of its spectral/angular assumptions. In particular, it is not a
+validated polar-funnel annihilation/heating model and is not claimed to
+outperform a spectral Monte Carlo calculation. Production use requires
+quadrature, resolution, timestep and target-GPU validation.
+
+\section{Configuration}
+
+Build with 3 or 5 neutrino species and initialize the repository's existing
+\path{extern/bns_nurates} submodule. Its pinned revision is
+\path{efbabe0d4dfa6935c9ecbbd59a30c69b7cd1b91e}; no new revision is selected here.
+
+\begin{lstlisting}
+m1:
+  eas:
+    kind: neutrino_weakhub        # alternatively neutrino_analytic
+    pair_treatment: evolved      # legacy | equilibrium | evolved
+    pair_quadrature_order: 16     # 8..32; compare 16, 24, 32
+    weakhub_pair_content: none    # ONLY after checking table provenance
+    betaeq_policy: off
+    pair_annihilation: true
+    bremsstrahlung: true
+    plasmon_decay: true
+    pair_plasmon_model: transverse_mass
+\end{lstlisting}
+
+No spectral WeakHub tables are needed: the new pair kernels are evaluated
+locally. The ordinary grey WeakHub table \emph{must exclude these
+heavy-flavour thermal pair channels}. \path{weakhub_pair_content: none} is a
+declaration, not a filter: the code cannot subtract unknown pair contributions
+from an inclusive grey table. \code{unknown} and \code{included} are rejected
+in the new modes. The old standalone \path{bns_nurates} EAS adapter is not
+used by these modes.
+
+The new modes reject algebraic \path{betaeq_policy} replacements of the
+actual matter state. Ordinary temperature corrections remain confined to
+ordinary rates. Pair rates receive neither an extra temperature-square
+multiplier nor an optical-depth fugacity suppression. The historical muonic
+$\eta=\pm5$ clamp is retained in legacy mode only: using it in ordinary
+charged-current Kirchhoff factors but not in the new pair calculation would
+introduce incompatible equilibrium targets. GRACE's existing equation-of-state
+(EOS) chemical-potential convention is retained:
+\[
+ \mu_{\nu_\mu}=\mu_\mu+\mu_p-\mu_n-Q_{np},\qquad
+ \mu_{\bar\nu_\mu}=-\mu_{\nu_\mu}.
+\]
+
+\section{Collision operator and grey equations}
+
+In the matter frame, per physical helicity species, define
+\[
+ d\Pi=D(\epsilon)\,d\epsilon,\qquad
+ D(\epsilon)=\frac{4\pi\epsilon^2}{(hc)^3},\qquad
+ n=\int f\,d\Pi,\qquad J=\int\epsilon f\,d\Pi.
+\]
+Here $T$ is expressed in energy units. $R_a(\epsilon,\epsilon')$ is the
+angle-independent annihilation kernel with the first argument belonging to
+the neutrino, the second to the antineutrino. Kernel units are
+$\mathrm{cm^3\,s^{-1}}$. For these thermal channels the matter bath has zero
+net chemical potential for the event, so
+\begin{equation}\label{eq:kernel-balance}
+ R_p(\epsilon,\epsilon')
+ =e^{-(\epsilon+\epsilon')/T}R_a(\epsilon,\epsilon').
+\end{equation}
+For a specified partner distribution,
+\begin{equation}\label{eq:ja}
+ j_\nu(\epsilon)=\int R_p(1-\bar f')\,d\Pi',\qquad
+ a_\nu(\epsilon)=\int R_a\bar f'\,d\Pi',
+\end{equation}
+\begin{equation}\label{eq:collision}
+ C_\nu=(1-f)j_\nu-fa_\nu
+       =j_\nu-\lambda_\nu f,\qquad \lambda_\nu=j_\nu+a_\nu.
+\end{equation}
+The effective opacity in the rearranged source $j-\lambda f$ is
+$\lambda/c$, not $a/c$. This does not introduce an additional physical
+absorption process: $a$ is still the true inverse-reaction coefficient, and
+$(1-f)j-af$ is an equally correct form. The extra $j$ in $\lambda$ accounts
+for own-species Pauli blocking. Both $j$ and $a$ here have units
+$\mathrm{s^{-1}}$, not the units of a grey energy emissivity.
+The antineutrino equation uses the same event kernel with the roles of the
+arguments transposed. Electron-pair kernels are not generally symmetric under
+energy exchange.
+
+For weights $w=1$ (number) or $w=\epsilon$ (energy), coefficients for a
+specified spectral shape can be written
+\begin{equation}\label{eq:grey}
+ Q_w=\int wj\,d\Pi,\qquad
+ c\kappa_w=\frac{\int w\lambda f\,d\Pi}{\int wf\,d\Pi}.
+\end{equation}
+Here $Q$ is spontaneous emission \emph{with partner blocking}, and
+own-species blocking is contained in $\lambda$. Thus both emissivity and
+opacity are computed from the kernel. Calling both of them independent
+physical inputs would also be misleading: they obey microscopic detailed
+balance, Eq.~\eqref{eq:kernel-balance}.
+
+\subsection{Equilibrium partner}
+
+Use $f^\eq=[\exp((\epsilon-\mu)/T)+1]^{-1}$ and the partner with $-\mu$.
+Then
+\begin{equation}\label{eq:kirchhoff}
+ j(\epsilon)=\lambda(\epsilon)f^\eq(\epsilon),\qquad
+ B_w=\int wf^\eq\,d\Pi,\qquad Q_w=c\kappa_w B_w,
+\end{equation}
+where the grey opacity in Eq.~\eqref{eq:grey} is weighted with $f^\eq$.
+The code evaluates both sides from the same quadrature.
+Equation~\eqref{eq:kirchhoff} is valid here because the blocking and averaging
+conventions agree. It does not justify dividing an arbitrary unblocked
+emissivity by a degenerate Fermi--Dirac (FD) blackbody.
+
+The independent grey sources are $S_N=Q_N-c\kappa_N n$ and
+$S_E=Q_E-c\kappa_E J$. They vanish at the prescribed local thermodynamic
+equilibrium (LTE) target but \emph{need not give equal neutrino and
+antineutrino number changes away from LTE}. This is an intentional limitation
+of the equilibrium-partner comparison mode.
+
+\subsection{Evolved partner}
+
+At each trial of the implicit solve, GRACE's M1 closure supplies $J$,
+$H^\alpha$ and $\Gamma$. The comoving number density is
+$n=N_{\mathrm{lab}}/\Gamma$, with
+$\Gamma=W(E-v^iF_i)/J$ in the existing grey number-current closure.
+Reconstruct:
+\begin{equation}\label{eq:reconstruction}
+ \begin{gathered}
+ f_i=[\exp(a+b\epsilon_i/\langle\epsilon\rangle)+1]^{-1},\qquad b>0,\\
+ \sum_i W_i f_i=n,\qquad \sum_i W_i\epsilon_i f_i=J.
+ \end{gathered}
+\end{equation}
+The fit parameters $a,b$ in Eq.~\eqref{eq:reconstruction} are unrelated to
+the absorption coefficient $a_\nu$ in Eq.~\eqref{eq:ja}.
+Both moments are matched on the \emph{same} positive quadrature that
+evaluates the collisions, separately for each partner. $W_i$ includes
+$D(\epsilon_i)$. This is a two-parameter FD/maximum-entropy spectral closure,
+not a claim that the evolved spectrum is actually thermal. Invalid or
+unrepresentable moments are rejected; the solver does not secretly replace
+the partner by matter LTE.
+
+For every ordered pair of energy nodes, accumulate one event rate:
+\begin{equation}\label{eq:event}
+ I_{ij}=W_iW_j\left\{R^p_{ij}(1-f_i)(1-\bar f_j)
+                         -R^a_{ij}f_i\bar f_j\right\},
+\end{equation}
+\begin{equation}\label{eq:pair-moments}
+ S_N=\bar S_N=\sum_{ij}I_{ij},\qquad
+ S_E=\sum_{ij}\epsilon_iI_{ij},\qquad
+ \bar S_E=\sum_{ij}\epsilon_jI_{ij}.
+\end{equation}
+Consequently the neutrino-number minus antineutrino-number source is zero
+for pair-only interactions. The two energies need not be equal. The whole FD
+family with common matter temperature and opposite chemical potentials is a
+pair-equilibrium family; pair interactions alone do not select beta
+equilibrium or erase a preexisting lepton-number difference. There is no
+matter-Kirchhoff reset of Eqs.~\eqref{eq:event}--\eqref{eq:pair-moments}.
+
+The grey flux spectrum is assumed proportional to the energy spectrum. With
+$\lambda_E=\int\epsilon\lambda f\,d\Pi/J$, the covariant pair source is
+\begin{equation}\label{eq:four-force}
+ G^\alpha=S_Eu^\alpha-\lambda_EH^\alpha.
+\end{equation}
+In GRACE's undensitized Eulerian variables this contributes
+\begin{equation}\label{eq:eulerian}
+ \begin{aligned}
+ \dot E&=\alpha W\left\{S_E-\lambda_E(E-v^iF_i-J)\right\},\\
+ \dot F_i&=\alpha(Wv_iS_E-\lambda_EH_i),\qquad
+ \dot N=\alpha S_N.
+ \end{aligned}
+\end{equation}
+Ordinary charged-current/emission/scattering sources are added to
+Eq.~\eqref{eq:eulerian} inside one coupled ten-variable diagonal
+implicit--explicit (IMEX) solve:
+\begin{equation}\label{eq:residual}
+ \begin{gathered}
+ U-U_*-h\,[S_\ordinary(U)+S_\pair(U)]=0,\\
+ U=(E,F_x,F_y,F_z,N,\bar E,\bar F_x,\bar F_y,\bar F_z,\bar N),\qquad
+ h=dt\,dtfact.
+ \end{gathered}
+\end{equation}
+Matter and ordinary coefficients are held fixed over this local stage, as in
+the existing GRACE source treatment. This is not a simultaneous EOS+matter
+Newton solve. The existing conservative backreaction deposits the accepted
+radiation energy/momentum and lepton-number changes into the fluid. Existing
+backreaction limiters may throttle/reject those changes.
+
+The solver uses scaled finite-difference Newton steps, positivity/cone checks
+and line search. A continuation retry solves smaller coefficients of the same
+original residual and ends at the full $h$; it is not a sequence of hidden
+time substeps. Failure aborts explicitly, instead of accepting an unrelated
+linear fallback. A final projection makes the two solved number equations
+share a common pair increment; ordinary number absorption remains implicit.
+The full nonlinear residual is checked again after this projection.
+\path{pair_residual} records the normalized residual of the accepted state.
+
+\subsection{Aggregate species and units}
+
+Five species: indices 2/3 are separate $\nu_\mu/\bar\nu_\mu$; index 4
+represents $\nu_\tau+\bar\nu_\tau$ with multiplicity 2. Three species: index 2
+has multiplicity 4. Divide aggregate $E,F,N$ and ordinary emissivities by that
+multiplicity before reconstructing a one-helicity spectrum. For a
+charge-symmetric aggregate, use $[R(\epsilon,\epsilon')+
+R(\epsilon',\epsilon)]/2$, evolve one representative spectrum and multiply
+the output by the multiplicity. Do \emph{not} multiply its opacity by the
+multiplicity.
+
+Physical sources are converted using the same constants as existing EAS:
+\[
+ \begin{aligned}
+ J_{\mathrm{code}}&=C_EJ,& n_{\mathrm{code}}&=C_Nn,\\
+ Q_{E,\mathrm{code}}&=C_EQ_E/\code{TIMEGF},&
+ Q_{N,\mathrm{code}}&=C_NQ_N/\code{TIMEGF},\\
+ \lambda_{\mathrm{code}}&=\lambda/\code{TIMEGF}.&&
+ \end{aligned}
+\]
+Here $C_E=\code{mev\_to\_erg}\,\code{RHOGF}\,\code{EPSGF}$ and
+$C_N=\code{mnuc\_cgs}\,\code{RHOGF}$. Conserved variables are divided by
+$\sqrt{\gamma}$ before solving, multiplied back afterwards.
+
+\section{Kernel implementation and approximations}
+
+Electron pairs use the pinned BNS\_NURATES Pons/Bruenn \code{PairPsi}
+kernel, including its relativistic/massless-electron approximation (not an
+exact finite-electron-mass kernel at arbitrarily low temperature),
+algebraically evaluating its absorption coefficient without the unstable
+product $\exp[(\epsilon+\epsilon')/T]R_p$. In the library's symbols the
+implemented expression is
+\[
+ \begin{gathered}
+ R_a^{ee}=-\frac{CT^2}{2[1-e^{-(y+z)}]}
+ \left[\alpha_1^2\Psi_0(y,z,\eta_e)+
+       \alpha_2^2\Psi_0(z,y,\eta_e)\right],\\
+ y=\epsilon/T,\qquad z=\epsilon'/T,
+ \end{gathered}
+\]
+with $C=\code{kBS\_Pair\_Phi}$ and the heavy-flavour weak couplings from
+the pinned library; the result is converted from $\mathrm{nm^3/s}$ to
+$\mathrm{cm^3/s}$. NN pairs use its unchanged Hannestad--Raffelt 1998 kernel,
+without the optional Fischer medium correction. BNS\_NURATES uses nm units:
+the numerical baryon density in $\mathrm{nm^{-3}}$ is its value in
+$\mathrm{cm^{-3}}$ multiplied by $10^{-21}$, and the numerical kernel in
+$\mathrm{cm^3/s}$ is its value in $\mathrm{nm^3/s}$ multiplied by $10^{-21}$.
+The electron-pair expression retains the library's numerical
+nonnegative-rate guard; this is not an independent revalidation of the
+library's fit over every EOS state. Extremely degenerate states require
+explicit convergence checks.
+
+The optional plasma approximation uses two transverse polarisations, residue
+$Z=1$, $\omega^2=k^2+m_\gamma^2$,
+\begin{equation}\label{eq:plasmon-mass}
+ \begin{gathered}
+ m_\gamma^2=\frac{4\alpha_{\mathrm{EM}}}{3\pi}
+ \left(\mu_e^2+\pi^2T^2/3\right),\\
+ \Gamma_T(\omega)=\frac{G_F^2C_V^2m_\gamma^6}
+ {48\pi^2\alpha_{\mathrm{EM}}\hbar\omega},\qquad
+ C_V=-\tfrac12+2\sin^2\theta_W.
+ \end{gathered}
+\end{equation}
+For $\omega=\epsilon+\epsilon'$ and $k^2=\omega^2-m_\gamma^2$, the allowed
+region is $(\epsilon-\epsilon')^2\leq k^2$, with the transverse decay
+distribution $dP/d\epsilon=3[1+(\epsilon-\epsilon')^2/k^2]/(4k)$.
+Transforming the thermal photon phase space gives the joint event kernel
+\begin{equation}\label{eq:plasmon-kernel}
+ D(\epsilon)D(\epsilon')R_a=
+ 2\frac{4\pi}{(hc)^3}\,\omega\Gamma_T(\omega)
+ [1+f_{\mathrm{BE}}(\omega)]\,\frac34
+ \left[1+\frac{(\epsilon-\epsilon')^2}{k^2}\right].
+\end{equation}
+$R_p=\exp(-\omega/T)R_a$ includes $f_{\mathrm{BE}}$; the inverse rate
+includes $1+f_{\mathrm{BE}}$, not $1-f_{\mathrm{BE}}$. This approximation
+neglects longitudinal/axial/mixed modes, charged-muon polarisation, finite
+electron mass corrections and the momentum-dependent transverse dispersion.
+It is not quantitatively reliable for all cool/degenerate states; opt-in is
+mandatory. Plasma thresholds can converge more slowly than smooth ee/NN
+kernels on this tensor quadrature.
+
+\section{EAS and evolution workflows}
+
+\subsection{Equilibrium mode}
+\begin{enumerate}
+\item Read EOS and ordinary analytic/WeakHub rates; suppress old thermal extras.
+\item Use the consistent muonic chemical potentials in ordinary Kirchhoff
+  factors; apply the existing \emph{ordinary} gate and temperature corrections.
+\item Construct thermal pair kernels and opposite-chemical-potential LTE spectra.
+\item Compute both grey $Q$ and stimulated-absorption $\kappa$ from
+  Eqs.~\eqref{eq:ja}--\eqref{eq:kirchhoff}.
+\item Add these pair terms after ordinary corrections; preserve scattering.
+\item Use the existing per-species $E,F,N$ implicit update and fluid backreaction.
+\end{enumerate}
+
+\subsection{Evolved mode}
+\begin{enumerate}
+\item Perform the same ordinary EAS calculation, excluding old thermal extras.
+\item Store physical $T,\mu_e,n_b,X_n,X_p$ and enabled channels in pair
+  auxiliaries. Ordinary EAS slots deliberately contain \emph{no pair terms}.
+\item In each implicit stage construct/cache one kernel matrix per physical pair.
+\item Reconstruct both spectra from each trial $J,N/\Gamma$; compute
+  Eqs.~\eqref{eq:event}--\eqref{eq:eulerian}.
+\item Solve Eq.~\eqref{eq:residual}, including ordinary EAS, simultaneously
+  for the two partners. Treat the charge-symmetric residual heavy aggregate
+  with its multiplicity.
+\item Run unchanged electron/photon source updates, then existing backreaction.
+\end{enumerate}
+
+Equilibrium-blended initial data temporarily use equilibrium pair EAS even
+when the simulation selects evolved partners. The usual final EAS pass then
+restores ordinary-only slots and material snapshots for evolution. Atmosphere
+cells disable pair channels and clear their material/residual auxiliaries.
+
+\section{Code map, review and validation}
+
+\begin{itemize}
+\item \path{neutrino_pair_collision.hh}: quadrature, kernels, FD
+  reconstruction, common blocked collision integrals and units.
+\item \path{neutrino_pair_update.hh}: coupled M1 residual and local nonlinear
+  solver.
+\item \path{eas_kinds.hh}, \path{parameters/m1.yaml}: setup selectors and
+  incompatible-mode checks.
+\item \path{eas_policies.hh}: ordinary/pair separation, matching muonic LTE
+  targets, equilibrium coefficients and evolved material snapshots.
+\item \path{variable_indices.hh/.cpp}: material/channel/residual auxiliary
+  registration.
+\item \path{m1.hh}: one-cell species mapping, densitization and aggregate factors.
+\item \path{evolve.cpp}: pair-stage launch before ordinary sources/backreaction.
+\item \path{m1.cpp}: setup validation, small-tile EAS launch and initialization
+  support.
+\item \path{CMakeLists.txt}, \path{test/CMakeLists.txt},
+  \path{test_m1_pairs.cpp}: headers and tests. The Kokkos test helper now
+  propagates the bundled YAML/p4est/HDF5 dependencies; existing backreaction
+  tests support both Cowling and Z4 metric layouts. Two legacy-rate assertions
+  were corrected to test the already-existing smooth muon suppression factor,
+  rather than assuming a hard cutoff. The legacy rate implementation itself
+  was not changed for those assertions.
+\end{itemize}
+
+The hot path has fixed-size automatic storage and Kokkos device functions, no
+host-only solver, dynamic allocation or CUDA/HIP-specific API. Kernel matrices
+are computed once per stage, not once per Newton trial. Separate small tiles
+avoid the ordinary kernel's GPU launch-bound assumptions. This is portable
+source design, not a GPU performance measurement; register pressure, spills
+and throughput still need measurement on each target backend.
+
+Tests cover unit normalization, FD moments, kernel orientation, LTE balance,
+blocking/vacuum emission, unequal populations, implicit stiffness,
+simultaneous ordinary EAS, moving-fluid LTE and execution on the configured
+Kokkos backend. Run
+\begin{lstlisting}
+ctest --test-dir build-pairs-cpu -R m1_pair_test --output-on-failure
+\end{lstlisting}
+Do not equate unit-test success with a validated neutron-star evolution.
+
+\subsection{Verified build (2026-09-29)}
+
+The complete \code{grace} executable built with GCC/WSL, Kokkos Serial,
+Debug, 3 spatial dimensions, 5 neutrino species, muons enabled and Cowling
+metric. The following suites passed after the review/fix cycles:
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Suite & Cases & Assertions \\
+\midrule
+\path{m1_pair_test} & 9 & 119 \\
+\path{m1_analytic_rates_test} & 33 & 1655 \\
+\path{m1_backreaction_test} & 44 & 643 \\
+\midrule
+Total & 86 & 2417 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{lstlisting}
+cmake -S . -B build-pairs-cpu -DGRACE_USE_BUNDLED_DEPS=ON \
+  -DGRACE_M1_NU_SPECIES=5 -DGRACE_3D=ON -DGRACE_METRIC_EVOL=COWLING \
+  -DGRACE_PERF_TUNING=generic -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-pairs-cpu --target grace m1_pair_test \
+  m1_analytic_rates_test m1_backreaction_test -j6
+ctest --test-dir build-pairs-cpu \
+  -R '^m1_(pair|analytic_rates|backreaction)_test$' --output-on-failure
+\end{lstlisting}
+
+Not verified here: GPU compilation/performance, a three-species executable,
+full coupled hydrodynamic/merger evolutions, all extreme EOS states, or
+quantitative accuracy against full angular/spectral transport. The standard
+M1 flux cone is checked; this is not a full fermionic angular-realizability
+closure. Even with matched chemical potentials, differences between finite
+pair quadrature and the existing ordinary-EAS Fermi-integral fits leave a
+quadrature-level LTE mismatch: check order convergence before production.
+The existing generic implicit-solver counters describe the ordinary solver;
+\path{pair_residual} is the new coupled-pair solver's diagnostic.
+
+\section{Literature and what can actually be criticized}
+
+\href{https://arxiv.org/html/2309.03526v2}{Ng et al., WeakHub}, give the pair
+collision operator and reaction kernels (Sec.~3.4).
+\href{https://arxiv.org/html/2412.04570v2}{Chiesa et al., BNS\_NURATES},
+describe the portable kernel library and reconstruction from grey moments.
+The new code reuses the kernels, not the library's complete grey closure.
+\href{https://arxiv.org/abs/hep-ph/9302213}{Braaten and Segel} give the more
+complete plasma treatment; the simplified model
+\eqref{eq:plasmon-mass}--\eqref{eq:plasmon-kernel} must not be confused with it.
+
+\href{https://arxiv.org/html/2604.14225v2}{Gieg et al.}, Appendix~A, drop
+neutrino blocking in A4 before writing FD detailed balance in A5. That cannot
+be the exact identity of the fully blocked collision operator; an additional
+closure choice is involved. This implementation keeps both blocking factors
+instead. \href{https://arxiv.org/html/2606.27425v1}{Foucart}, Sec.~II.4, uses
+evolved spectral estimates with an opaque-region equilibrium fallback and an
+angular correction; it is not simply an equilibrium-partner treatment. A
+blanket claim that this new grey $R_0$ implementation is more accurate is
+unwarranted. No unpublished criticism attributed to Harry is treated as
+evidence of a specific error.
+
+\end{document}

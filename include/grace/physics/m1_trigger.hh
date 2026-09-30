@@ -133,6 +133,15 @@ m1_trigger_params_t get_m1_trigger_params() ;
 
 //**************************************************************************************************
 /**
+ * @brief Put every radiation field on its floor with zero flux (defined in m1.cpp).
+ * \ingroup m1_trigger
+ *
+ * Called by m1_update_trigger() at the moment of activation.
+ */
+void reset_m1_radiation_to_floor() ;
+
+//**************************************************************************************************
+/**
  * @brief Validate the trigger configuration and set the initial state.
  * \ingroup m1_trigger
  *

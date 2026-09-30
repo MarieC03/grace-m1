@@ -33,8 +33,8 @@ eos: {
   eos_type: "leptonic",
 
   tabulated_eos: {
-    # electron-free baryon table (muonic runs); linear_pressure required because
-    # the baryon-only pressure is negative in the nuclear spinodal.
+    # electron-free baryon table (muonic runs).  linear_pressure: true keeps the
+    # signed-linear baryon pressure; c2p_test_leptonic_logp.yaml covers false.
     table_filename: "/Users/miler/Codes/eos/4D/sfho_compose_noele_0-5ye.h5",
     table_format: "compose",
     cold_table_filename: "/Users/miler/Codes/eos/cold_sfho.grace",

@@ -215,6 +215,39 @@ inline tau_policy_kind_t get_tau_policy_kind()
              "local_kappa, eikonal") ;
 }
 
+enum class pair_treatment_t : int { legacy, equilibrium, evolved };
+
+inline pair_treatment_t get_pair_treatment()
+{
+    auto const name=detail::get_eas_param_or("legacy", "pair_treatment");
+    if(name=="legacy") return pair_treatment_t::legacy;
+    if(name!="equilibrium" && name!="evolved")
+        ERROR("m1.eas.pair_treatment must be legacy, equilibrium or evolved");
+#if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
+    ERROR("New pair treatments require 3/5 neutrino species and the pinned bns_nurates submodule");
+#endif
+    auto const sel=get_eas_selection();
+    if(!sel.contains(eas_kind_t::neutrino_analytic) && !sel.contains(eas_kind_t::neutrino_weakhub))
+        ERROR("New pair treatments require neutrino_analytic or neutrino_weakhub EAS");
+    if(sel.contains(eas_kind_t::neutrino_weakhub)
+       && detail::get_eas_param_or("unknown","weakhub_pair_content")!="none")
+        ERROR("New pair treatments require a pair-free WeakHub table; explicitly set weakhub_pair_content: none after checking its provenance");
+    if(get_betaeq_mode()!=betaeq_mode_t::off)
+        ERROR("New pair treatments currently require betaeq_policy: off");
+    if(get_param<bool>("m1","eas","plasmon_decay")
+       && detail::get_eas_param_or("none","pair_plasmon_model")!="transverse_mass")
+        ERROR("New plasmon pairs require pair_plasmon_model: transverse_mass; see the documented approximation, or disable plasmon_decay");
+    return name=="equilibrium" ? pair_treatment_t::equilibrium : pair_treatment_t::evolved;
+}
+
+inline int get_pair_quadrature_order()
+{
+    int n=16;
+    try { n=get_param<int>("m1","eas","pair_quadrature_order"); } catch(...) {}
+    if(n<8 || n>32) ERROR("pair_quadrature_order must be between 8 and 32");
+    return n;
+}
+
 } // namespace grace
 
 #endif /* GRACE_PHYSICS_EAS_KINDS_HH */

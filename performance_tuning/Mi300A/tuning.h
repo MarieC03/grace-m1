@@ -24,3 +24,13 @@
 #define GRACE_Z4C_ADV_LB      Kokkos::LaunchBounds<256, 4>
 #define GRACE_Z4C_CURV_PRE_LB Kokkos::LaunchBounds<256, 1>
 #define GRACE_Z4C_CURV_LB     Kokkos::LaunchBounds<256, 1>
+
+// ---- Register-pressured per-cell kernels ---------------------------------
+// No in-source default: undefined leaves the kernel's policy and tile as-is.
+// Each pairs with an explicit {16,4,4,1} tile at its launch site.  Trailing
+// number is scratch bytes/lane before bounds (-Rpass-analysis); wall-clock
+// effect is NOT measured.
+#define GRACE_M1_EAS_LB        Kokkos::LaunchBounds<256, 1>  // set_m1_eas 5124
+//#define GRACE_M1_IMPLICIT_LB   Kokkos::LaunchBounds<256, 1>  // implicit   3120
+#define GRACE_FOFC_FLAG_LB     Kokkos::LaunchBounds<256, 1>  // fofc flag  3632
+#define GRACE_AUX_LB           Kokkos::LaunchBounds<256, 1>  // auxiliaries 3072

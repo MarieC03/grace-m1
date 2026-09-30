@@ -127,8 +127,11 @@ void m1_update_trigger() {
     if ( sep < p.separation ) {
         size_t const it = grace::get_iteration() ;
         m1_set_active(true, it) ;
+        // Start the transport from a clean floor: the idle fields may sit above it.
+        reset_m1_radiation_to_floor() ;
         GRACE_INFO("M1 ACTIVATED at iteration {} (t = {}): compact-object separation {} "
-                   "dropped below m1.trigger.separation = {}.",
+                   "dropped below m1.trigger.separation = {}.  Radiation fields reset to "
+                   "the floor.",
                    it, grace::get_simulation_time(), sep, p.separation) ;
     }
 }

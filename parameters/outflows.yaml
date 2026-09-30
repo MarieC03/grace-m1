@@ -9,3 +9,43 @@ outflows:
     default: []
     description: >
       Names of detectors where mass fluxes should be computed
+
+  ye_bin_min:
+    type: double
+    default: 0.0
+    range: "[0,1]"
+    description: >
+      Lower edge of the composition histograms of the unbound mass flux
+      (Mdot_ye_*, and Mdot_yp_* in builds with muons).  The number of bins is
+      fixed at compile time (30); values outside the range go to the end bins,
+      so each set of bins always sums to Mdot_unbound_bern.
+
+  ye_bin_max:
+    type: double
+    default: 0.6
+    range: "[0,1]"
+    description: >
+      Upper edge of the same histograms.  The default [0, 0.6) gives round,
+      table-independent edges of width 0.02 and puts matter pinned at typical
+      table bounds (0.01, 0.5) into bins of its own.  Set both to the table
+      bounds to bin exactly the representable range instead.
+
+  ymu_bin_min:
+    type: double
+    default: 3.1622776601683794e-4
+    range: "(0,1]"
+    description: >
+      Lower edge of the Y_mu histogram of the unbound mass flux (Mdot_ymu_*,
+      builds with muons only).  The 24 bins are LOGARITHMIC between
+      ymu_bin_min and ymu_bin_max, so this edge must be positive; values
+      below it, including Y_mu <= 0, go to the first bin.  The default
+      10^-3.5 .. 10^-0.5 gives 8 bins per decade and puts a typical table
+      floor of 5e-4 in the second bin.
+
+  ymu_bin_max:
+    type: double
+    default: 0.31622776601683794
+    range: "(0,1]"
+    description: >
+      Upper edge of the Y_mu histogram; values above it go to the last bin.
+

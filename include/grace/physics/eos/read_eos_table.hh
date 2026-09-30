@@ -41,12 +41,12 @@ namespace grace {
 /**
  * @brief Reads the eos table and returns the tabulated_eos object.
  *
- * Pressure storage (log vs signed-linear) is controlled by the parameter
- * [eos.tabulated_eos.linear_pressure].  linear must be used for the
- * electron-free leptonic baryon table (negative spinodal pressure → log NaN);
- * the standalone tabulated EOS keeps log(P).  See eos.yaml.
+ * @param linear_pressure  store the signed pressure instead of log(P).  The
+ *        caller decides: the standalone tabulated EOS passes false, the
+ *        leptonic loader passes true (negative spinodal pressure) and applies
+ *        eos.tabulated_eos.linear_pressure itself.  See eos.yaml.
  */
-grace::tabulated_eos_t read_eos_table() ;
+grace::tabulated_eos_t read_eos_table(bool linear_pressure) ;
 
 /**
  * @brief Reads a GRACE-format cold table (v2 with `# key=value` metadata,

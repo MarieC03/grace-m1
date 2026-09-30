@@ -87,6 +87,16 @@ add_grace_test(hdf5_output_test test_hdf5_IO.cpp)
 # add_grace_test(eos_test test_eos.cpp)
 add_grace_test(metric_test test_metric.cpp)
 add_grace_test(c2p_test test_c2p.cpp)
+# Extra compile flags for c2p_test ONLY (e.g. -DGRACE_C2P_TEST_OPT=-O2): the
+# [determinism] cases are compiler-sensitive (hipcc 7.0.2 miscompiles the
+# leptonic forward+inverse kernel at -O3 on gfx942), so the optimisation level
+# is a test variable.  Appended after the build-type flags, so it wins.
+set(GRACE_C2P_TEST_OPT "" CACHE STRING "Extra compile options for c2p_test (e.g. -O2)")
+if(GRACE_C2P_TEST_OPT)
+    separate_arguments(_c2p_test_opt NATIVE_COMMAND "${GRACE_C2P_TEST_OPT}")
+    target_compile_options(c2p_test PRIVATE ${_c2p_test_opt})
+    message(STATUS "c2p_test: extra compile options ${_c2p_test_opt}")
+endif()
 add_grace_test(grmhd_kernels_test test_grmhd_kernels.cpp)
 add_grace_test(emf_reflux_test test_reflux.cpp)
 add_grace_test(flux_reflux_test test_flux_reflux.cpp)
@@ -108,6 +118,12 @@ add_grace_test(particle_advance_test      test_particle_advance.cpp)
 endif()
 
 if( GRACE_ENABLE_M1 )
+if(GRACE_HAVE_BNS_NURATES AND GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
+    add_kokkos_test(m1_pair_test test_m1_pairs.cpp)
+    add_test(NAME m1_pair_test COMMAND mpirun -n 1 ./m1_pair_test)
+    set_tests_properties(m1_pair_test PROPERTIES LABELS "physics;m1;pairs"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
 add_kokkos_test(m1_analytic_rates_test test_m1_analytic_rates.cpp)
 add_test(NAME m1_analytic_rates_test COMMAND mpirun -n 1 ./m1_analytic_rates_test)
 # Pure serial unit checks — pin OpenMP to one thread so the test is immune
@@ -137,6 +153,26 @@ if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
     add_kokkos_test(m1_backreaction_test test_m1_backreaction.cpp)
     add_test(NAME m1_backreaction_test COMMAND mpirun -n 1 ./m1_backreaction_test)
     set_tests_properties(m1_backreaction_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
+# Timescale beta-eq closure with the electron-only fallback: a successful joint
+# solve is untouched, a failed one is rescued with Ymu held (5 species only).
+if(GRACE_M1_NU_SPECIES EQUAL 5)
+    add_kokkos_test(betaeq_fallback_test test_betaeq_fallback.cpp)
+    add_test(NAME betaeq_fallback_test COMMAND mpirun -n 1 ./betaeq_fallback_test)
+    set_tests_properties(betaeq_fallback_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
+# Eikonal optical-depth relaxation kernel on a small flat block: tau must rise when
+# opacity appears (moving stars), fall when matter leaves, and stay a fixed point.
+if(GRACE_M1_OPTICAL_DEPTH)
+    add_kokkos_test(m1_optical_depth_test test_m1_optical_depth.cpp)
+    add_test(NAME m1_optical_depth_test COMMAND mpirun -n 1 ./m1_optical_depth_test)
+    set_tests_properties(m1_optical_depth_test PROPERTIES
         LABELS "fast;physics;m1"
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
@@ -181,6 +217,15 @@ add_test(NAME z4c_regrouping_test COMMAND mpirun -n 1 ./z4c_regrouping_test)
 
 add_kokkos_test(z4c_partner_equivariance_test test_z4c_partner_equivariance.cpp)
 add_test(NAME z4c_partner_equivariance_test COMMAND mpirun -n 1 ./z4c_partner_equivariance_test)
+
+# Leptonic EOS baryon pressure interpolated as ln(P_b + P_e(Y_e=Y_q)) on synthetic
+# in-memory tables: node agreement with the linear mode, power-law exactness, the
+# add_ele=false path, the positivity guard, P->T and cs2.  No table file needed.
+add_kokkos_test(leptonic_logpress_test test_leptonic_logpress.cpp)
+add_test(NAME leptonic_logpress_test COMMAND mpirun -n 1 ./leptonic_logpress_test)
+set_tests_properties(leptonic_logpress_test PROPERTIES
+    LABELS "fast;physics;eos"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 
 add_standalone_test(hermite_polynomial_test test_hermite_polynomial.cpp)
 
@@ -365,11 +410,39 @@ set_tests_properties(metric_test PROPERTIES LABELS "fast;coords")
 # shrinking argc; it does NOT rewrite argv, and Catch2 reads the first argc
 # entries of the original array.  So any Catch2 tag filter MUST come first and
 # --grace-parfile MUST come last, otherwise Catch2 sees "--grace-parfile" and
+# ---------------------------------------------------------------------------
+# M1 transport test problems -- the two-moment twins of the LBM suite, so the
+# two schemes can be compared on identical grids and end times.  Each parfile
+# header states what to look at; several are EXPECTED to show the closure
+# failing (crossed beams merge, the shadow fills in), which is the point.
+#   straight_beam  free streaming, closure exact          -> M1 should pass
+#   diffusion      optically thick, closure exact         -> M1 should pass
+#   crossed_beams  two beams overlap, closure ill-posed   -> beams merge
+#   shadow         beam into an absorber                  -> umbra fills in
+#   curved_beam    null geodesic on Schwarzschild (needs Kerr-Schild coords)
+# Run-only: they assert the binary completes.  The quantitative comparison is
+# in the headers and is done against the LBM twin of the same name.
+if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES GREATER_EQUAL 1)
+    set(_m1_runs m1_straight_beam m1_crossed_beams m1_diffusion m1_shadow)
+    # The curved beam needs a static Kerr-Schild background.
+    if(GRACE_METRIC_EVOL STREQUAL "COWLING")
+        list(APPEND _m1_runs m1_curved_beam)
+    endif()
+    foreach(_c ${_m1_runs})
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
+        # GRACE appends to existing scalar files, so start each run from a clean directory
+        add_test(NAME ${_c}_run
+            COMMAND sh -c "rm -rf output_scalar output_volume output_surface logs && exec mpirun -n 1 $<TARGET_FILE:grace> --grace-parfile ${CMAKE_CURRENT_BINARY_DIR}/configs/${_c}.yaml"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
+        set_tests_properties(${_c}_run PROPERTIES LABELS "m1;integration" TIMEOUT 900)
+    endforeach()
+endif()
+
 # errors.  "~[leptonic]" excludes the leptonic case (which needs eos_type =
 # leptonic + a 5-species build); it is a no-op tag in non-5-species builds
 # where that test case is compiled out.
 add_test(NAME gamma2_c2p_test COMMAND
-        mpirun -n 1 ./c2p_test "~[leptonic]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
+        mpirun -n 1 ./c2p_test "~[leptonic]~[tabulated]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
 set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 
 # Leptonic (4D, with muons) c2p round-trip.  Only meaningful in a 5-species
@@ -380,8 +453,36 @@ set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
 # label it "leptonic" so it can be excluded by label as well as by tag.
 if(GRACE_ENABLE_MUONS)
     add_test(NAME leptonic_c2p_test COMMAND
-            mpirun -n 1 ./c2p_test "[leptonic]~[halo]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
+            mpirun -n 1 ./c2p_test "[leptonic]~[halo]~[replay]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
     set_tests_properties(leptonic_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+
+    # The same suite with the baryon pressure interpolated as ln(P_b + P_e(Y_e=Y_q))
+    # (linear_pressure: false); runs the [logpress] case, which SKIPs in the linear run.
+    add_test(NAME leptonic_logp_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[leptonic]~[halo]~[replay]" --grace-parfile ./configs/c2p_test_leptonic_logp.yaml )
+    set_tests_properties(leptonic_logp_c2p_test PROPERTIES LABELS "physics;leptonic;eos")
+
+    # The two [determinism] cases (EOS entry points, full conservs_to_prims)
+    # again under the PRODUCTION atmosphere: rho_fl 1e-14, temp_fl on the table
+    # floor, entropy backup on -- the branches the round-trip yaml keeps off.
+    add_test(NAME halo_c2p_determinism_test COMMAND
+            mpirun -n 1 ./c2p_test "[determinism]~[tabulated]" --grace-parfile ./configs/c2p_test_halo.yaml )
+    set_tests_properties(halo_c2p_determinism_test PROPERTIES LABELS "physics;leptonic;determinism")
+
+    # Replay of cells lifted from a production output
+    # (scripts/extract_c2p_replay_cells.py).  Needs GRACE_C2P_REPLAY_FILE=<cell
+    # file> in the environment and a yaml matching the run's eos / atmosphere /
+    # c2p blocks; the case SKIPs (does not fail) without the file.
+    add_test(NAME replay_c2p_test COMMAND
+            mpirun -n 1 ./c2p_test "[replay]" --grace-parfile ./configs/c2p_test_replay.yaml )
+    set_tests_properties(replay_c2p_test PROPERTIES LABELS "physics;leptonic;replay")
+
+    # Tabulated-EOS twin of the EOS [determinism] case: the same forward+inverse
+    # code path on tabulated_eos_t.  In the muon block only because it shares
+    # the leptonic cases' helpers.
+    add_test(NAME tabulated_c2p_determinism_test COMMAND
+            mpirun -n 1 ./c2p_test "[tabulated]" --grace-parfile ./configs/c2p_test_tabulated.yaml )
+    set_tests_properties(tabulated_c2p_determinism_test PROPERTIES LABELS "physics;eos;determinism")
 
     # Halo-cell replay.  Excluded from the test above because it needs the
     # PRODUCTION atmosphere (rho_fl 1e-14, entropy backup on): under the shared

@@ -46,6 +46,7 @@
 
 #include <grace/config/config_parser.hh>
 #include <grace/physics/eas_kinds.hh>
+#include <grace/physics/neutrino_pair_collision.hh>
 #include <grace/system/runtime_functions.hh>
 
 #include <string>
@@ -71,6 +72,7 @@ struct test_eas_op {
             "m1", "id_type"
         ) ;
         if (_which_test == "straight_beam" or
+            _which_test == "crossed_beams" or
             _which_test == "curved_beam" or
             _which_test == "zero" )              // schema default; rates stay floored
         {
@@ -305,10 +307,56 @@ enum betaeq_err_enum_t : uint8_t {
     BETAEQ_RESIDUAL_LARGE,
     #ifdef GRACE_ENABLE_MUONS
     BETAEQ_MUON_SECTOR,        //!< the failing solve included the muon sector
+    //! NOT a failure: the joint solve failed and the electron-only retry (Ymu held)
+    //! succeeded (m1.eas.betaeq_partial_e_fallback).  Counted separately.
+    BETAEQ_PARTIAL_E_FALLBACK,
+    //! Qualifier on PARTIAL_E_FALLBACK (m1.eas.betaeq_fallback_ymu_floor): the muon
+    //! equilibrium lay below the Ymu table floor, so Ymu was held at the floor.
+    BETAEQ_YMU_FLOOR_HOLD,
     #endif
     BETAEQ_N_ERR
 } ;
 using betaeq_err_t = bitset_t<BETAEQ_N_ERR> ;
+
+//! Closure solve of the "timescale" policy.  solve(electron_only, berr, T, Ye, Ymu)
+//! is the joint (Ye, Ymu, T) solve for electron_only = false and the Ymu-held one
+//! otherwise.  A joint solve that succeeds is returned exactly as before; only a
+//! failed one is retried electron-only, and only when e_fallback is set.  A failed
+//! retry leaves berr as the joint solve left it.
+template <typename solve_t>
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE bool
+betaeq_solve_with_e_fallback( solve_t const& solve, bool const e_fallback
+                            , betaeq_err_t& berr
+                            , double& T_eq, double& Ye_eq, double& Ymu_eq )
+{
+    betaeq_err_t const berr_in = berr ;
+    if ( solve(false, berr, T_eq, Ye_eq, Ymu_eq) ) return true ;
+    #if defined(GRACE_ENABLE_MUONS) && GRACE_M1_NU_SPECIES >= 5
+    if ( e_fallback ) {
+        betaeq_err_t berr_e = berr_in ;
+        double T_e = T_eq, Ye_e = Ye_eq, Ymu_e = Ymu_eq ;
+        if ( solve(true, berr_e, T_e, Ye_e, Ymu_e) ) {
+            T_eq = T_e ; Ye_eq = Ye_e ; Ymu_eq = Ymu_e ;
+            berr = berr_in ; berr.set(BETAEQ_PARTIAL_E_FALLBACK) ;
+            if ( berr_e.test(BETAEQ_YMU_FLOOR_HOLD) ) berr.set(BETAEQ_YMU_FLOOR_HOLD) ;
+            return true ;
+        }
+    }
+    #else
+    (void)e_fallback ; (void)berr_in ;
+    #endif
+    return false ;
+}
+
+//! Ymu at which the electron-only retry holds the muon sector.  The muon-lepton
+//! residual f1 = Ymu + Y_numu,eq - Y_numubar,eq - Y_lmu rises with Ymu, so
+//! f1(floor) > 0 means the muon equilibrium lies below the table floor.
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
+betaeq_held_ymu( bool const floor_variant, double const Ymu_old
+               , double const ymu_floor, bool const f1_ok, double const f1_at_floor )
+{
+    return ( floor_variant && f1_ok && f1_at_floor > 0.0 ) ? ymu_floor : Ymu_old ;
+}
 
 
 //------------------------------------------------------------------------------
@@ -334,8 +382,13 @@ struct neutrinos_eas_op
         bremsstrahlung(grace::get_param<bool>("m1", "eas", "bremsstrahlung")),
         pair_annihilation(grace::get_param<bool>("m1", "eas", "pair_annihilation")),
         apply_temp_correction(grace::get_param<bool>("m1", "eas", "temperature_correction")),
+        temp_correction_emission(grace::get_param<bool>("m1", "eas", "temperature_correction_emission")),
         use_weakhub(grace::weakhub::weakhub_enabled_from_params()),
         betaeq_mode(get_betaeq_mode()),
+        pair_treatment(get_pair_treatment()),
+        pair_order(get_pair_quadrature_order()),
+        betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
+        betaeq_ymu_floor(grace::get_param<bool>("m1", "eas", "betaeq_fallback_ymu_floor")),
         tau_kind(get_tau_policy_kind()),
         weakhub(grace::weakhub::get_device_handle()),
         // M1 trigger not yet fired: build the fugacity state for the
@@ -801,6 +854,34 @@ struct neutrinos_eas_op
         #endif /* GRACE_M1_NU_SPECIES >= 3 */
     }
 
+    #if defined(GRACE_ENABLE_MUONS) && GRACE_M1_NU_SPECIES >= 5
+    //! Muon-lepton residual f1 of the joint solve at (Ye_old, Ymu = table floor, T_old),
+    //! with the same lepton target as m1_get_beta_equilibrium.  False on EOS failure.
+    GRACE_HOST_DEVICE
+    bool betaeq_muon_residual_at_floor(
+        fugacity_state const& F,
+        VEC(const int i, const int j, const int k), int64_t q,
+        const double* xyz, double T_old, double Ye_old, double Ymu_old,
+        double& f1 ) const
+    {
+        metric_array_t metric ;
+        FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
+        const double oosg = 1.0 / metric.sqrtg() ;
+        const double D    = state(VEC(i,j,k),DENS_,q) * oosg ;
+        if (!(D > 0.0)) return false ;
+        const double Ylmu = Ymu_old + ( state(VEC(i,j,k), m1_nrad_idx<2>(), q)
+                                      - state(VEC(i,j,k), m1_nrad_idx<3>(), q) ) * oosg / D ;
+        tau_policy_fixed tauf ;
+        tauf.tau = F.tau_n ;
+        double f[3] ;
+        if (!betaeq_residuals(F.rho_code, xyz, tauf, Ye_old, eos.get_c2p_ymu_min(), T_old,
+                              /*Yle=*/0.0, Ylmu, /*u=*/0.0, f, beq_mode_t::FULL))
+            return false ;
+        f1 = f[1] ;
+        return ::isfinite(f1) ;
+    }
+    #endif
+
     // This is only beta eq for ye
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE bool find_ye_betaeq(double rho, double T, double& Ye0, double& Ymu0,
                                                               betaeq_err_t& berr) const {
@@ -832,6 +913,60 @@ struct neutrinos_eas_op
         return true;
     }
 
+    // New pair rates bypass charged-muon gates and ordinary-rate corrections.
+    GRACE_HOST_DEVICE void prepare_pairs(fugacity_state const& F, nu_rates_all_out& all,
+        VEC(const int i, const int j, const int k), int64_t q) const {
+        #if GRACE_M1_NU_SPECIES >= 3
+        for(int a=PAIR_T_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
+        if(pair_treatment==pair_treatment_t::legacy) return;
+        pairs::material const m{F.temp_mev,F.mu_e,F.nb,F.Xn,F.Xp};
+        aux(VEC(i,j,k),PAIR_T_,q)=m.T;
+        aux(VEC(i,j,k),PAIR_MUE_,q)=m.mu_e;
+        aux(VEC(i,j,k),PAIR_NB_,q)=m.nb;
+        aux(VEC(i,j,k),PAIR_YN_,q)=m.yn;
+        aux(VEC(i,j,k),PAIR_YP_,q)=m.yp;
+        int const active=int(pair_annihilation)+2*int(bremsstrahlung)+4*int(plasmon_decay);
+        if(pair_treatment==pair_treatment_t::evolved) {
+            aux(VEC(i,j,k),PAIR_ACTIVE_,q)=active;
+            return;
+        }
+        if(active==0) return;
+        double const mu=F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp;
+        pairs::kernel kernel;
+        if(!kernel.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,
+                        Kokkos::fmax(m.T,Kokkos::fabs(mu)/5)))
+            Kokkos::abort("Invalid equilibrium pair kernel");
+        auto const add=[&](int s, double multiplicity, double eta) {
+            double f[2][pairs::max_order], n[2]={0,0}, J[2]={0,0};
+            for(int a=0;a<2;++a) for(int l=0;l<kernel.g.n;++l) {
+                f[a][l]=pairs::occupation(kernel.g.e[l]/m.T-(a==0?eta:-eta));
+                n[a]+=kernel.g.w[l]*f[a][l];
+                J[a]+=kernel.g.w[l]*kernel.g.e[l]*f[a][l];
+            }
+            auto const ps=pairs::evaluate(kernel,f[0],f[1]);
+            for(int a=0;a<2;++a) {
+                if(!(n[a]>0 && J[a]>0))
+                    Kokkos::abort("Equilibrium pair FD moments underflow: state outside the supported numerical range");
+                // The aggregate receives both orientations, each with half
+                // its statistical weight. Muonic species stay separate.
+                int const dst=s==NUX?NUX:s+a;
+                double const g=s==NUX?multiplicity/2:1;
+                all.out[dst].eta_E+=g*ps.emission[a]*pairs::energy_unit/pairs::time_unit;
+                all.out[dst].eta_N+=g*ps.emission_n[a]*pairs::number_unit/pairs::time_unit;
+                double const weight=s==NUX?0.5:1;
+                all.out[dst].kappa_a+=weight*ps.loss[a]/J[a]/pairs::time_unit;
+                all.out[dst].kappa_n+=weight*ps.loss_n[a]/n[a]/pairs::time_unit;
+            }
+        };
+        #if GRACE_M1_NU_SPECIES >= 5
+        add(NUMU,1,mu/m.T);
+        add(NUX,2,0);
+        #else
+        add(NUX,4,0);
+        #endif
+        #endif
+    }
+
     // Transparent low-density cell: floor every EAS rate output without touching
     // the EOS.  1e-60 not 0 so log-scale plots of kappa work; this path returns
     // before the temperature correction, so the value cannot be amplified.
@@ -840,6 +975,9 @@ struct neutrinos_eas_op
     // diagnostics from F, instead of the transparent-cell placeholders.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     void floor_rates(VEC(const int i, const int j, const int k), int64_t q) const {
+        #if GRACE_M1_NU_SPECIES >= 3
+        for(int a=PAIR_T_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
+        #endif
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS1_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN1_,q)=weakhub::kappa_floor_code;
         #endif
@@ -971,16 +1109,19 @@ struct neutrinos_eas_op
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
             #if GRACE_M1_NU_SPECIES >= 1
             eps_rad[0] = fluid_frame_eps_mev<0>(VEC(i,j,k), q, metric) ;
-            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
+            #endif
+            // Species index 1 exists only from 3 species on: at 1 species
+            // m1_erad_idx<1>() is N_HRSC_CC, i.e. the first metric slot.
             #if GRACE_M1_NU_SPECIES >= 5
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
             eps_rad[2] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             eps_rad[3] = fluid_frame_eps_mev<3>(VEC(i,j,k), q, metric) ;
             eps_rad[4] = fluid_frame_eps_mev<4>(VEC(i,j,k), q, metric) ;
-            #else
+            #elif GRACE_M1_NU_SPECIES >= 3
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
             // 3-species: evolved index 2 is NUX -> rates slot NUX (4).
             eps_rad[NUX] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
             #endif
-            #endif // GRACE_M1_NU_SPECIES >= 1
         }
 
         // The rate source (weakhub table vs analytic) and the tau policy are
@@ -992,9 +1133,16 @@ struct neutrinos_eas_op
         auto const launch = [&](auto const& tau_policy) {
             F = make_fugacity_state(
                 eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy);
+            bool const legacy=pair_treatment==pair_treatment_t::legacy;
+            if(!legacy) {
+                // Both pair and charged-current fixed points must agree.
+                // Keep the historical +/-5 clamp only in legacy mode.
+                F.eta_nu[NUMU]=(F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
+                F.eta_nu[NUMUBAR]=-F.eta_nu[NUMU];
+            }
             return (use_weakhub && weakhub.valid)
-                ? compute_all_species_weakhub(weakhub, F, plasmon_decay, bremsstrahlung, pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad)
-                : compute_all_species(F, beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad);
+                ? compute_all_species_weakhub(weakhub, F, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission)
+                : compute_all_species(F, beta_decay, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission);
         };
 
         auto const evaluate_rates = [&]() {
@@ -1052,6 +1200,7 @@ struct neutrinos_eas_op
         #endif
 
         nu_rates_all_out all = evaluate_rates();
+        prepare_pairs(F,all,VEC(i,j,k),q);
 
         #ifdef GRACE_M1_DIAGNOSTICS
         // Carrier for the beta_eq_tscale diagnostic.  Large sentinel = "never
@@ -1071,21 +1220,16 @@ struct neutrinos_eas_op
         // re-evaluate the rates at the equilibrated state.
         // ------------------------------------------------------------------
         if (betaeq_mode == betaeq_mode_t::timescale && dt > 0.0) {
-            double tau_beta_min = 1.0e300 ;
-            for (int s = 0; s < NUMSPECIES; ++s) {
-                const double ka = all.out[s].kappa_a ;
-                const double ks = all.out[s].kappa_s ;
-                const double tau_beta =
-                    1.0 / Kokkos::sqrt(ka*(ka + ks) + 1.0e-45) ;
-                tau_beta_min = Kokkos::fmin(tau_beta_min, tau_beta) ;
-            }
+            // Only lepton-carrying species open the gate (FIL): a trapped nux
+            // alone must not trigger a Ye/Ymu equilibration.
+            const double tau_beta_min = betaeq_tau_min(all) ;
             const double beta_equil_tscale = tau_beta_min / dt ;
             #ifdef GRACE_M1_DIAGNOSTICS
             betaeq_tscale_diag = beta_equil_tscale ;
             #endif
 
-            // Radiation number floors (undensitized), mirroring the
-            // reference implementation's N > 1e-16 guards.
+            // Radiation number floors (undensitized) for the species whose N
+            // enters the lepton targets Yle/Ylmu; nux contributes energy only.
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
             const double oosqrtg = 1.0 / metric.sqrtg() ;
@@ -1093,28 +1237,50 @@ struct neutrinos_eas_op
                 state(VEC(i,j,k), m1_nrad_idx<0>(), q)*oosqrtg > 1.0e-16 ;
             #if GRACE_M1_NU_SPECIES >= 3
             N_ok = N_ok
-                && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16
-                && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16 ;
+                && state(VEC(i,j,k), m1_nrad_idx<1>(), q)*oosqrtg > 1.0e-16 ;
             #endif
             #if GRACE_M1_NU_SPECIES >= 5
-            // For 3 species idx<2> is NUX, so the guard above already covers all
-            // species; for 5 species idx<2> is numu, so we must additionally
-            // require ν̄_μ (idx 3, used by the muonic beta-eq below) and ν_x
-            // (idx 4) to be populated -- matching the all-species intent.
             N_ok = N_ok
-                && state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosqrtg > 1.0e-16
-                && state(VEC(i,j,k), m1_nrad_idx<4>(), q)*oosqrtg > 1.0e-16 ;
+                && state(VEC(i,j,k), m1_nrad_idx<2>(), q)*oosqrtg > 1.0e-16
+                && state(VEC(i,j,k), m1_nrad_idx<3>(), q)*oosqrtg > 1.0e-16 ;
             #endif
 
             if (beta_equil_tscale < 1.0 && N_ok) {
                 const double T_old = T, Ye_old = Ye, Ymu_old = Ymu ;
                 double T_eq = T_old, Ye_eq = Ye_old, Ymu_eq = Ymu_old ;
-                const bool eq_ok = m1_get_beta_equilibrium(
-                    F, VEC(i,j,k), q, xyz,
-                    T_old, Ye_old, Ymu_old, T_eq, Ye_eq, Ymu_eq, berr) ;
+                auto const solve = [&](bool const electron_only, betaeq_err_t& be,
+                                       double& Te, double& Yee, double& Ymue) {
+                    if ( !electron_only )
+                        return m1_get_beta_equilibrium(
+                            F, VEC(i,j,k), q, xyz, T_old, Ye_old, Ymu_old, Te, Yee, Ymue, be,
+                            beq_mode_t::FULL) ;
+                    // Retry with Ymu held: at the table floor when the muon equilibrium
+                    // lies below it (floor variant), otherwise at its current value.
+                    double Ymu_hold = Ymu_old ;
+                    #if defined(GRACE_ENABLE_MUONS) && GRACE_M1_NU_SPECIES >= 5
+                    bool floor_hold = false ;
+                    if ( betaeq_ymu_floor ) {
+                        double f1 = 0.0 ;
+                        bool const f1_ok = betaeq_muon_residual_at_floor(
+                            F, VEC(i,j,k), q, xyz, T_old, Ye_old, Ymu_old, f1) ;
+                        Ymu_hold = betaeq_held_ymu(true, Ymu_old, eos.get_c2p_ymu_min(), f1_ok, f1) ;
+                        floor_hold = f1_ok && f1 > 0.0 ;
+                    }
+                    #endif
+                    bool const ok = m1_get_beta_equilibrium(
+                        F, VEC(i,j,k), q, xyz, T_old, Ye_old, Ymu_hold, Te, Yee, Ymue, be,
+                        beq_mode_t::PARTIAL_E) ;
+                    #if defined(GRACE_ENABLE_MUONS) && GRACE_M1_NU_SPECIES >= 5
+                    if ( ok && floor_hold ) be.set(BETAEQ_YMU_FLOOR_HOLD) ;
+                    #endif
+                    return ok ;
+                } ;
+                const bool eq_ok = betaeq_solve_with_e_fallback(
+                    solve, betaeq_e_fallback, berr, T_eq, Ye_eq, Ymu_eq) ;
 
                 // On solver failure keep the current state (the reference
-                // likewise falls through on GSL non-convergence).
+                // likewise falls through on GSL non-convergence).  The optional
+                // electron-only retry holds Ymu, as FIL's eta_numu = 0 gate does.
                 if (eq_ok) {
                     if (beta_equil_tscale < 0.5) {
                         // Fast equilibration: full equilibrium values.
@@ -1278,8 +1444,13 @@ struct neutrinos_eas_op
   double eas_rho_min;   // rho_fl * (1 + atmo_tol) from grmhd.atmosphere
   bool beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation;
   bool apply_temp_correction;
+  bool temp_correction_emission;   // also scale nue/nuebar Q,R by the T_nu factor (FIL Weakhub)
   bool use_weakhub;
   betaeq_mode_t betaeq_mode;
+  pair_treatment_t pair_treatment;
+  int pair_order;
+  bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
+  bool betaeq_ymu_floor;    // ... held at the table floor when the muon equilibrium is below it
   tau_policy_kind_t tau_kind;
   //! Fugacity-only mode: write diagnostics from F, floor the rates, skip the
   //! rate evaluation and everything downstream of it.

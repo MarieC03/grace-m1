@@ -1,0 +1,378 @@
+# Equal-mass BHBlp BNS from FUKA, based on the FIL Mass139/B16 seed run.
+# Physics: GRMHD + Z4c, finite-temperature BHBlp EOS, 1e16 G seeded B field.
+# No M1/radiation section is present; run this with GRACE_ENABLE_M1=OFF.
+name: "fuka_bns_bhblp_m139_B16_noM1"
+
+amr: {
+  npoints_block_x: 32,
+  npoints_block_y: 32,
+  npoints_block_z: 32,
+
+  xmin: -2048.0,
+  xmax:  2048.0,
+  ymin: -2048.0,
+  ymax:  2048.0,
+  zmin:     0.0,
+  zmax:  2048.0,
+
+  reflection_symmetries: {
+    z: true
+  },
+
+  n_ghostzones: 4,
+  initial_refinement_level: 2,
+  max_refinement_level: 8,
+
+  # Static wave-zone skeleton, following the FIL CarpetRegrid2 radii.
+  # The finest stellar/remnant level is then supplied dynamically by the
+  # binary_tracker AMR criterion below.
+  n_fmr_boxes: 5,
+  fmr_boxes: [
+    {
+      target_level_delta: 1,
+      x_min: -1024,
+      x_max:  1024,
+      y_min: -1024,
+      y_max:  1024,
+      z_min:     0,
+      z_max:  1024
+    },
+
+    {
+      target_level_delta: 2,
+      x_min: -512,
+      x_max:  512,
+      y_min: -512,
+      y_max:  512,
+      z_min:    0,
+      z_max:  512
+    },
+
+    {
+      target_level_delta: 3,
+      x_min: -256,
+      x_max:  256,
+      y_min: -256,
+      y_max:  256,
+      z_min:    0,
+      z_max:  256
+    },
+
+    {
+      target_level_delta: 4,
+      x_min: -128,
+      x_max:  128,
+      y_min: -128,
+      y_max:  128,
+      z_min:    0,
+      z_max:  128
+    },
+
+    {
+      target_level_delta: 5,
+      x_min: -90,
+      x_max:  90,
+      y_min: -90,
+      y_max:  90,
+      z_min:   0,
+      z_max:  90
+    }
+  ],
+
+  regrid_every: 64,
+  regrid_at_preinitial: true,
+  preinitial_regrid_depth: 3,
+  regrid_at_postinitial: true,
+  postinitial_regrid_depth: 2,
+
+  refinement_criterion: "binary_tracker",
+  binary_tracker_amr_criterion: {
+    compact_object_1_refine_radius_factor: 2.5,
+    compact_object_2_refine_radius_factor: 2.5,
+    compact_object_1_coarsen_radius_factor: 5.0,
+    compact_object_2_coarsen_radius_factor: 5.0,
+    post_merger_refine_radius: 32,
+    post_merger_coarsen_radius: 60
+  }
+}
+
+IO: {
+  volume_output_cell_variables: ["hydro", "metric"],
+  volume_output_base_directory: "output_volume",
+  volume_output_base_filename: "volume_out",
+  volume_output_every: 21320,
+
+  plane_surface_output_cell_variables: ["metric", "hydro", "c2p_err"],
+  surface_output_base_directory: "output_surface",
+  surface_output_base_filename: "surface_out",
+  plane_surface_output_every: 256,
+  xy_plane_offset: 0.2,
+  xz_plane_offset: 0.0,
+  yz_plane_offset: 0.0,
+
+  sphere_surface_output_cell_variables: ["metric", "hydro"],
+  sphere_surface_output_base_directory: "output_spheres",
+  sphere_surface_output_every: 512,
+  n_output_spheres: 7,
+  output_sphere_names: [
+    "sphere_35", "sphere_300", "sphere_400", "sphere_500",
+    "sphere_600", "sphere_700", "sphere_1000"
+  ],
+
+  log_output_base_directory: "logs",
+  log_output_base_filename: "grace_log",
+  scalar_output_base_directory: "output_scalar",
+  scalar_output_base_filename: "",
+
+  do_initial_output: true,
+  info_output_every: 16,
+  info_output_max_reductions: ["rho", "temperature"],
+  info_output_min_reductions: ["alp"],
+  info_output_norm2_reductions: ["z4c_H"],
+
+  scalar_output_every: 32,
+  scalar_output_minmax: ["rho", "press", "eps", "ye", "temperature", "entropy", "alp", "Bdiv"],
+  scalar_output_norm2: ["z4c_H", "Bdiv"],
+  scalar_output_integral: ["dens", "c2p_dens_corr", "Bdiv"],
+
+  output_use_hdf5: true,
+  hdf5_compression_level: 0,
+  hdf5_chunk_size: 8192,
+  output_extra_quantities: true,
+  performance_metric: "both",
+
+  # Shared cadence for GW integrals and outflow diagnostics.
+  diagnostic_output_every: 128
+}
+
+system: {
+  master_rank: 0,
+  console_log_level: "info",
+  file_log_level: "verbose",
+  flush_logs_based_on_severity: true,
+  flush_severity_level: "warn",
+  flush_logs_based_on_time: true,
+  flush_time: 60,
+  n_device_streams: 4
+}
+
+evolution: {
+  time_stepper: "rk3",
+  cfl_factor: 0.25,
+  timestep_selection_mode: "automatic",
+  timestep: 0.1,
+  termination_condition: "walltime",
+  final_time: 203000,
+  final_iteration: 360066,
+  final_walltime: 49.5
+}
+
+nan_check: {
+  enabled: true,
+  check_before_first_step: true,
+  check_every: 32,
+  action: "terminate"
+}
+
+coordinate_system: {
+  is_kerr_schild: false,
+  bh_spin: 0.0,
+  mass_scale: 1.0
+}
+
+grmhd: {
+  bc_kind: "outgoing",
+  id_type: "fuka",
+
+  fuka: {
+    filename: "BNS_ECC_RED.BHBlp.30.2.0.0.2.78.q1.0.0.11.info",
+    id_dir: "/path/fuka/fukaID/BNS_BHBL_M139Msun",
+    fuka_id_type: "BNS",
+    set_shift_to_zero: true
+  },
+
+  atmosphere: {
+    rho_fl: 1e-14,
+    temp_fl: 0.01
+  },
+
+  excision: {
+    excision_criterion: "lapse",
+    excision_lapse: 0.08
+  },
+
+  c2p: {
+    tolerance: 1.e-9,
+    use_c2p_entropy_backup: true
+  },
+
+  B_field_initialization: "from_Avec",
+
+  Avec_ID: {
+    cutoff_var: "press",
+    cutoff_fact: 0.04,
+    A_n: 2,
+    Bmax_target: 1.197285252143398e-04, # 1e16 G
+    is_binary: true,
+    x_c_1: -15.1,
+    x_c_2:  15.1,
+    radius_1: 12,
+    radius_2: 12
+  }
+}
+
+b_field_injection: {
+  enable: false,
+  trigger_time: 0.0
+}
+
+eos: {
+  eos_type: "tabulated",
+  tabulated_eos: {
+    table_filename: "/path/EoS/BHB_lpEOS_rho234_temp180_ye60_version_1.02_20140422.h5",
+    table_format: "stellarcollapse",
+    cold_table_filename: "/path/EoS/BHB_lpEOS_rho234_temp180_ye60_version_1.02_20140422_cold_mu.grace",
+    baryon_mass: "m_u"
+  },
+  eps_maximum: 10.0,
+  entropy_minimum: 1.e-13
+}
+
+z4c: {
+  bc_kind: "sommerfeld",
+  kappa_1: 0.02,
+  kappa_2: 0.0,
+  eps_diss: 0.2,
+  eta: 0.6,
+  eta_damp_radius: 50,
+  kappa_damp_radius: 50,
+  theta_damp_radius: 1.e99,
+  chi_floor: 1.e-11,
+  alp_min: 1.e-11,
+  is_vacuum: false,
+  adaptive_eta: false,
+  adaptive_eta_a: 1,
+  adaptive_eta_b: 2
+}
+
+spherical_surfaces: {
+  n_surfaces: 7,
+
+  # FIL used the Cactus healpix thorn. This GRACE version only exposes
+  # sampling_policy: "uniform" for registered spherical detectors, so these
+  # are the GRACE-native GW/outflow sphere analogues of the FIL healpix slices.
+  spherical_detectors: [
+    {
+      name: "sphere_35",
+      radius: 35,
+      sampling_policy: "uniform",
+      resolution: 64
+    },
+
+    {
+      name: "sphere_300",
+      radius: 300,
+      sampling_policy: "uniform",
+      resolution: 91
+    },
+
+    {
+      name: "sphere_400",
+      radius: 400,
+      sampling_policy: "uniform",
+      resolution: 91
+    },
+
+    {
+      name: "sphere_500",
+      radius: 500,
+      sampling_policy: "uniform",
+      resolution: 91
+    },
+
+    {
+      name: "sphere_600",
+      radius: 600,
+      sampling_policy: "uniform",
+      resolution: 91
+    },
+
+    {
+      name: "sphere_700",
+      radius: 700,
+      sampling_policy: "uniform",
+      resolution: 91
+    },
+
+    {
+      name: "sphere_1000",
+      radius: 1000,
+      sampling_policy: "uniform",
+      resolution: 64
+    }
+  ]
+}
+
+gw_integrals: {
+  detector_names: ["sphere_300", "sphere_400", "sphere_500", "sphere_600", "sphere_700"]
+}
+
+outflows: {
+  # FIL outflow_plusplus used healpix detector ids 1..4, i.e. the
+  # 300, 500, 700 and 1000 radius slices. The 35-radius slice was present
+  # in healpix output but not used by outflow_plusplus.
+  detector_names: ["sphere_300", "sphere_500", "sphere_700", "sphere_1000"]
+}
+
+adm_integrals: {
+  detector_names: ["sphere_300", "sphere_700"]
+}
+
+bh_diagnostics: {
+  detector_names: []
+}
+
+co_tracker: {
+  n_cos: 2,
+  update_every: 1,
+
+  # When the tracker separation falls below this coordinate distance,
+  # AMR switches from two moving NS boxes to the central post-merger box.
+  # For this ID the initial separation is about 30.2 and R_NS is about 12,
+  # so 20 is a post-contact/plunge switch before the two individual
+  # centers become unreliable.
+  merge_distance: 20,
+
+  cos: [
+    {
+      kind: "ns",
+      name: "ns_1",
+      x_i: -15.1,
+      radius: 12
+    },
+
+    {
+      kind: "ns",
+      name: "ns_2",
+      x_i: 15.1,
+      radius: 12
+    }
+  ]
+}
+
+mhd_diagnostics: {
+  compute_energy_every: 128,
+  compute_other_diagnostics_every: 128,
+  disk_mass_rho_threshold: 6.475995334760533e-07
+}
+
+checkpoints: {
+  checkpoint_dir: "../checkpoint",
+  interval_kind: "walltime",
+  walltime_interval: 1,
+  iteration_interval: 1000,
+  time_interval: 204,
+  max_n_checkpoints: 8,
+  checkpoint_at_startup: false,
+  checkpoint_at_termination: true
+}

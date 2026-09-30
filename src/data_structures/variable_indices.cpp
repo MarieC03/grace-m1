@@ -485,6 +485,15 @@ void register_variables() {
     register_aux_scalar(ETAN5_,"eta_n5") ;
     #endif
     register_aux_scalar(BETAEQ_ERR_,"betaeq_err") ;
+    #if GRACE_M1_NU_SPECIES >= 3
+    register_aux_scalar(PAIR_T_,"pair_T") ;
+    register_aux_scalar(PAIR_MUE_,"pair_mu_e") ;
+    register_aux_scalar(PAIR_NB_,"pair_nb") ;
+    register_aux_scalar(PAIR_YN_,"pair_yn") ;
+    register_aux_scalar(PAIR_YP_,"pair_yp") ;
+    register_aux_scalar(PAIR_ACTIVE_,"pair_active") ;
+    register_aux_scalar(PAIR_RES_,"pair_residual") ;
+    #endif
     #ifdef GRACE_M1_PHOTONS
     register_aux_scalar(KAPPAAPH_,"kappa_a_ph") ;
     register_aux_scalar(KAPPASPH_,"kappa_s_ph") ;
@@ -517,6 +526,15 @@ void register_variables() {
     register_aux_scalar(ABAR_,"Abar") ;
     register_aux_scalar(ZBAR_,"Zbar") ;
     register_aux_scalar(BETAEQ_TSCALE_,"beta_eq_tscale") ;
+    register_aux_scalar(M1_HEATCOOL_,     "m1_heatcool") ;
+    register_aux_scalar(M1_LEPTON_SOURCE_,"m1_lepton_source") ;
+    #if GRACE_M1_NU_SPECIES >= 5
+    register_aux_scalar(M1_MUON_SOURCE_,  "m1_muon_source") ;
+    #endif
+    register_aux_scalar(M1_BR_REJECT_,    "m1_br_reject") ;
+    register_aux_scalar(M1_IMPLICIT_ERR_, "m1_implicit_err") ;
+    register_aux_scalar(M1_IMPLICIT_RES_, "m1_implicit_res") ;
+    register_aux_scalar(M1_EXPLICIT_STEP_, "m1_explicit_step") ;
     #endif
     #endif
 

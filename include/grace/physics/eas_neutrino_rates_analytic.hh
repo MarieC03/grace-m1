@@ -628,6 +628,24 @@ struct nu_rates_all_out {
     std::array<nu_rates_out, NUMSPECIES> out;
 };
 
+// Fastest beta-equilibration timescale 1/sqrt(ka (ka + ks)) over the species
+// that carry lepton number (FIL: nux excluded; only nue/nuebar at 3 species).
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+double betaeq_tau_min(const nu_rates_all_out& all) {
+#if GRACE_M1_NU_SPECIES >= 5
+    constexpr int n_lepton = NUX ;    // NUE, NUEBAR, NUMU, NUMUBAR
+#else
+    constexpr int n_lepton = NUMU ;   // NUE, NUEBAR
+#endif
+    double tau_min = 1.0e300 ;
+    for (int s = 0; s < n_lepton; ++s) {
+        const double ka = all.out[s].kappa_a ;
+        const double ks = all.out[s].kappa_s ;
+        tau_min = Kokkos::fmin(tau_min, 1.0 / Kokkos::sqrt(ka*(ka + ks) + 1.0e-45)) ;
+    }
+    return tau_min ;
+}
+
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_charged_current_absorption_opacity(const fugacity_state& F, rates_accum& out) {
     using namespace nu_constants;
@@ -944,7 +962,8 @@ nu_rates_all_out compute_all_species_weakhub(
     const double* xyz_code,
     const tau_policy_t& tau_policy,
     bool apply_temp_correction,
-    const double* eps_rad)
+    const double* eps_rad,
+    bool temp_correction_emission = false)
 {
     //const auto tbl = weakhub.lookup(F.rho_cgs, F.temp_mev, F.ye, F.ymu);
     const auto tbl = weakhub.lookup(F.rho_code, F.temp_mev, F.ye, F.ymu);
@@ -1033,12 +1052,16 @@ nu_rates_all_out compute_all_species_weakhub(
                 // numu_bar_fact = 1.0).  The table opacities already carry the
                 // spectral information, so scaling would double-count.
             } else {
-                // NUE, NUEBAR
-                rates.Q[s]       *= fact;
-                rates.R[s]       *= fact;
+                // NUE, NUEBAR: hot neutrinos are absorbed more strongly by cold matter.
+                // FIL's Weakhub routine also scales Q and R; here that is opt-in, since
+                // what the matter emits depends on the matter alone.
                 rates.kappa_a[s] *= fact;
                 rates.kappa_n[s] *= fact;
                 rates.kappa_s[s] *= fact;
+                if (temp_correction_emission) {
+                    rates.Q[s] *= fact;
+                    rates.R[s] *= fact;
+                }
             }
             }
         }
@@ -1086,7 +1109,8 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     const double* xyz_code,
     const tau_policy_t& tau_policy,
     bool apply_temp_correction,
-    const double* eps_rad = nullptr)
+    const double* eps_rad = nullptr,
+    bool temp_correction_emission = false)
 {
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
 #if GRACE_M1_NU_SPECIES >= 5
@@ -1202,11 +1226,15 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
             else if (s == NUX) {
                 rates.kappa_s[s] *= fact;
             } else {
-                rates.Q[s]       *= fact;
-                rates.R[s]       *= fact;
+                // Hot neutrinos are absorbed more strongly by cold matter.  FIL's
+                // 'corrected' routine also scales Q and R; here that is opt-in.
                 rates.kappa_a[s] *= fact;
                 rates.kappa_n[s] *= fact;
                 rates.kappa_s[s] *= fact;
+                if (temp_correction_emission) {
+                    rates.Q[s] *= fact;
+                    rates.R[s] *= fact;
+                }
             }
         }
     }

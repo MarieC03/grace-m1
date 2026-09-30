@@ -882,11 +882,12 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
             // log(P) would be NaN).  Otherwise store log(P) as before.
             double const P = alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) * uconv.pressure ;
             if (!linear_pressure && P <= 0.0) {
+                // Only the standalone tabulated EOS reads with log(P); the leptonic
+                // loader always reads signed.
                 ERROR("Non-positive pressure (" << P << " code) in EOS table at "
-                      "(rho=" << rhoL << ", j=" << j << ", k=" << k << ") with "
-                      "eos.tabulated_eos.linear_pressure=false.  Electron-free / "
-                      "leptonic baryon tables have negative spinodal pressure; set "
-                      "eos.tabulated_eos.linear_pressure=true.") ;
+                      "(rho=" << rhoL << ", j=" << j << ", k=" << k << ").  "
+                      "eos_type=tabulated needs a strictly positive (with-electron) "
+                      "table; electron-free baryon tables are for eos_type=leptonic.") ;
             }
             alltables(i,j,k,tabulated_eos_t::TEOS_VIDX::TABPRESS) = linear_pressure ? P : log(P) ;
             pressL = P ;
@@ -1035,12 +1036,11 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
 
 }
 
-grace::tabulated_eos_t read_eos_table()
+grace::tabulated_eos_t read_eos_table(bool const linear_pressure)
 {
     auto const eos_tab_name = grace::get_param<std::string>("eos", "tabulated_eos", "table_filename") ;
     auto const eos_cold_tab_name = grace::get_param<std::string>("eos", "tabulated_eos", "cold_table_filename") ;
     auto const eos_tab_kind =  grace::get_param<std::string>("eos", "tabulated_eos", "table_format") ;
-    auto const linear_pressure = grace::get_param<bool>("eos", "tabulated_eos", "linear_pressure") ;
 
     if ( eos_tab_kind == "compose" ) {
         return read_compose_table(eos_tab_name, eos_cold_tab_name, linear_pressure) ;

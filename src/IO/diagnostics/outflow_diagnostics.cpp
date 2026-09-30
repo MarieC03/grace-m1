@@ -41,30 +41,65 @@
 #include <grace/utils/reductions.hh>
 
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 #include <string>
 
 namespace grace {
 
-namespace {
-//! "Mdot_ye_0.050_0.070" style labels, so the bin edges travel with the data
-//! and post-processing never has to re-derive them.
-std::vector<std::string> make_outflow_flux_names() {
+double outflows::ye_bin_lo = 0.0 ;
+double outflows::ye_bin_hi = 0.6 ;
+#ifdef GRACE_ENABLE_MUONS
+double outflows::log_ymu_bin_lo = -3.5 ;
+double outflows::log_ymu_bin_hi = -0.5 ;
+#endif
+
+std::vector<std::string> outflows::make_flux_names() {
     std::vector<std::string> names{"Mdot_unbound_geo", "Mdot_unbound_bern", "Mdot_tot"} ;
-    double const dye = (outflows::ye_bin_hi - outflows::ye_bin_lo) / outflows::n_ye_bins ;
+    double const dye = (ye_bin_hi - ye_bin_lo) / n_ye_bins ;
     char buf[64] ;
-    for ( int b = 0 ; b < outflows::n_ye_bins ; ++b ) {
-        double const lo = outflows::ye_bin_lo + b * dye ;
+    for ( int b = 0 ; b < n_ye_bins ; ++b ) {
+        double const lo = ye_bin_lo + b * dye ;
         std::snprintf(buf, sizeof(buf), "Mdot_ye_%.3f_%.3f", lo, lo + dye) ;
         names.emplace_back(buf) ;
     }
+    #ifdef GRACE_ENABLE_MUONS
+    // Same order as the columns: Y_mu (log-spaced edges, printed as values), then Y_p.
+    double const dl = (log_ymu_bin_hi - log_ymu_bin_lo) / n_ymu_bins ;
+    for ( int b = 0 ; b < n_ymu_bins ; ++b ) {
+        double const lo = log_ymu_bin_lo + b * dl ;
+        std::snprintf(buf, sizeof(buf), "Mdot_ymu_%.3e_%.3e", std::pow(10.0, lo), std::pow(10.0, lo + dl)) ;
+        names.emplace_back(buf) ;
+    }
+    for ( int b = 0 ; b < n_yp_bins ; ++b ) {
+        double const lo = ye_bin_lo + b * dye ;
+        std::snprintf(buf, sizeof(buf), "Mdot_yp_%.3f_%.3f", lo, lo + dye) ;
+        names.emplace_back(buf) ;
+    }
+    #endif
     return names ;
 }
-} // namespace
 
-std::vector<std::string> outflows::flux_names = make_outflow_flux_names() ;
+// Default-range labels until the first outflows object reads the parameters.
+std::vector<std::string> outflows::flux_names = outflows::make_flux_names() ;
+
+// Bin edges, checked at compile time for the default range [0, 0.6): the table bounds
+// 0.01 and 0.5 get bins of their own, out-of-range values are clamped to the end bins, and
+// the Y_mu table floor (5e-4 = 10^-3.30) lands in the second logarithmic bin.
+static_assert(outflows::clamped_bin( 0.010, 0.0, 0.6, outflows::n_ye_bins) == 0) ;
+static_assert(outflows::clamped_bin( 0.030, 0.0, 0.6, outflows::n_ye_bins) == 1) ;
+static_assert(outflows::clamped_bin( 0.500, 0.0, 0.6, outflows::n_ye_bins) == 25) ;
+static_assert(outflows::clamped_bin( 0.499, 0.0, 0.6, outflows::n_ye_bins) == 24) ;
+static_assert(outflows::clamped_bin(-0.100, 0.0, 0.6, outflows::n_ye_bins) == 0) ;
+static_assert(outflows::clamped_bin( 0.900, 0.0, 0.6, outflows::n_ye_bins) == outflows::n_ye_bins - 1) ;
+#ifdef GRACE_ENABLE_MUONS
+static_assert(outflows::clamped_bin(-3.30, -3.5, -0.5, outflows::n_ymu_bins) == 1) ;
+static_assert(outflows::clamped_bin(-300., -3.5, -0.5, outflows::n_ymu_bins) == 0) ;
+static_assert(outflows::YP_BIN0 + outflows::n_yp_bins == static_cast<int>(outflows::n_fluxes)) ;
+#endif
 
 #ifdef GRACE_ENABLE_M1
 // Labels follow the radiation-block order used in compute_local_fluxes:
@@ -162,6 +197,9 @@ outflows::compute_local_fluxes(
                 , zz{ivals_aux(i,loc_aux_idx_t::ZZL)}
                 , ye{ivals_aux(i,loc_aux_idx_t::YEL)} ;
         #endif
+        #ifdef GRACE_ENABLE_MUONS
+        double const ymu = ivals_aux(i,loc_aux_idx_t::YMUL) ;
+        #endif
         #if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
         metric_array_t metric{
             {gxx,gxy,gxz,gyy,gyz,gzz}, {betax,betay,betaz}, alp
@@ -214,10 +252,12 @@ outflows::compute_local_fluxes(
             flux_loc[diag_var_idx_t::BERN_UNBOUND] += dm ;
             // Same integrand, binned by composition.  Clamped rather than
             // dropped at the edges so the bins always sum to BERN_UNBOUND.
-            constexpr double dye = (ye_bin_hi - ye_bin_lo) / n_ye_bins ;
-            int b = static_cast<int>((ye - ye_bin_lo) / dye) ;
-            b = b < 0 ? 0 : (b >= n_ye_bins ? n_ye_bins - 1 : b) ;
-            flux_loc[YE_BIN0 + b] += dm ;
+            flux_loc[YE_BIN0 + clamped_bin(ye, ye_bin_lo, ye_bin_hi, n_ye_bins)] += dm ;
+            #ifdef GRACE_ENABLE_MUONS
+            double const log_ymu = std::log10(std::max(ymu, 1.0e-300)) ;
+            flux_loc[YMU_BIN0 + clamped_bin(log_ymu, log_ymu_bin_lo, log_ymu_bin_hi, n_ymu_bins)] += dm ;
+            flux_loc[YP_BIN0  + clamped_bin(ye + ymu, ye_bin_lo, ye_bin_hi, n_yp_bins)] += dm ;
+            #endif
         }
 
         flux_loc[diag_var_idx_t::TOT] += r * r * domega * mass_flux ;
@@ -275,6 +315,18 @@ m1_outflows::compute_local_fluxes(
         double const betax = ivals(i, loc_var_idx_t::BETAXL);
         double const betay = ivals(i, loc_var_idx_t::BETAYL);
         double const betaz = ivals(i, loc_var_idx_t::BETAZL);
+        // FRAD*_ hold sqrt(gamma) F_i (lowered): the 3-metric raises the index below.
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+        metric_array_t const metric{
+            { ivals(i, loc_var_idx_t::GXXL), ivals(i, loc_var_idx_t::GXYL), ivals(i, loc_var_idx_t::GXZL),
+              ivals(i, loc_var_idx_t::GYYL), ivals(i, loc_var_idx_t::GYZL), ivals(i, loc_var_idx_t::GZZL) },
+            { betax, betay, betaz }, alp };
+#else
+        metric_array_t const metric{
+            { ivals(i, loc_var_idx_t::GTXXL), ivals(i, loc_var_idx_t::GTXYL), ivals(i, loc_var_idx_t::GTXZL),
+              ivals(i, loc_var_idx_t::GTYYL), ivals(i, loc_var_idx_t::GTYZL), ivals(i, loc_var_idx_t::GTZZL) },
+            ivals(i, loc_var_idx_t::CHIL), { betax, betay, betaz }, alp };
+#endif
 
 #if GRACE_M1_NU_SPECIES >= 1
         // Species 0 (nu_e / single-species)
@@ -284,10 +336,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY1L);
             double const Fz = ivals(i, loc_var_idx_t::FZ1L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[0] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -302,10 +355,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY2L);
             double const Fz = ivals(i, loc_var_idx_t::FZ2L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[1] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -317,10 +371,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY3L);
             double const Fz = ivals(i, loc_var_idx_t::FZ3L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[2] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -335,10 +390,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY4L);
             double const Fz = ivals(i, loc_var_idx_t::FZ4L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[3] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -350,10 +406,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FY5L);
             double const Fz = ivals(i, loc_var_idx_t::FZ5L);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[4] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);
@@ -367,10 +424,11 @@ m1_outflows::compute_local_fluxes(
             double const Fy = ivals(i, loc_var_idx_t::FYPHL);
             double const Fz = ivals(i, loc_var_idx_t::FZPHL);
 
-            // Physical coordinate flux: alpha * F^i - beta^i * E
-            double const phys_Fx = alp * Fx - betax * E;
-            double const phys_Fy = alp * Fy - betay * E;
-            double const phys_Fz = alp * Fz - betaz * E;
+            // Physical coordinate flux alpha F^i - beta^i E with F^i = gamma^ij F_j
+            auto const Fu = metric.raise({Fx, Fy, Fz});
+            double const phys_Fx = alp * Fu[0] - betax * E;
+            double const phys_Fy = alp * Fu[1] - betay * E;
+            double const phys_Fz = alp * Fu[2] - betaz * E;
 
             // Project onto outward radial normal
             flux_loc[n_fluxes-1] += r * r * domega * (phys_Fx * nx + phys_Fy * ny + phys_Fz * nz);

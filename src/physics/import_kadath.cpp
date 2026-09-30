@@ -97,7 +97,8 @@ void KadathImporter(const std::string kadath_id, const std::string  filename,
   auto interp_data_helper = [&]<typename reader_t, bool has_matter = false>(reader_t& input_reader,
                                   std::vector<double> const & xgrid,
                                   std::vector<double> const & ygrid,
-                                  std::vector<double> const & zgrid
+                                  std::vector<double> const & zgrid,
+                                  bool const mirror = false
                                 )
     {
       using kadath_output_t =
@@ -111,31 +112,36 @@ void KadathImporter(const std::string kadath_id, const std::string  filename,
                 (idx/(nx+2*ngz)/(ny+2*ngz)) % (nz+2*ngz) ;
         size_t const q =
                 (idx/(nx+2*ngz)/(ny+2*ngz)/(nz+2*ngz)) ;
+        // Mirrored import: read at (|x|,|y|,|z|) and give each component its reflection
+        // sign back, so the data are mirror symmetric to the last bit.  All signs are +1 otherwise.
+        double const sx = ( mirror && xgrid[idx] < 0. ) ? -1. : 1. ;
+        double const sy = ( mirror && ygrid[idx] < 0. ) ? -1. : 1. ;
+        double const sz = ( mirror && zgrid[idx] < 0. ) ? -1. : 1. ;
         // GRACE-geo query coords -> FUKA-geo for the pointwise export.
-        double const x_F = xgrid[idx] / rescale::length;
-        double const y_F = ygrid[idx] / rescale::length;
-        double const z_F = zgrid[idx] / rescale::length;
+        double const x_F = sx * xgrid[idx] / rescale::length;
+        double const y_F = sy * ygrid[idx] / rescale::length;
+        double const z_F = sz * zgrid[idx] / rescale::length;
         auto all_data_pt = input_reader.export_pointwise(x_F, y_F, z_F) ;
         // alpha, beta^i, gamma_ij are dimensionless: no rescale.
         data(K_ALPHA,i,j,k,q) = all_data_pt[K_ALPHA] ;
 
-        data(K_BETAX,i,j,k,q) = all_data_pt[K_BETAX] ;
-        data(K_BETAY,i,j,k,q) = all_data_pt[K_BETAY] ;
-        data(K_BETAZ,i,j,k,q) = all_data_pt[K_BETAZ] ;
+        data(K_BETAX,i,j,k,q) = sx * all_data_pt[K_BETAX] ;
+        data(K_BETAY,i,j,k,q) = sy * all_data_pt[K_BETAY] ;
+        data(K_BETAZ,i,j,k,q) = sz * all_data_pt[K_BETAZ] ;
 
         data(K_GXX,i,j,k,q) = all_data_pt[K_GXX] ;
-        data(K_GXY,i,j,k,q) = all_data_pt[K_GXY] ;
-        data(K_GXZ,i,j,k,q) = all_data_pt[K_GXZ] ;
+        data(K_GXY,i,j,k,q) = sx*sy * all_data_pt[K_GXY] ;
+        data(K_GXZ,i,j,k,q) = sx*sz * all_data_pt[K_GXZ] ;
         data(K_GYY,i,j,k,q) = all_data_pt[K_GYY] ;
-        data(K_GYZ,i,j,k,q) = all_data_pt[K_GYZ] ;
+        data(K_GYZ,i,j,k,q) = sy*sz * all_data_pt[K_GYZ] ;
         data(K_GZZ,i,j,k,q) = all_data_pt[K_GZZ] ;
 
         // K_ij has units [1/L]: rescale by inv_length.
         data(K_KXX,i,j,k,q) = all_data_pt[K_KXX] * rescale::inv_length ;
-        data(K_KXY,i,j,k,q) = all_data_pt[K_KXY] * rescale::inv_length ;
-        data(K_KXZ,i,j,k,q) = all_data_pt[K_KXZ] * rescale::inv_length ;
+        data(K_KXY,i,j,k,q) = sx*sy * all_data_pt[K_KXY] * rescale::inv_length ;
+        data(K_KXZ,i,j,k,q) = sx*sz * all_data_pt[K_KXZ] * rescale::inv_length ;
         data(K_KYY,i,j,k,q) = all_data_pt[K_KYY] * rescale::inv_length ;
-        data(K_KYZ,i,j,k,q) = all_data_pt[K_KYZ] * rescale::inv_length ;
+        data(K_KYZ,i,j,k,q) = sy*sz * all_data_pt[K_KYZ] * rescale::inv_length ;
         data(K_KZZ,i,j,k,q) = all_data_pt[K_KZZ] * rescale::inv_length ;
         if (has_matter) {
           // Pack e = rho*(1+eps) in GRACE-geo. rho has units [M/L^3] so
@@ -147,9 +153,9 @@ void KadathImporter(const std::string kadath_id, const std::string  filename,
           data(K_RHO  ,i,j,k,q) = rho_grace * ( 1. + all_data_pt[K_EPS] ) ;
 
           // v^i is dimensionless: no rescale.
-          data(K_RHO+1,i,j,k,q) =  all_data_pt[K_VELX] ;
-          data(K_RHO+2,i,j,k,q) =  all_data_pt[K_VELY] ;
-          data(K_RHO+3,i,j,k,q) =  all_data_pt[K_VELZ] ;
+          data(K_RHO+1,i,j,k,q) =  sx * all_data_pt[K_VELX] ;
+          data(K_RHO+2,i,j,k,q) =  sy * all_data_pt[K_VELY] ;
+          data(K_RHO+3,i,j,k,q) =  sz * all_data_pt[K_VELZ] ;
         }
 
 
@@ -176,6 +182,14 @@ void KadathImporter(const std::string kadath_id, const std::string  filename,
     using reader_t = Kadath::FUKA_Solvers::CFMS_BNS_Exporter;
     reader_t input_reader(filename.c_str()); 
     interp_data_helper.template operator()<reader_t, true>(input_reader, xx,yy,zz);
+  } else if(id_type == "BNS_MIRRORED") {
+    // Equal-mass head-on (both stars on the x axis): the octant x,y,z >= 0 is copied into the
+    // other seven.  NOT valid for an orbiting binary, whose symmetry is a rotation, not a mirror.
+    using config_t = Kadath::FUKA_Config::kadath_config_boost<Kadath::FUKA_Config::BIN_INFO>;
+    using reader_t = Kadath::FUKA_Solvers::CFMS_BNS_Exporter;
+    reader_t input_reader(filename.c_str());
+    GRACE_INFO("FUKA BNS data mirrored in x, y and z from the octant x,y,z >= 0.") ;
+    interp_data_helper.template operator()<reader_t, true>(input_reader, xx,yy,zz, true);
   } else if(id_type == "BHNS") {
     using config_t = Kadath::FUKA_Config::kadath_config_boost<Kadath::FUKA_Config::BIN_INFO>;
     using reader_t = Kadath::FUKA_Solvers::CFMS_BHNS_Exporter;

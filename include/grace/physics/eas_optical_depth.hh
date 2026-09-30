@@ -222,6 +222,102 @@ tau_policy_fixed make_eikonal_tau(
     return tf ;
 }
 
+namespace optd_detail {
+
+// Lower 3-metric gamma_ij (xx,xy,xz,yy,yz,zz) WITHOUT the inverse/sqrtg that
+// metric_array_t computes — the proper distance only needs gamma_ij, so this
+// stays light on the GPU.  Cowling stores gamma_ij directly; Z4c stores the
+// conformal gamma~_ij with gamma_ij = gamma~_ij / chi^2.
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+void read_lower_metric(grace::var_array_t const& s, int64_t q,
+                       VEC(int const i, int const j, int const k),
+                       double (&g)[6])
+{
+    using namespace grace ;
+#if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
+    double const chi  = s(VEC(i,j,k), CHI_, q) ;
+    double const ooc2 = 1.0 / Kokkos::fmax(1.0e-100, chi*chi) ;
+    g[0] = s(VEC(i,j,k),GTXX_,q)*ooc2 ; g[1] = s(VEC(i,j,k),GTXY_,q)*ooc2 ;
+    g[2] = s(VEC(i,j,k),GTXZ_,q)*ooc2 ; g[3] = s(VEC(i,j,k),GTYY_,q)*ooc2 ;
+    g[4] = s(VEC(i,j,k),GTYZ_,q)*ooc2 ; g[5] = s(VEC(i,j,k),GTZZ_,q)*ooc2 ;
+#else
+    g[0] = s(VEC(i,j,k),GXX_,q) ; g[1] = s(VEC(i,j,k),GXY_,q) ;
+    g[2] = s(VEC(i,j,k),GXZ_,q) ; g[3] = s(VEC(i,j,k),GYY_,q) ;
+    g[4] = s(VEC(i,j,k),GYZ_,q) ; g[5] = s(VEC(i,j,k),GZZ_,q) ;
+#endif
+}
+
+// One min-path relaxation at interior cell (i,j,k), all active blocks at once.
+// ds is computed ONCE per neighbor (shared across blocks).  Reads neighbor tau
+// and the metric from state_read (valid ghosts), kappa from aux; the result is
+// written by the caller into state_write.  Clean Jacobi: read and write are
+// distinct buffers (old_state / new_state).
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+void relax_cell(
+    grace::var_array_t const& state,   // state_read
+    grace::var_array_t const& aux,
+    VEC(int const i, int const j, int const k), int64_t q,
+    double const dx0, double const dx1, double const dx2,
+    double (&tau_out)[5])
+{
+    using namespace grace ;
+
+    double gc[6] ;
+    read_lower_metric(state, q, VEC(i,j,k), gc) ;
+
+    // Neighbours only, as in FIL (driver_update_tau.cc skips ni=nj=nk=0): with the
+    // cell's own old tau in the min, tau could only fall and never followed moving
+    // matter.  It stays bounded by the min path to the transparent exterior.
+    #if GRACE_M1_NU_SPECIES >= 1
+    double const kc0 = aux(VEC(i,j,k),m1_kappaa_idx<0>(),q)+aux(VEC(i,j,k),m1_kappas_idx<0>(),q) ;
+    double b0 = 1.0e200 ;
+    #endif
+    // Electron flavours only -- see m1_optd_idx / variable_indices.hh.
+    #if GRACE_M1_NU_SPECIES >= 3
+    double const kc1 = aux(VEC(i,j,k),m1_kappaa_idx<1>(),q)+aux(VEC(i,j,k),m1_kappas_idx<1>(),q) ;
+    double b1 = 1.0e200 ;
+    #endif
+
+    for (int ni = -1; ni <= 1; ++ni)
+    for (int nj = -1; nj <= 1; ++nj)
+    for (int nk = -1; nk <= 1; ++nk) {
+        if (ni == 0 && nj == 0 && nk == 0) continue ;
+        int const ii = i+ni, jj = j+nj, kk = k+nk ;
+
+        double const d0 = dx0*ni, d1 = dx1*nj, d2 = dx2*nk ;
+        double gn[6] ;
+        read_lower_metric(state, q, VEC(ii,jj,kk), gn) ;
+        double const gxx = 0.5*(gc[0]+gn[0]), gxy = 0.5*(gc[1]+gn[1]) ;
+        double const gxz = 0.5*(gc[2]+gn[2]), gyy = 0.5*(gc[3]+gn[3]) ;
+        double const gyz = 0.5*(gc[4]+gn[4]), gzz = 0.5*(gc[5]+gn[5]) ;
+        double const ds2 = gxx*d0*d0 + gyy*d1*d1 + gzz*d2*d2
+                         + 2.0*( gxy*d0*d1 + gxz*d0*d2 + gyz*d1*d2 ) ;
+        double const ds  = Kokkos::sqrt(Kokkos::fmax(0.0, ds2)) ;
+
+        #if GRACE_M1_NU_SPECIES >= 1
+        {
+            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<0>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<0>(),q) ;
+            b0 = Kokkos::fmin(b0, 0.5*(kc0+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<0>(),q)) ;
+        }
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 3
+        {
+            double const kn = aux(VEC(ii,jj,kk),m1_kappaa_idx<1>(),q)+aux(VEC(ii,jj,kk),m1_kappas_idx<1>(),q) ;
+            b1 = Kokkos::fmin(b1, 0.5*(kc1+kn)*ds + state(VEC(ii,jj,kk),m1_optd_idx<1>(),q)) ;
+        }
+        #endif
+    }
+
+    #if GRACE_M1_NU_SPECIES >= 1
+    tau_out[0] = Kokkos::fmax(0.0, b0) ;
+    #endif
+    #if GRACE_M1_NU_SPECIES >= 3
+    tau_out[1] = Kokkos::fmax(0.0, b1) ;
+    #endif
+}
+
+} // namespace optd_detail
+
 /// Seed every optical-depth field (interior + ghosts) with the Deaton+ 2013
 /// cold-NS density fit.  Grid kernel, defined in eas_optical_depth.cpp.  Run
 /// once at initial data, before the first EAS.

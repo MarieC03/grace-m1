@@ -37,6 +37,9 @@
 
 #include <grace/IO/output_diagnostics.hh>
 #include <grace/IO/diagnostics/diagnostic_base.hh>
+#include <grace/errors/error.hh>
+
+#include <cmath>
 #include <grace/IO/spherical_surfaces.hh>
 
 #include <grace/data_structures/variable_indices.hh>
@@ -65,7 +68,11 @@ struct outflows:
     } ;
     #endif
     enum loc_aux_idx_t : int {
-        RHOL=0, EPSL, PRESSL, ZXL, ZYL, ZZL, YEL, NUM_AUX
+        RHOL=0, EPSL, PRESSL, ZXL, ZYL, ZZL, YEL,
+        #ifdef GRACE_ENABLE_MUONS
+        YMUL,
+        #endif
+        NUM_AUX
     };
     enum diag_var_idx_t : int {
         GEO_UNBOUND=0, BERN_UNBOUND, TOT, N_DIAG_VARS
@@ -82,28 +89,72 @@ struct outflows:
     //
     // Bins the BERNOULLI-unbound flux, the usual ejecta criterion, so the bins
     // sum to Mdot_unbound_bern by construction (that identity is the test).
-    // Compile-time sized because n_fluxes must be constexpr.
-    static constexpr int    n_ye_bins = 25 ;
-    static constexpr double ye_bin_lo = 0.05 ;
-    static constexpr double ye_bin_hi = 0.55 ;
+    // The COUNT is compile time because n_fluxes must be constexpr; the RANGE is read
+    // from outflows.ye_bin_min/max (default [0, 0.6): round edges that do not depend
+    // on the EOS table, with the table bounds 0.01 and 0.5 in bins of their own).
+    static constexpr int    n_ye_bins = 30 ;
+    static double ye_bin_lo ;
+    static double ye_bin_hi ;
     //! First histogram column; bin b lives at YE_BIN0 + b.
     static constexpr int    YE_BIN0   = static_cast<int>(N_DIAG_VARS) ;
 
+    #ifdef GRACE_ENABLE_MUONS
+    // With muons the same flux is also binned by Y_mu and by Y_p = Y_e + Y_mu (the
+    // axis of the baryon table).  Y_p uses the Y_e edges.  Y_mu spans decades, from
+    // the table floor (5e-4) to ~0.1, so its bins are LOGARITHMIC between
+    // outflows.ymu_bin_min/max (default 10^-3.5 .. 10^-0.5, i.e. 8 bins per decade).
+    static constexpr int    n_ymu_bins      = 24 ;
+    static double log_ymu_bin_lo ;                            //!< log10 of ymu_bin_min
+    static double log_ymu_bin_hi ;                            //!< log10 of ymu_bin_max
+    static constexpr int    n_yp_bins       = n_ye_bins ;     //!< same edges as Y_e
+    static constexpr int    YMU_BIN0 = YE_BIN0  + n_ye_bins ;
+    static constexpr int    YP_BIN0  = YMU_BIN0 + n_ymu_bins ;
+    static constexpr size_t n_fluxes =
+        static_cast<size_t>(N_DIAG_VARS + n_ye_bins + n_ymu_bins + n_yp_bins) ;
+    #else
     static constexpr size_t n_fluxes =
         static_cast<size_t>(N_DIAG_VARS + n_ye_bins) ;
+    #endif
+
+    //! Bin of x in n equal bins over [lo,hi).  Clamped, not dropped, at both ends (and
+    //! for NaN), so the bins of one quantity always sum to Mdot_unbound_bern.
+    static constexpr int clamped_bin(double x, double lo, double hi, int n) {
+        if ( !(x > lo) ) return 0 ;
+        if ( !(x < hi) ) return n - 1 ;
+        int const b = static_cast<int>((x - lo) / ((hi - lo) / n)) ;
+        return b < 0 ? 0 : (b >= n ? n - 1 : b) ;
+    }
 
     static std::vector<std::string> flux_names ;
-
+    //! "Mdot_ye_0.000_0.020" style labels for the current range: the edges travel with the data.
+    static std::vector<std::string> make_flux_names() ;
 
     outflows()
         : base_t("outflows")
     {
+        ye_bin_lo = get_param<double>("outflows","ye_bin_min") ;
+        ye_bin_hi = get_param<double>("outflows","ye_bin_max") ;
+        if ( !(ye_bin_hi > ye_bin_lo) )
+            ERROR("outflows: ye_bin_max (" << ye_bin_hi << ") must exceed ye_bin_min (" << ye_bin_lo << ")") ;
+        #ifdef GRACE_ENABLE_MUONS
+        double const ymu_lo = get_param<double>("outflows","ymu_bin_min") ;
+        double const ymu_hi = get_param<double>("outflows","ymu_bin_max") ;
+        if ( !(ymu_lo > 0.0) || !(ymu_hi > ymu_lo) )
+            ERROR("outflows: need 0 < ymu_bin_min (" << ymu_lo << ") < ymu_bin_max (" << ymu_hi << "), the Y_mu bins are logarithmic") ;
+        log_ymu_bin_lo = std::log10(ymu_lo) ;
+        log_ymu_bin_hi = std::log10(ymu_hi) ;
+        #endif
+        flux_names = make_flux_names() ;
         #if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
         this->var_interp_idx = std::vector<int>({GXX_, GXY_, GXZ_, GYY_, GYZ_, GZZ_, BETAX_, BETAY_, BETAZ_, ALP_});
         #else
         this->var_interp_idx = std::vector<int>({GTXX_, GTXY_, GTXZ_, GTYY_, GTYZ_, GTZZ_, CHI_, BETAX_, BETAY_, BETAZ_, ALP_});
         #endif
-        this->aux_interp_idx = std::vector<int>({RHO_,EPS_,PRESS_,ZVECX_,ZVECY_,ZVECZ_,YE_});
+        this->aux_interp_idx = std::vector<int>({RHO_,EPS_,PRESS_,ZVECX_,ZVECY_,ZVECZ_,YE_
+                                                 #ifdef GRACE_ENABLE_MUONS
+                                                 ,YMU_
+                                                 #endif
+                                                 });
     }
 
     std::array<double,n_fluxes>
@@ -121,9 +172,12 @@ struct outflows:
  * @brief Radiation energy and number luminosity through spherical detectors.
  *
  * For each registered detector sphere the diagnostic integrates
- *   L_E^(s) = ∫ (FRADX_s * x/r + FRADY_s * y/r + FRADZ_s * z/r) r² dΩ
- * per neutrino species s.  The conserved flux variables FRADX/Y/Z already
- * carry the factor sqrt(g), so the integral is in code-unit energy flux.
+ *   L_E^(s) = ∮ (alpha F^i - beta^i E) n_i r² dΩ,   F^i = gamma^ij F_j,
+ * per neutrino species s.  The conserved variables ERAD/FRADX/Y/Z carry the
+ * factor sqrt(gamma) and FRAD holds the LOWERED flux, so the 3-metric is
+ * interpolated on the sphere to raise the index before the projection on the
+ * coordinate normal n_i = x_i/r.  On a stationary metric this is the flux of
+ * the conserved Killing energy.
  *
  * Uses the same "outflows" parameter block (detector_names) as the mass
  * outflow diagnostic.
@@ -137,7 +191,12 @@ struct m1_outflows :
     // Local index into ivals (state variables interpolated to sphere)
     enum loc_var_idx_t : int {
         // Metric
-        BETAXL=0, BETAYL, BETAZL, ALPL,
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+        GXXL=0, GXYL, GXZL, GYYL, GYZL, GZZL,
+#else
+        GTXXL=0, GTXYL, GTXZL, GTYYL, GTYZL, GTZZL, CHIL,
+#endif
+        BETAXL, BETAYL, BETAZL, ALPL,
 #if GRACE_M1_NU_SPECIES >= 1
         E1L, FX1L, FY1L, FZ1L,
 #endif
@@ -181,6 +240,11 @@ struct m1_outflows :
     {
         // Radiation flux components per species (state array indices)
         this->var_interp_idx = {
+#if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
+            GXX_, GXY_, GXZ_, GYY_, GYZ_, GZZ_,
+#else
+            GTXX_, GTXY_, GTXZ_, GTYY_, GTYZ_, GTZZ_, CHI_,
+#endif
             BETAX_, BETAY_, BETAZ_, ALP_
 #if GRACE_M1_NU_SPECIES >= 1
             , ERAD1_, FRADX1_, FRADY1_, FRADZ1_

@@ -1,0 +1,77 @@
+# M1 crossed beams: one pencil entering from -x along +x, one from -y along +y,
+# crossing at the origin.  Where they overlap |F|/E = 1/sqrt(2), which the two-moment
+# closure reads as a single broad distribution and transports along the diagonal.
+# EXPECTED RESULT: the two beams MERGE into one diagonal beam.  That is the closure
+# failing, and it is the point of the test -- the standard demonstration that a
+# two-moment scheme cannot represent crossing radiation.
+# Check: beyond the crossing, E on each original axis has dropped and the diagonal
+# quadrant is lit, where the LBM twin keeps both beams separate and the diagonal at
+# the floor.  MEASURED Erad1 [max]: 1.00 at t=0, 2.99 at t=0.75, 2.29 at t=1.5,
+# 1.89 at t=2.25 -- note the peak OVERSHOOTS the E=2 of simple superposition, the
+# closure concentrating the merged beam rather than just adding the two.
+# LBM twin: test/configs/lbm_crossed_beams.yaml (same grid, same end time).
+# 8 quadrants of 16^3, dx = 0.0625, beams 4 cells wide.
+# Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
+name: "m1_crossed_beams"
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: -1., xmax: 1.,
+  ymin: -1., ymax: 1.,
+  zmin: -1., zmax: 1.,
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 16,
+  info_output_max_reductions: ["Erad1"],
+  scalar_output_every: 16,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1"],
+  volume_output_every: 144,
+  volume_output_cell_variables: ["m1", "rates"],
+  plane_surface_output_every: 144,
+  plane_surface_output_cell_variables: ["m1", "rates"],
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  output_extra_quantities: true
+}
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.25,
+  force_unit_wavespeed: true,
+  final_iteration: 144,
+  termination_condition: "iteration"
+}
+m1: {
+  id_type: "crossed_beams",
+  crossed_beams_test: { half_width: 0.125, start: -0.5 },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+checkpoints: { checkpoint_at_termination: false }

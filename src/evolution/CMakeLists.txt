@@ -21,3 +21,21 @@ if(GRACE_DUMP_GPU_RESOURCE_USAGE)
         -Rpass-analysis=kernel-resource-usage
         --save-temps=obj)
 endif()
+
+# Debug: restrict the FOFC flux correction to selected directions, to isolate
+# which directional loop breaks discrete symmetry.  "xyz" is normal behaviour;
+# an empty value flags faces but never corrects them.  Not for production runs.
+set(GRACE_FOFC_CORRECTION_DIRS "xyz" CACHE STRING
+    "FOFC: directions receiving the flux correction (xyz = normal, empty = none)")
+string(TOLOWER "${GRACE_FOFC_CORRECTION_DIRS}" _grace_fofc_dirs)
+foreach(_d x y z)
+    string(FIND "${_grace_fofc_dirs}" "${_d}" _grace_fofc_pos)
+    if(_grace_fofc_pos GREATER -1)
+        string(TOUPPER ${_d} _D)
+        target_compile_definitions(grace_evolution PRIVATE GRACE_FOFC_CORRECT_${_D})
+    endif()
+endforeach()
+if(NOT _grace_fofc_dirs STREQUAL "xyz")
+    message(WARNING "GRACE_FOFC_CORRECTION_DIRS='${GRACE_FOFC_CORRECTION_DIRS}' "
+                    "— FOFC correction restricted to those directions. Debug only.")
+endif()

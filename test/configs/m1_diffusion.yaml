@@ -1,0 +1,76 @@
+# M1 diffusion (scattering) test: an isotropically scattering Gaussian, k_s = 20,
+# t_0 = 1, in flat space.  In the diffusion limit the analytic solution keeps its
+# Gaussian shape with E_max = E_0 (t_0/(t_0+t))^{3/2}.
+# This is the OPTICALLY THICK limit, where the M1 closure is exact (zeta -> 0,
+# P^ij -> E gamma^ij / 3) -- the complement of the beam tests, and the one M1 should
+# pass cleanly.  Check: Erad1 [max] against E_0 (t_0/(t_0+t))^{3/2}.
+# MEASURED ratio E_max/analytic (1 species, Cowling, this grid): 1.000 at t=0, then
+# 0.973, 0.961, 0.953, 0.950, 0.949, 0.949, 0.950, 0.952, 0.954 every 0.125 to
+# t = 1.125 -- flat to ~5% low, i.e. slightly OVER-diffusive, as expected.
+# LBM twin: test/configs/lbm_diffusion.yaml, whose numerical diffusion is a known
+# t_eff = (1 + 0.75 k_s dx) t.
+# 8 quadrants of 16^3, dx = 0.0625, k_s dx = 1.25 (marginally resolved mean free path).
+# Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
+name: "m1_diffusion"
+amr: {
+  npoints_block_x: 16,
+  npoints_block_y: 16,
+  npoints_block_z: 16,
+  xmin: -1., xmax: 1.,
+  ymin: -1., ymax: 1.,
+  zmin: -1., zmax: 1.,
+  n_ghostzones: 4,
+  initial_refinement_level: 1,
+  max_refinement_level: 1,
+  regrid_every: -1,
+  regrid_at_postinitial: false,
+  reflection_symmetries: {x: false, y: false, z: false}
+}
+IO: {
+  info_output_every: 8,
+  info_output_max_reductions: ["Erad1"],
+  scalar_output_every: 8,
+  scalar_output_minmax: ["Erad1"],
+  scalar_output_integral: ["Erad1"],
+  volume_output_every: 72,
+  volume_output_cell_variables: ["m1", "rates"],
+  plane_surface_output_every: 72,
+  plane_surface_output_cell_variables: ["m1", "rates"],
+  sphere_surface_output_every: -1,
+  diagnostic_output_every: -1,
+  output_extra_quantities: true
+}
+evolution: {
+  time_stepper: "imex222",
+  cfl_factor: 0.25,
+  force_unit_wavespeed: true,
+  final_iteration: 72,
+  termination_condition: "iteration"
+}
+m1: {
+  id_type: "scattering",
+  scattering_test: { k_s: 20.0, t_0: 1.0, is_static_background: true },
+  eas: { kinds: ["test"] },
+  backreaction: { enabled: false }
+}
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  flush_logs_based_on_severity: false,
+  n_device_streams: 1
+}
+grmhd: {
+  id_type: "minkowski_vacuum",
+  vacuum: {
+    rho_floor: 1e-20, press_floor: 1e-30,
+    velocity_x: 0., velocity_y: 0., velocity_z: 0.
+  },
+  atmosphere: { ye_fl: 0, temp_fl: 0, rho_fl: 1e-50, rho_scaling: 0, temp_scaling: 0 }
+}
+eos: {
+  eos_type: "hybrid",
+  hybrid_eos: { cold_eos_type: "piecewise_polytrope", gamma_th: 1.8 },
+  eps_maximum: 1e+05,
+  piecewise_polytrope: { n_pieces: 1, gammas: [ 2. ], rhos: [ ], kappa_0: 1.0 }
+}
+checkpoints: { checkpoint_at_termination: false }

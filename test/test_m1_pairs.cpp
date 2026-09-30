@@ -1,0 +1,221 @@
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <grace/physics/neutrino_pair_update.hh>
+#include <grace/physics/m1.hh>
+#include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <cmath>
+using namespace grace;
+using namespace grace::pairs;
+using Catch::Matchers::WithinRel;
+
+namespace {
+void fd(grid const& g,double T,double eta,double* f,double& n,double& J) {
+    n=J=0;
+    for(int i=0;i<g.n;++i) {
+        f[i]=occupation(g.e[i]/T-eta);
+        n+=g.w[i]*f[i]; J+=g.w[i]*g.e[i]*f[i];
+    }
+}
+material const matter{10,20,6e37,0.8,0.2};
+}
+
+TEST_CASE("Pair units match existing EAS", "[pairs]") {
+    REQUIRE_THAT(energy_unit/time_unit,WithinRel(Q_mev_to_code(1,1),1e-14));
+    REQUIRE_THAT(number_unit/time_unit,WithinRel(R_to_code(1,1),1e-14));
+}
+
+TEST_CASE("Pair quadrature and moment reconstruction", "[pairs]") {
+    grid g; g.init(32,10);
+    double f[max_order],r[max_order],n,J;
+    fd(g,10,0,f,n,J);
+    REQUIRE_THAT(n,WithinRel(phase*1000*1.8030853547393914,2e-5));
+    REQUIRE_THAT(J,WithinRel(phase*10000*5.682196976983475,3e-5));
+    for(double eta: {-8.,0.,4.,12.}) {
+        fd(g,10,eta,f,n,J);
+        REQUIRE(reconstruct(g,n,J,r));
+        double nr=0,jr=0;
+        for(int i=0;i<g.n;++i) { nr+=g.w[i]*r[i]; jr+=g.w[i]*g.e[i]*r[i]; }
+        REQUIRE_THAT(nr,WithinRel(n,3e-10)); REQUIRE_THAT(jr,WithinRel(J,3e-10));
+    }
+    REQUIRE(reconstruct(g,0,0,r));
+    REQUIRE_FALSE(reconstruct(g,-1,1,r));
+}
+
+TEST_CASE("Blocked kernels obey detailed balance and kernel orientation", "[pairs]") {
+    for(channels c: {channels{true,false,false},channels{false,true,false},channels{false,false,true}}) {
+        kernel k; REQUIRE(k.init(matter,c,24,10));
+        double f[max_order],b[max_order],n,J,nb,Jb;
+        fd(k.g,10,2,f,n,J); fd(k.g,10,-2,b,nb,Jb);
+        auto const s=evaluate(k,f,b);
+        REQUIRE(s.emission[0]>0);
+        REQUIRE(std::abs(s.energy[0])<3e-13*s.emission[0]);
+        REQUIRE(std::abs(s.energy[1])<3e-13*s.emission[1]);
+        REQUIRE(std::abs(s.number)<3e-13*s.emission_n[0]);
+        REQUIRE_THAT(s.emission[0],WithinRel(s.loss[0],3e-13));
+        REQUIRE_THAT(s.emission_n[1],WithinRel(s.loss_n[1],3e-13));
+        for(int i=0;i<k.g.n;++i) f[i]=b[i]=0;
+        auto const empty=evaluate(k,f,b);
+        REQUIRE(empty.number>0); REQUIRE(empty.loss[0]==0);
+        // One occupied partner is not enough for inverse annihilation.
+        fd(k.g,16,1,f,n,J);
+        auto const single=evaluate(k,f,b);
+        REQUIRE(single.number>=0);
+        REQUIRE(single.number<empty.number);
+    }
+    MyEOSParams eos{}; eos.temp=matter.T; eos.mu_e=matter.mu_e;
+    PairKernelParams p{}; p.omega=12; p.omega_prime=27;
+    auto const ref=PairKernels(&eos,&p);
+    REQUIRE_THAT(absorption_kernel(matter,{true,false,false},12,27),WithinRel(ref.abs[id_nux]*1e-21,1e-12));
+    REQUIRE_THAT(absorption_kernel(matter,{true,false,false},27,12),WithinRel(ref.abs[id_anux]*1e-21,1e-12));
+}
+
+TEST_CASE("Evolved pairs conserve number difference in an implicit M1 stage", "[pairs]") {
+    kernel k; REQUIRE(k.init(matter,{true,true,false},16,10));
+    metric_array_t metric({1,0,0,1,0,1},{0,0,0},1);
+    m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};
+    double f[max_order],n,J,old[10]={},out[10],res;
+    for(int s=0;s<2;++s) {
+        fd(k.g,12-s*3,0.3-s,f,n,J);
+        old[5*s]=base[s][ERADL]=J*energy_unit;
+        old[5*s+4]=base[s][NRADL]=n*number_unit;
+    }
+    for(double dt: {1e-8,1e-6,1e-4,1e-2}) {
+        INFO("dt [s] = " << dt);
+        REQUIRE(implicit_update(k,metric,base,eas,old,out,dt*time_unit,res));
+        REQUIRE(res<2e-8);
+        REQUIRE_THAT(out[4]-out[9],WithinRel(old[4]-old[9],5e-10));
+        REQUIRE(out[0]>0); REQUIRE(out[5]>0); REQUIRE(out[4]>0); REQUIRE(out[9]>0);
+    }
+}
+
+TEST_CASE("Transverse plasmon event rate agrees with thermal photon decay", "[pairs]") {
+    kernel k; REQUIRE(k.init(matter,{false,false,true},32,10));
+    double f[max_order]={}; auto const s=evaluate(k,f,f);
+    constexpr double alpha=1/137.035999084,gf=1.1663787e-11,hbar=6.582119569e-22;
+    constexpr double cv=-0.5+2*0.2325;
+    double const m2=4*alpha/(3*pairs::pi)*(400+pairs::pi*pairs::pi*100/3);
+    double count=0,energy=0;
+    // Independent one-dimensional integral over thermal photon momentum.
+    for(int i=0;i<k.g.n;++i) {
+        double const omega=std::sqrt(k.g.e[i]*k.g.e[i]+m2);
+        double const gamma=gf*gf*cv*cv*m2*m2*m2/(48*pairs::pi*pairs::pi*alpha*hbar*omega);
+        double const r=2*k.g.w[i]*gamma/std::expm1(omega/10);
+        count+=r; energy+=r*omega/2;
+    }
+    REQUIRE_THAT(s.number,WithinRel(count,0.03));
+    REQUIRE_THAT(s.energy[0],WithinRel(energy,0.03));
+}
+
+TEST_CASE("Pair fixed point and nonzero ordinary EAS share one stage", "[pairs]") {
+    kernel k; REQUIRE(k.init(matter,{true,true,true},16,10));
+    metric_array_t metric({1,0,0,1,0,1},{0,0,0},0.7);
+    m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};
+    double f[max_order],n,J,old[10]={},out[10],res;
+    for(int s=0;s<2;++s) {
+        fd(k.g,10,s==0?1:-1,f,n,J);
+        old[5*s]=base[s][ERADL]=J*energy_unit;
+        old[5*s+4]=base[s][NRADL]=n*number_unit;
+        eas[s][KAL]=2; eas[s][KANL]=3;
+        eas[s][ETAL]=2*old[5*s]; eas[s][ETANL]=3*old[5*s+4];
+    }
+    REQUIRE(implicit_update(k,metric,base,eas,old,out,100,res));
+    for(int s=0;s<2;++s) {
+        REQUIRE_THAT(out[5*s],WithinRel(old[5*s],2e-9));
+        REQUIRE_THAT(out[5*s+4],WithinRel(old[5*s+4],2e-9));
+    }
+}
+
+TEST_CASE("Pairs emit into vacuum and preserve moving-fluid LTE", "[pairs]") {
+    kernel k; REQUIRE(k.init(matter,{true,true,false},24,10));
+    metric_array_t metric({1,0,0,1,0,1},{0,0,0},0.7);
+    m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};
+    double old[10]={},out[10],res;
+    REQUIRE(implicit_update(k,metric,base,eas,old,out,0.1,res));
+    REQUIRE(out[0]>0); REQUIRE(out[5]>0);
+    REQUIRE(out[4]==out[9]);
+    for(double v: {0.1,0.5}) {
+        double const W=1/std::sqrt(1-v*v);
+        for(int s=0;s<2;++s) {
+            double f[max_order],n,J;
+            fd(k.g,10,s==0?0.4:-0.4,f,n,J);
+            old[5*s]=base[s][ERADL]=J*energy_unit*(4*W*W-1)/3;
+            old[5*s+1]=base[s][FXL]=J*energy_unit*4*W*W*v/3;
+            old[5*s+4]=base[s][NRADL]=n*number_unit*W;
+            base[s][grace::ZXL]=W*v;
+        }
+        REQUIRE(implicit_update(k,metric,base,eas,old,out,10,res));
+        for(int s=0;s<2;++s) {
+            REQUIRE_THAT(out[5*s],WithinRel(old[5*s],3e-8));
+            REQUIRE_THAT(out[5*s+1],WithinRel(old[5*s+1],3e-8));
+            REQUIRE_THAT(out[5*s+4],WithinRel(old[5*s+4],3e-8));
+        }
+    }
+}
+
+TEST_CASE("Pair kernels execute on the selected Kokkos backend", "[pairs]") {
+    Kokkos::View<double*> result("pair_backend_result",3);
+    Kokkos::parallel_for("pair_backend_check",1,KOKKOS_LAMBDA(int) {
+        kernel k;
+        material m{8,12,1e37,1,0}; // also exercise pure-neutron composition
+        result(0)=k.init(m,{true,true,true},16,8);
+        if(result(0)!=1) return;
+        double f[max_order]={},b[max_order]={};
+        auto const s=evaluate(k,f,b);
+        result(1)=s.number; result(2)=s.energy[0];
+    });
+    auto const r=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),result);
+    REQUIRE(r(0)==1); REQUIRE(r(1)>0); REQUIRE(std::isfinite(r(2)));
+}
+
+TEST_CASE("GRACE pair source wiring preserves densitization and aggregate weights", "[pairs]") {
+    var_array_t state("pair_state",1,1,1,N_EVOL_VARS,1);
+    var_array_t next("pair_next",1,1,1,N_EVOL_VARS,1);
+    var_array_t aux("pair_aux",1,1,1,N_AUX_VARS,1);
+    auto st=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),state);
+    auto ax=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),aux);
+    #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+    st(0,0,0,GXX_,0)=4; st(0,0,0,GYY_,0)=st(0,0,0,GZZ_,0)=1;
+    #else
+    st(0,0,0,GTXX_,0)=4; st(0,0,0,GTYY_,0)=st(0,0,0,GTZZ_,0)=1;
+    st(0,0,0,CHI_,0)=1;
+    #endif
+    st(0,0,0,ALP_,0)=0.7;
+    ax(0,0,0,PAIR_T_,0)=matter.T; ax(0,0,0,PAIR_MUE_,0)=matter.mu_e;
+    ax(0,0,0,PAIR_NB_,0)=matter.nb; ax(0,0,0,PAIR_YN_,0)=matter.yn;
+    ax(0,0,0,PAIR_YP_,0)=matter.yp; ax(0,0,0,PAIR_ACTIVE_,0)=3;
+    kernel k; REQUIRE(k.init(matter,{true,true,false},16,10,true));
+    double f[max_order],n,J; fd(k.g,7,0,f,n,J);
+    #if GRACE_M1_NU_SPECIES >= 5
+    constexpr int x=4,g=2;
+    st(0,0,0,ERAD3_,0)=st(0,0,0,ERAD4_,0)=2*J*energy_unit;
+    st(0,0,0,NRAD3_,0)=st(0,0,0,NRAD4_,0)=2*n*number_unit;
+    #else
+    constexpr int x=2,g=4;
+    #endif
+    st(0,0,0,m1_erad_idx<x>(),0)=2*g*J*energy_unit;
+    st(0,0,0,m1_nrad_idx<x>(),0)=2*g*n*number_unit;
+    Kokkos::deep_copy(state,st); Kokkos::deep_copy(next,state); Kokkos::deep_copy(aux,ax);
+    m1_equations_system_t system(state,staggered_variable_arrays_t{},aux);
+    scalar_array_t<GRACE_NSPACEDIM> idx;
+    Kokkos::parallel_for("pair_wiring",1,KOKKOS_LAMBDA(int) {
+        #if GRACE_M1_NU_SPECIES >= 5
+        system.compute_pair_implicit_update<2,3>(0,VEC(0,0,0),idx,next,0.1,1,16);
+        #endif
+        system.compute_pair_implicit_update<x,x,g>(0,VEC(0,0,0),idx,next,0.1,1,16);
+    });
+    auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),next);
+    metric_array_t metric({4,0,0,1,0,1},{0,0,0},0.7);
+    REQUIRE(metric.sqrtg()==2);
+    m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};
+    double old[10]={},out[10],res;
+    for(int s=0;s<2;++s) {
+        old[5*s]=base[s][ERADL]=J*energy_unit;
+        old[5*s+4]=base[s][NRADL]=n*number_unit;
+    }
+    REQUIRE(implicit_update(k,metric,base,eas,old,out,0.1,res));
+    REQUIRE_THAT(got(0,0,0,m1_erad_idx<x>(),0),WithinRel(2*g*out[0],2e-10));
+    REQUIRE_THAT(got(0,0,0,m1_nrad_idx<x>(),0),WithinRel(2*g*out[4],2e-10));
+    #if GRACE_M1_NU_SPECIES >= 5
+    REQUIRE_THAT(got(0,0,0,NRAD3_,0),WithinRel(got(0,0,0,NRAD4_,0),2e-10));
+    #endif
+}

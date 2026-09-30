@@ -5,10 +5,14 @@ evolution:
   
   time_stepper:
     type: keyword
-    allowed: ["euler", "rk2", "rk3", "rk4", "imex222"]
+    allowed: ["euler", "rk2", "rk3", "rk4", "imex222", "imex232", "imex333", "imex343"]
     default: "euler"
     description: >
-      What timestepper is used for MoL evolution 
+      What timestepper is used for MoL evolution.  The imex steppers solve the
+      stiff sources implicitly: imex222 = SSP2(2,2,2) (explicit part Heun, needs
+      cfl <~ 0.15 with Z4c), imex232 = ARS(2,3,2) (explicit part as stable as RK3),
+      imex333 = imex343 = ARS(3,4,3) (third order, explicit part as stable as RK4;
+      not SSP, so it overshoots on free-streaming M1 discontinuities -- use imex232 there).
   cfl_factor:
     type: double
     range: "(0,*)"

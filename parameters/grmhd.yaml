@@ -113,6 +113,17 @@ grmhd:
       default: true
       description: >
         Fall back to entropy prescription on c2p failure
+    entropy_backup_trigger:
+      type: keyword
+      allowed: ["distrust", "failure"]
+      default: "distrust"
+      description: >
+        When the entropy backup runs (with use_c2p_entropy_backup).  "distrust":
+        after a failed energy inversion, when eps lands below the EOS floor
+        (EPS_TOO_LOW), or when beta <= beta_fallback.  "failure" (FIL's rule):
+        only after a failed inversion or when beta <= beta_fallback; a cell
+        below the energy floor is clamped to it, and tau, S_i and the entropy
+        are rewritten from the clamped state.
     beta_fallback:
       type: double
       range: "[0,*)"
@@ -616,9 +627,14 @@ grmhd:
     fuka_id_type:
       type: keyword
       default: "BNS"
-      allowed: ["BH", "BBH", "NS", "BNS", "BHNS"]
+      allowed: ["BH", "BBH", "NS", "BNS", "BNS_MIRRORED", "BHNS"]
       description: >
-        type of FUKA data
+        type of FUKA data.  "BNS_MIRRORED" reads a BNS solution only in the octant
+        x,y,z >= 0 and mirrors it into the other seven with the reflection sign of
+        each component (beta^i, v^i odd along i; gamma_ij, K_ij odd when exactly one
+        index is a mirrored axis), so the initial data are mirror symmetric to the
+        last bit.  Only valid for an equal-mass head-on with both stars on the x
+        axis; an orbiting binary is symmetric under a rotation, not a mirror.
     id_interpolation_offset:
       type: double
       default: 0.0
@@ -643,6 +659,28 @@ grmhd:
       default: true
       description: >
         set the initial shift to zero (recommended)
+    reset_eps:
+      type: bool
+      default: false
+      description: >
+        Discard FUKA's specific internal energy and rebuild the thermodynamic
+        state at fixed temperature grmhd.atmosphere.temp_fl, keeping only rho
+        and the velocities from the ID.
+
+        FUKA solves a COLD, barotropic star (eostype Cold_Table): it carries no
+        temperature.  With false (the default, and the behaviour before this
+        parameter existed) GRACE recovers one by inverting eps against the
+        finite-temperature EOS.  That inversion is ill conditioned at nuclear
+        density -- eps_thermal ~ a T^2 / m_u, so dT/deps ~ m_u/(2 a T) and a
+        1e-5 difference in eps, i.e. table interpolation noise, is worth ~1 MeV.
+        The recovered temperature is then noise, bimodal between the T floor
+        (where no root exists) and a spurious hot root, and the pressure can
+        come out negative where the EOS extrapolates below its floor.
+
+        Set true whenever the ID is cold and the EOS is tabulated.  The star is
+        then thermodynamically consistent with GRACE's own EOS at temp_fl,
+        which is what FUKA solved for; it is no longer in exact equilibrium
+        with FUKA's pressure, so expect a small initial ring-down.
 
   two_punctures:
     type: schema
