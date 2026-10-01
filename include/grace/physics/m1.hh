@@ -57,6 +57,7 @@ namespace grace {
 // Host-side fatal report, after the producing device launch has completed.
 void check_pair_failures(pairs::failure_buffer const& failures, var_array_t state,
                          var_array_t aux, char const* phase, double stage_h=0);
+void trace_pair_moments(var_array_t state, char const* label, int stage=0, double factor=0);
 //**************************************************************************************************/
 //**************************************************************************************************
 /**
@@ -1510,8 +1511,10 @@ struct m1_equations_system_t
         // Nrad
         double N_l = primL[NRADL] *  metric_face.sqrtg() ;
         double N_r = primR[NRADL] *  metric_face.sqrtg() ;
-        double f_N_l = metric_face.sqrtg() * metric_face.alp() * N_l/cl.Gamma * ( cl.W * (cl.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cl.HU[idir]/cl.J ) ;
-        double f_N_r = metric_face.sqrtg() * metric_face.alp() * N_r/cr.Gamma * ( cr.W * (cr.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cr.HU[idir]/cr.J ) ;
+        // N_l/r already include sqrt(gamma): densitize the number current once,
+        // just as for energy. A second factor changes the transport velocity.
+        double f_N_l = metric_face.alp() * N_l/cl.Gamma * ( cl.W * (cl.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cl.HU[idir]/cl.J ) ;
+        double f_N_r = metric_face.alp() * N_r/cr.Gamma * ( cr.W * (cr.vU[idir]-metric_face.beta(idir)/metric_face.alp()) + cr.HU[idir]/cr.J ) ;
         //fluxes(VEC(i,j,k),m1_nrad_idx<ispec>(),idir,q) = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
         double f_N_HLLE = (cmax*f_N_l + cmin*f_N_r - A * cmax * cmin * (N_r-N_l))/(cmax+cmin) ;
 
@@ -1607,10 +1610,10 @@ struct m1_equations_system_t
 
             double const N_l_LLF   = primL_LLF[NRADL] * metric_face.sqrtg() ;
             double const N_r_LLF   = primR_LLF[NRADL] * metric_face.sqrtg() ;
-            double const f_N_l_LLF = metric_face.sqrtg() * metric_face.alp() * N_l_LLF/cl_LLF.Gamma
+            double const f_N_l_LLF = metric_face.alp() * N_l_LLF/cl_LLF.Gamma
                                    * ( cl_LLF.W * (cl_LLF.vU[idir] - metric_face.beta(idir)/metric_face.alp())
                                      + cl_LLF.HU[idir]/cl_LLF.J ) ;
-            double const f_N_r_LLF = metric_face.sqrtg() * metric_face.alp() * N_r_LLF/cr_LLF.Gamma
+            double const f_N_r_LLF = metric_face.alp() * N_r_LLF/cr_LLF.Gamma
                                    * ( cr_LLF.W * (cr_LLF.vU[idir] - metric_face.beta(idir)/metric_face.alp())
                                      + cr_LLF.HU[idir]/cr_LLF.J ) ;
             double const f_N_LF    = 0.5*(f_N_l_LLF + f_N_r_LLF) - 0.5*(N_r_LLF - N_l_LLF) ;

@@ -39,8 +39,8 @@ TEST_CASE("Pair failures retain reconstruction context and bounded device sample
     // Positive moments whose mean lies below every quadrature node cannot
     // be represented. This is a reconstruction failure, not a kernel error.
     REQUIRE_FALSE(reconstruct(k.g,1e20,1e20*k.g.e[0]*0.5,f,&d));
-    REQUIRE(d.code!=failure_code::none);
-    REQUIRE(d.iteration>=0);
+    REQUIRE(d.code==failure_code::moment_grid_range);
+    REQUIRE(d.iteration==-1);
     REQUIRE(d.emin==k.g.e[0]);
     REQUIRE(d.emax==k.g.e[k.g.n-1]);
     REQUIRE(reconstruct(k.g,0,0,f,&d));
@@ -92,6 +92,54 @@ TEST_CASE("Zero radiation ID matches the independent evolution floors", "[pairs]
 TEST_CASE("Pair units match existing EAS", "[pairs]") {
     REQUIRE_THAT(energy_unit/time_unit,WithinRel(Q_mev_to_code(1,1),1e-14));
     REQUIRE_THAT(number_unit/time_unit,WithinRel(R_to_code(1,1),1e-14));
+}
+
+TEST_CASE("Number and energy face fluxes preserve a common spectrum in a static curved metric", "[pairs][transport]") {
+    var_array_t state("number_flux_state",4,4,4,N_EVOL_VARS,1);
+    var_array_t aux("number_flux_aux",4,4,4,N_AUX_VARS,1);
+    flux_array_t flux("number_flux",4,4,4,N_EVOL_VARS,3,1);
+    scalar_array_t<GRACE_NSPACEDIM> dx("number_flux_dx",3,1);
+    Kokkos::deep_copy(aux,0.0); Kokkos::deep_copy(dx,1.0);
+    auto st=Kokkos::create_mirror_view(state);
+    // Fluid at rest, zero shift. E=2, N=3, F_x=1; g_xx=4 implies
+    // sqrt(gamma)=2 and F^x=1/4. Thus flux_E=0.35 and flux_N=0.525.
+    for(int i=0;i<4;++i) for(int j=0;j<4;++j) for(int l=0;l<4;++l) {
+        #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+        st(i,j,l,GXX_,0)=4; st(i,j,l,GYY_,0)=st(i,j,l,GZZ_,0)=1;
+        #else
+        st(i,j,l,GTXX_,0)=4; st(i,j,l,GTYY_,0)=st(i,j,l,GTZZ_,0)=1;
+        st(i,j,l,CHI_,0)=1;
+        #endif
+        st(i,j,l,ALP_,0)=0.7;
+        // getflux consumes the normalized reconstruction state: E, N/E, F_i/E.
+        st(i,j,l,ERAD3_,0)=2;
+        st(i,j,l,NRAD3_,0)=1.5;
+        st(i,j,l,FRADX3_,0)=0.5;
+    }
+    Kokkos::deep_copy(state,st);
+    m1_equations_system_t system(state,staggered_variable_arrays_t{},aux);
+    Kokkos::parallel_for("curved_number_flux",1,KOKKOS_LAMBDA(int) {
+        system.compute_x_flux<godunov_reconstructor_t,2>(0,VEC(2,2,2),flux,flux,dx,0.01,1);
+    });
+    auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),flux);
+    REQUIRE_THAT(got(2,2,2,ERAD3_,0,0),WithinRel(0.35,1e-12));
+    REQUIRE_THAT(got(2,2,2,NRAD3_,0,0),WithinRel(0.525,1e-12));
+    REQUIRE_THAT(got(2,2,2,NRAD3_,0,0)/got(2,2,2,ERAD3_,0,0),WithinRel(1.5,1e-12));
+}
+
+TEST_CASE("Hunter moments exceed the pair quadrature support", "[pairs][diagnostics]") {
+    // rank 2, iteration 0, q=80, (28,23,15), from the 2026-10-01 crash.
+    double const n=3.71514358939047201e27,J=4.07411727181158377e34;
+    for(int order:{16,24,32}) {
+        grid g; g.init(order,2.79366770784541222e3);
+        REQUIRE(J/n>g.e[order-1]);
+        diagnostic d; double f[max_order];
+        REQUIRE_FALSE(reconstruct(g,n,J,f,&d));
+        REQUIRE(d.code==failure_code::moment_grid_range);
+        REQUIRE(d.iteration==-1);
+        // The logged antineutrino moments are representable on the same grid.
+        REQUIRE(reconstruct(g,2.12570665646473441e31,2.87870240689971931e33,f,&d));
+    }
 }
 
 TEST_CASE("Pair quadrature and moment reconstruction", "[pairs]") {

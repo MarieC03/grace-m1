@@ -193,6 +193,17 @@ m1:
         Nodes per energy dimension. Check convergence with 24 and 32,
         especially for degeneracy or the plasmon threshold.
 
+    pair_trace_iterations:
+      type: int
+      range: "[0,*)"
+      default: 0
+      description: >
+        Debug only: for this many steps after startup/restart, print per-rank,
+        per-species moment summaries around ARS IMEX stages and pair source /
+        backreaction updates. Includes ghost cells. Adds reductions and host
+        synchronization; zero disables it. The reported E/N mean is a lab-frame
+        energy-per-number proxy, not the comoving mean used by pair kernels.
+
     muon_decay:
       type: bool
       default: false

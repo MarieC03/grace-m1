@@ -412,6 +412,10 @@ Failure status meanings:
   value are recorded.
 - `decay-kernel`: muon-decay kernel construction failed.
 - `moment-input`: reconstruction received nonpositive, non-vacuum moments.
+- `mean-outside-grid`: J/n lies outside the quadrature energy range. Since
+  the reconstructed mean is a positive weighted average of node energies,
+  no nonnegative spectrum on this grid can fit those moments. This check
+  rejects before Newton; it does not prove continuum non-realizability.
 - `reconstruction-jacobian`, `reconstruction-line-search`, or
   `reconstruction-iterations`: the spectrum reconstruction failed. Its input
   n/J, iteration, residual and grid energy range are recorded. This alone does
@@ -428,6 +432,37 @@ The `zero` radiation initial data now uses E_floor(r) and N_floor(r), matching
 the evolution/activation reset. Previously it used E_floor(r)/eps_fl for N,
 which could impose a different spectrum before the first floor reset. This
 consistency fix does not establish the cause of any particular solver failure.
+
+For tracing the origin of a bad state, add `pair_trace_iterations: 1` inside
+`m1.eas` (default 0, disabled). `[PAIR_TRACE]` lines report each rank/species'
+minimum densitized E/N, maximum lab-frame E/N converted to MeV, and the number
+of invalid energy/number states (negative/nonfinite or only one zero). Exact
+vacuum is valid. The extrema include ghost cells and need not come from the
+same cell; the lab ratio is not the comoving J/n used in reconstruction.
+ARS IMEX helpers identify explicit/implicit stages, raw updates, boundary
+fills, stage accumulation hooks and auxiliary/floor passes. The additional
+`source-after-pairs` line precedes the ordinary-species/backreaction launch;
+compare it with `implicit-raw` to detect changes in that launch. Tracing is
+read-only and adds reductions/synchronization for the requested startup steps.
+Keep it disabled for production performance.
+
+The October 1 Hunter replay (rank 2, q=80, cell 28/23/15) has numu J/n =
+1.0966244436544126e7 MeV but a largest node of 5.243599454919094e5 MeV.
+Orders 24 and 32 at that same scale still do not cover its mean. Its nubar_mu
+moments, with a mean of about 135 MeV, reconstruct on those grids. The numu
+energy is far above its floor while its number remains close to its floor;
+this motivates tracing transport and stage assembly, not extending the grid
+blindly. The matter density is about 4.7e-7 in code units, far above the YAML
+atmosphere floor 1e-14.
+
+A separate confirmed defect was found in the number face flux: it multiplied
+the already densitized N_l/r by sqrt(gamma) again. Both the normal flux and
+the optional LLF branch now use that factor only once. For static matter and
+zero shift, a common spectrum requires flux_N/flux_E = N/E. A constant curved
+metric regression with sqrt(gamma)=2 previously gave flux_N=1.05 instead of
+0.525 while flux_E=0.35 was correct. This defect is relevant to the observed
+energy/number separation; the Hunter evolution must still be rerun to establish
+whether correcting it resolves the crash completely.
 
 Do not work around failures by skipping pairs for the first iterations or by
 resetting the radiation to LTE. Vacuum emission is supported; the intended

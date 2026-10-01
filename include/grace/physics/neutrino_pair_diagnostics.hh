@@ -8,7 +8,7 @@ namespace grace::pairs {
 enum class failure_code {
     none, kernel_input, kernel_backend, kernel_element, decay_kernel,
     moment_input, reconstruction_jacobian, reconstruction_line_search,
-    reconstruction_iterations, implicit_solve
+    reconstruction_iterations, implicit_solve, moment_grid_range
 };
 
 // Optional diagnostics: no printing inside Newton or its rejected trial steps.
@@ -27,6 +27,7 @@ inline char const* failure_name(failure_code code) {
     case failure_code::kernel_element: return "kernel-element";
     case failure_code::decay_kernel: return "decay-kernel";
     case failure_code::moment_input: return "moment-input";
+    case failure_code::moment_grid_range: return "mean-outside-grid";
     case failure_code::reconstruction_jacobian: return "reconstruction-jacobian";
     case failure_code::reconstruction_line_search: return "reconstruction-line-search";
     case failure_code::reconstruction_iterations: return "reconstruction-iterations";

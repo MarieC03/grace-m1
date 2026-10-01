@@ -160,11 +160,17 @@ KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, doubl
         diag->emin=g.e[0]; diag->emax=g.e[g.n-1];
     }
     if (n==0 && J==0) { for(int i=0;i<g.n;++i) f[i]=0; return true; }
-    if (!(n>0 && J>0)) {
+    if (!(n>0 && J>0) || !Kokkos::isfinite(n) || !Kokkos::isfinite(J)) {
         if(diag) diag->code = failure_code::moment_input;
         return false;
     }
     double const mean=J/n;
+    // With nonnegative occupations, J/n is a weighted average of the nodes.
+    // More Newton iterations cannot fit a mean outside their convex hull.
+    if(!(mean>=g.e[0] && mean<=g.e[g.n-1])) {
+        if(diag) diag->code = failure_code::moment_grid_range;
+        return false;
+    }
     double a=Kokkos::log(2*phase*Kokkos::pow(mean/3,3)/n), b=3;
     for (int it=0; it<70; ++it) {
         double m0=0,m1=0,h0=0,h1=0,h2=0;

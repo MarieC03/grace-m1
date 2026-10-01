@@ -209,16 +209,28 @@ void evolve_impl() {
     // Stage helpers for the ARS IMEX steppers: nw += c dt X(od) and ghost zones,
     // then `hook` (accumulations on the RAW stage, so that floors and constraint
     // projections never leak into the stage derivatives), constraints, auxiliaries.
+    int explicit_stage=0, implicit_stage=0;
+    auto trace_stage = [&] (var_array_t st, char const* label, int stage, double factor) {
+        #ifdef GRACE_ENABLE_M1
+        trace_pair_moments(st,label,stage,factor);
+        #endif
+    };
     auto imex_explicit = [&] ( double c
                              , var_array_t& nw, var_array_t& od
                              , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
                              , bool last, auto&& hook ) {
+        ++explicit_stage;
+        trace_stage(od,"explicit-input",explicit_stage,c);
         advance_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        trace_stage(nw,"explicit-raw",explicit_stage,c);
         amr::apply_boundary_conditions(nw,snw,od,sod,dt,c) ;
+        trace_stage(nw,"explicit-after-bc",explicit_stage,c);
         hook() ;
         enforce_algebraic_constraints_after_bc(nw) ;
+        trace_stage(nw,"explicit-before-aux",explicit_stage,c);
         if ( last ) compute_auxiliary_quantities<eos_t>(nw, snw, aux) ;
         else        compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+        trace_stage(nw,"explicit-after-aux",explicit_stage,c);
     } ;
     // nw = od + c dt G(nw), `hook` on the raw solution.  With no implicit physics
     // active nw is a copy of od, whose auxiliaries are current: skip the c2p pass.
@@ -226,10 +238,15 @@ void evolve_impl() {
                              , var_array_t& nw, var_array_t& od
                              , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
                              , auto&& hook ) {
+        ++implicit_stage;
+        trace_stage(od,"implicit-input",implicit_stage,c);
         advance_implicit_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        trace_stage(nw,"implicit-raw",implicit_stage,c);
         hook() ;
+        trace_stage(nw,"implicit-before-aux",implicit_stage,c);
         if ( m1_is_active() )
             compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+        trace_stage(nw,"implicit-after-aux",implicit_stage,c);
     } ;
 
     if ( tstepper == "euler" ) {
@@ -2043,6 +2060,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 #endif
             });
         check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
+        trace_pair_moments(new_state,"source-after-pairs",0,dtfact);
     }
     #endif
     if ( m1_is_active() )   // M1 activation trigger
