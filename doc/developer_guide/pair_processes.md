@@ -464,6 +464,31 @@ metric regression with sqrt(gamma)=2 previously gave flux_N=1.05 instead of
 energy/number separation; the Hunter evolution must still be rerun to establish
 whether correcting it resolves the crash completely.
 
+The subsequent Hunter stage trace localized the large mean to explicit stage 2:
+numu's maximum lab mean was about 140 MeV after the first pair solve and its
+backreaction/auxiliary passes, then about 1.85e7 MeV at `explicit-raw`. The
+transport failure is `mean-outside-grid`, before reconstruction Newton iterations.
+Positive E and N alone are insufficient: `invalid_EN_cells=0` does not check
+the spectral mean against the quadrature nodes.
+
+A confirmed FOFC input-representation bug explains how such states can be
+created. The normal flux pass temporarily stores E/sqrt(gamma), N/E and F/E,
+then restores the conserved fields before FOFC tagging/correction. FOFC called
+the same reconstruction entry point on the restored state. It therefore
+multiplied conserved N and F by E again, suppressing their fluxes at small
+radiation energies while energy diffusion remained active. The dedicated
+`compute_fofc_flux<direction,species>` path now reads donor-cell conserved
+fields and divides all five moments by the donor cell's sqrt(gamma), before
+using the common closure and HLLE calculation at the face. It does not mutate
+the input state. All radiation FOFC directions/species use this path, including
+photons when enabled. No rates, floors or quadrature limits are changed.
+
+The regression compares FOFC against correctly normalized donor fluxes for all
+compiled neutrino species in all three directions, with flat and varying curved
+metrics. A hot/cold interface additionally checks the analytic number-to-energy
+diffusive flux ratio. The full Hunter evolution still needs a rerun to determine
+whether any further transport or stiff-source issues remain.
+
 Do not work around failures by skipping pairs for the first iterations or by
 resetting the radiation to LTE. Vacuum emission is supported; the intended
 initial-value problem should remain intact. A matter-density cut also needs

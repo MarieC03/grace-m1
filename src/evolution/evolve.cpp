@@ -910,8 +910,8 @@ void apply_fofc_correction(
     // M1-aware FOFC: recompute flagged faces' radiation fluxes first-order
     // (donor cell + HLLE) per species, gated by the per-species bits packed
     // into the shared face tag (bit 0 = hydro, bit s+1 = species s).  Eface IS
-    // the GS getefarray() the M1 flux takes as 'vbar'; recon_t (donor_cell)
-    // serves both hydro and M1.
+    // the GS getefarray(). M1 uses its dedicated conserved-input donor path:
+    // compute_fluxes has already undone the temporary E, N/E, F/E encoding.
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     bool const m1_on = m1_is_active() ;   // captured by value into the kernels below
     #endif
@@ -952,17 +952,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),0,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<0,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_x_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<0,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<0,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_x_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_x_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<0,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<0,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<0,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
@@ -981,17 +981,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),1,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<1,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_y_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<1,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<1,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_y_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_y_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<1,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<1,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<1,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
@@ -1010,17 +1010,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),2,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<2,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_z_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<2,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<2,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_z_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_z_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<2,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<2,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<2,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif

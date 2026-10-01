@@ -98,6 +98,15 @@ struct m1_equations_system_t
     , backreaction_params(_backreaction_pars)
     {} ;
 
+    // FOFC runs after compute_fluxes has restored the conserved state.
+    template<int idir, int ispec>
+    void GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    compute_fofc_flux(int q, VEC(int i, int j, int k), flux_array_t fluxes,
+                      scalar_array_t<GRACE_NSPACEDIM> dx, double dt, double dtfact) const
+    {
+        getflux<idir,ispec,donor_cell_reconstructor_t,false>(VEC(i,j,k),q,fluxes,dx,dt,dtfact);
+    }
+
     /**
      * @brief Compute M1 fluxes in direction \f$x^1\f$
      *
@@ -1328,7 +1337,8 @@ struct m1_equations_system_t
      */
     template< int idir
             , int ispec
-            , typename recon_t   >
+            , typename recon_t
+            , bool normalized_input = true >
     GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
     getflux(  VEC( const int i
             ,      const int j
@@ -1407,14 +1417,40 @@ struct m1_equations_system_t
                          , primR[recon_indices_aux_loc[ivar]]
                          , idir) ;
         }
-        // note that at this stage F is actually F/E, we need to fix that here
-        for( int ii=0; ii<3; ++ii) {
-            primL[FXL+ii] *= primL[ERADL] ;
-            primR[FXL+ii] *= primR[ERADL] ;
+        // Normal reconstruction reads E, N/E, F/E. FOFC instead reads the
+        // restored conserved state; donor values must be undensitized with
+        // their CELL metric (the face metric is used by the Riemann solver).
+        double inv_sg_left=1.0, inv_sg_right=1.0;
+        if constexpr(!normalized_input) {
+            static_assert(std::is_same_v<recon_t,donor_cell_reconstructor_t>,
+                          "Conserved M1 flux input is only supported for FOFC donor cells");
+            int const il=i-utils::delta(0,idir), jl=j-utils::delta(1,idir);
+            #ifdef GRACE_3D
+            int const kl=k-utils::delta(2,idir);
+            #endif
+            metric_array_t left_metric, right_metric;
+            FILL_METRIC_ARRAY(left_metric,this->_state,q,VEC(il,jl,kl));
+            FILL_METRIC_ARRAY(right_metric,this->_state,q,VEC(i,j,k));
+            inv_sg_left=1.0/left_metric.sqrtg();
+            inv_sg_right=1.0/right_metric.sqrtg();
         }
-        // ditto for N
-        primL[NRADL] *= primL[ERADL] ;
-        primR[NRADL] *= primR[ERADL] ;
+        auto const to_physical=[&](m1_prims_array_t& left, m1_prims_array_t& right) {
+            if constexpr(normalized_input) {
+                for(int a=0;a<3;++a) {
+                    left[FXL+a] *= left[ERADL];
+                    right[FXL+a] *= right[ERADL];
+                }
+                left[NRADL] *= left[ERADL];
+                right[NRADL] *= right[ERADL];
+            } else {
+                constexpr int moments[5]={ERADL,NRADL,FXL,FYL,FZL};
+                for(int a=0;a<5;++a) {
+                    left[moments[a]] *= inv_sg_left;
+                    right[moments[a]] *= inv_sg_right;
+                }
+            }
+        };
+        to_physical(primL,primR);
         // closures
         m1_closure_t cl{
             primL[ERADL],
@@ -1546,12 +1582,7 @@ struct m1_equations_system_t
                                  , primR_LLF[recon_indices_aux_loc[ivar]]
                                  , idir ) ;
             }
-            for( int ii=0; ii<3; ++ii) {
-                primL_LLF[FXL+ii] *= primL_LLF[ERADL] ;
-                primR_LLF[FXL+ii] *= primR_LLF[ERADL] ;
-            }
-            primL_LLF[NRADL] *= primL_LLF[ERADL] ;
-            primR_LLF[NRADL] *= primR_LLF[ERADL] ;
+            to_physical(primL_LLF,primR_LLF);
 
             // Build closures from cell-centred states
             m1_closure_t cl_LLF{
