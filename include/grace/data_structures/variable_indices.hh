@@ -438,6 +438,14 @@ enum aux_var_idx : int {
     //   reconstructible offline from the kappa_a*/kappa_s* in the "rates" group,
     //   but dt is not in the output.  Large sentinel when the policy is inactive.
     BETAEQ_TSCALE_,
+    //   Target of the "timescale" beta-eq closure this evaluation: the full
+    //   equilibrium (T [MeV], Ye, Ymu) the solve returned, before the tscale blend.
+    //   -1 where the closure did not apply (inactive, failed, or atmosphere).
+    BETAEQ_T_EQ_,
+    BETAEQ_YE_EQ_,
+    #if GRACE_M1_NU_SPECIES >= 5
+    BETAEQ_YMU_EQ_,
+    #endif
     //   Backreaction actually applied, summed over the step's implicit stages:
     //   specific energy dtau/D, dYe, dYmu, and a sticky reject mask
     //   (1 = Ye pair, 2 = Ymu pair, 4 = energy).  FIL: m1_heatcool/m1_lepton_source.
@@ -445,6 +453,8 @@ enum aux_var_idx : int {
     M1_LEPTON_SOURCE_,
     #if GRACE_M1_NU_SPECIES >= 5
     M1_MUON_SOURCE_,
+    //   dYmu the collision proposed, before the hard stop / partial acceptance.
+    M1_MUON_SOURCE_RAW_,
     #endif
     M1_BR_REJECT_,
     //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)

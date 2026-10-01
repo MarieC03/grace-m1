@@ -959,7 +959,22 @@ struct neutrinos_eas_op
         // Sentinel, not the 1e-30 floor: a transparent cell never equilibrates,
         // and beta_eq_tscale is a ratio where small means "equilibrates fast".
         aux(i,j,k,BETAEQ_TSCALE_,q)=1.e30;
+        write_betaeq_target(VEC(i,j,k), q, -1.0, -1.0, -1.0) ;
         #endif
+    }
+
+    //! Closure-target diagnostic (T [MeV], Ye, Ymu); -1 = the closure did not apply.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    void write_betaeq_target(VEC(const int i, const int j, const int k), int64_t q,
+                             double T_eq, double Ye_eq, double Ymu_eq) const {
+        #ifdef GRACE_M1_DIAGNOSTICS
+        aux(i,j,k,BETAEQ_T_EQ_,q)  = T_eq ;
+        aux(i,j,k,BETAEQ_YE_EQ_,q) = Ye_eq ;
+        #if GRACE_M1_NU_SPECIES >= 5
+        aux(i,j,k,BETAEQ_YMU_EQ_,q) = Ymu_eq ;
+        #endif
+        #endif
+        (void)T_eq ; (void)Ye_eq ; (void)Ymu_eq ;
     }
 
     // Write the M1 diagnostics from a finished fugacity_state.  Factored out so
@@ -1036,6 +1051,7 @@ struct neutrinos_eas_op
         // GRACE_M1_DIAGNOSTICS): that flag is off in production, which is
         // exactly where a silently non-converging solver must not hide.
         betaeq_err_t berr{} ;
+        write_betaeq_target(VEC(i,j,k), q, -1.0, -1.0, -1.0) ;
 
         if (betaeq_mode == betaeq_mode_t::chemical) find_ye_betaeq(rho, T, Ye, Ymu, berr);
 
@@ -1214,6 +1230,7 @@ struct neutrinos_eas_op
                 // likewise falls through on GSL non-convergence).  The optional
                 // electron-only retry holds Ymu, as FIL's eta_numu = 0 gate does.
                 if (eq_ok) {
+                    write_betaeq_target(VEC(i,j,k), q, T_eq, Ye_eq, Ymu_eq) ;
                     if (beta_equil_tscale < 0.5) {
                         // Fast equilibration: full equilibrium values.
                         T   = T_eq ;

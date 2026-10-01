@@ -768,6 +768,10 @@ struct m1_equations_system_t
         #endif
 
         #ifdef GRACE_M1_DIAGNOSTICS
+        #if GRACE_M1_NU_SPECIES >= 5
+        // What the collision proposed for Ymu, whatever the limiters did with it.
+        this->_aux(VEC(i,j,k),M1_MUON_SOURCE_RAW_,q) += ( x_mu.N - x_mubar.N ) / D ;
+        #endif
         // What was applied, summed raw over the step's implicit stages (not
         // IMEX-weighted); reset every step.  FIL: m1_heatcool, m1_lepton_source.
         if ( acc_E ) {

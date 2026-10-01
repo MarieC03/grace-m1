@@ -642,10 +642,15 @@ class grace_runtime_impl_t
             // Nuclear composition + beta-equilibration timescale ratio.
             , "X_n", "X_p", "X_a", "X_h", "Abar", "Zbar"
             , "beta_eq_tscale"
+            // Closure target (-1 where it did not apply).
+            , "betaeq_t_eq", "betaeq_ye_eq"
+            #if GRACE_M1_NU_SPECIES >= 5
+            , "betaeq_ymu_eq"
+            #endif
             // Backreaction applied this step and its rejections.
             , "m1_heatcool", "m1_lepton_source"
             #if GRACE_M1_NU_SPECIES >= 5
-            , "m1_muon_source"
+            , "m1_muon_source", "m1_muon_source_raw"
             #endif
             , "m1_br_reject"
             // Implicit collision solve: failure mask and exit residual.

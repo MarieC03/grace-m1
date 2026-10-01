@@ -864,6 +864,10 @@ TEST_CASE("M1 backreaction: a Ymu rejection restores the whole numu/numubar pair
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
     require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
+    #ifdef GRACE_M1_DIAGNOSTICS
+    REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_RAW_), WithinRel(-1.0e-3, 1e-12));   // proposed
+    REQUIRE(c.get_aux(M1_MUON_SOURCE_) == 0.0);                                  // applied
+    #endif
 }
 
 namespace {
@@ -907,6 +911,8 @@ TEST_CASE("M1 backreaction: muon_partial_at_bound lands Ymu on the floor with th
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
     #ifdef GRACE_M1_DIAGNOSTICS
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 8.0);
+    REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_RAW_), WithinRel(-1.0e-3, 1e-12));
+    REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_), WithinRel(-f * 1.0e-3, 1e-12));
     #endif
 }
 

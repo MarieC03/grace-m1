@@ -187,6 +187,7 @@ void evolve_impl() {
             aux(i,j,k,M1_LEPTON_SOURCE_,q) = 0.0 ;
             #if GRACE_M1_NU_SPECIES >= 5
             aux(i,j,k,M1_MUON_SOURCE_,q)   = 0.0 ;
+            aux(i,j,k,M1_MUON_SOURCE_RAW_,q) = 0.0 ;
             #endif
             aux(i,j,k,M1_BR_REJECT_,q)     = 0.0 ;
             aux(i,j,k,M1_IMPLICIT_ERR_,q)  = 0.0 ;
