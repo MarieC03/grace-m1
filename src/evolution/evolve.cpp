@@ -1999,6 +1999,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                               && (t >= backreaction_params.t_backreact) ;
     double const backreact_rho_min = backreaction_params.rho_min ;
     bool const backreact_muon_partial = backreaction_params.muon_partial ;
+    bool const backreact_electron_partial = backreaction_params.electron_partial ;
 
     // Loaded EOS (table bounds included), fetched on the host and captured
     // into the kernel for the backreaction composition limiter -- same
@@ -2060,7 +2061,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             if ( do_backreaction ) {
                 m1_eq_system.add_backreaction<eos_t>(
                 q, VEC(i,j,k), _idx, new_state, _beos, backreact_rho_min,
-                backreact_muon_partial
+                backreact_muon_partial, backreact_electron_partial
                 );
             }
             #endif

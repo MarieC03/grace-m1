@@ -543,6 +543,7 @@ struct m1_backreaction_params_t {
     double t_backreact ;
     double rho_min ;   ///< skip the radiation->fluid coupling below this rho
     bool muon_partial ; ///< accept a muon pair that leaves the Ymu table in part
+    bool electron_partial ; ///< same for the electron pair and the Ye table
 };
 
 static m1_backreaction_params_t
@@ -552,6 +553,7 @@ get_m1_backreaction_params() {
     m1_backreaction_params.t_backreact = grace::get_param<double>("m1", "backreaction", "t_start") ;
     m1_backreaction_params.rho_min = grace::get_param<double>("m1", "backreaction", "rho_min") ;
     m1_backreaction_params.muon_partial = grace::get_param<bool>("m1", "backreaction", "muon_partial_at_bound") ;
+    m1_backreaction_params.electron_partial = grace::get_param<bool>("m1", "backreaction", "electron_partial_at_bound") ;
     return m1_backreaction_params ;
 }
 

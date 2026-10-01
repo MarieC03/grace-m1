@@ -468,6 +468,18 @@ m1:
         Partly accepted cells carry bit 8 in m1_br_reject.  false (default)
         reverts the pair as before.
 
+    electron_partial_at_bound:
+      type: bool
+      default: false
+      description: >
+        Hard-stop builds with >= 3 species.  The electron-pair counterpart of
+        muon_partial_at_bound: when the nue/anti-nue exchange would take Ye
+        outside the table, accept the fraction f of the WHOLE pair exchange
+        (E, F and N of both blocks) that lands Ye just inside the bound, instead
+        of reverting the pair.  Energy, momentum and electron lepton number are
+        conserved and E/N does not drift.  Partly accepted cells carry bit 16 in
+        m1_br_reject (1 = fully rejected).  false (default) reverts as before.
+
   trigger:
     type: schema
     description: >

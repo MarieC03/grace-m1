@@ -448,7 +448,8 @@ enum aux_var_idx : int {
     #endif
     //   Backreaction actually applied, summed over the step's implicit stages:
     //   specific energy dtau/D, dYe, dYmu, and a sticky reject mask
-    //   (1 = Ye pair, 2 = Ymu pair, 4 = energy).  FIL: m1_heatcool/m1_lepton_source.
+    //   (1 = Ye pair, 2 = Ymu pair, 4 = energy; 16 / 8 = Ye / Ymu pair accepted only in
+    //   part, see m1.backreaction.*_partial_at_bound).  FIL: m1_heatcool/m1_lepton_source.
     M1_HEATCOOL_,
     M1_LEPTON_SOURCE_,
     #if GRACE_M1_NU_SPECIES >= 5
