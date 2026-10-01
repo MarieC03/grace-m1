@@ -53,6 +53,10 @@
 #include <type_traits>
 
 namespace grace {
+
+// Host-side fatal report, after the producing device launch has completed.
+void check_pair_failures(pairs::failure_buffer const& failures, var_array_t state,
+                         var_array_t aux, char const* phase, double stage_h=0);
 //**************************************************************************************************/
 //**************************************************************************************************
 /**
@@ -72,6 +76,8 @@ struct m1_equations_system_t
     static constexpr std::array<int,3> ye_coupling_sign {1,-1,0} ;
     #endif
     public:
+
+    pairs::failure_buffer pair_failures;
 
     m1_equations_system_t(grace::var_array_t state_
                         , grace::staggered_variable_arrays_t stag_state_
@@ -675,11 +681,24 @@ struct m1_equations_system_t
             }
         }
         pairs::kernel kernel;
-        if(!kernel.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb))
-            Kokkos::abort("Invalid evolved pair kernel");
+        pairs::diagnostic diag;
+        auto const fail=[&]() {
+            auto r=pairs::make_failure_record(mat,diag,q,VEC(i,j,k));
+            r.active=bits; r.scale=scale; r.order=order;
+            r.species_a=sa; r.species_b=sb; r.multiplicity=multiplicity;
+            pair_failures.save(r);
+        };
+        if(!kernel.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag)) {
+            fail();
+            return;
+        }
         double residual=0;
-        if(!pairs::implicit_update(kernel,metric,p,eas,old,out,dt*dtfact,residual))
-            Kokkos::abort("Coupled pair source solve failed: reduce timestep/check FD realizability and quadrature");
+        if(!pairs::implicit_update(kernel,metric,p,eas,old,out,dt*dtfact,residual)) {
+            diag.code=pairs::failure_code::implicit_solve;
+            diag.residual=residual;
+            fail();
+            return;
+        }
         this->_aux(VEC(i,j,k),PAIR_RES_,q)=Kokkos::fmax(this->_aux(VEC(i,j,k),PAIR_RES_,q),residual);
         auto const write=[&](auto species, int s) {
             constexpr int sp=decltype(species)::value;

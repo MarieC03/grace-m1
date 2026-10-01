@@ -1,0 +1,265 @@
+name: "grace"
+# HOT-TOV, 5 species with muons.  EOS, c2p and M1 settings as in the head-on runs
+# (work_bollig_logp_fail_efb / _mupart, Sep 2026).  Changes against the old
+# HOT-TOV leptonic.yaml are marked "CHANGED".
+amr: {
+  npoints_block_x: 32,
+  npoints_block_y: 32,
+  npoints_block_z: 32,
+  xmin: -256.0,
+  xmax: 256.0,
+  ymin: -256.0,
+  ymax: 256.0,
+  zmin: 0,
+  zmax: 256.0,
+
+  n_ghostzones: 4,
+  initial_refinement_level: 2,
+
+  max_refinement_level: 6,
+
+  regrid_every: -1,
+
+  n_fmr_boxes: 4,
+  fmr_boxes: [
+    {
+      target_level_delta: 1,
+      x_min: -96,
+      x_max: 96,
+      y_min: -96,
+      y_max: 96,
+      z_min: 0,
+      z_max: 96,
+    },
+    {
+      target_level_delta: 2,
+      x_min: -64,
+      x_max: 64,
+      y_min: -64,
+      y_max: 64,
+      z_min: 0,
+      z_max: 64,
+    },
+    {
+      target_level_delta: 3,
+      x_min: -36,
+      x_max: 36,
+      y_min: -36,
+      y_max: 36,
+      z_min: 0,
+      z_max: 36
+    },
+    {
+      target_level_delta: 4,
+      x_min: -16,
+      x_max: 16,
+      y_min: -16,
+      y_max: 16,
+      z_min: 0,
+      z_max: 16
+    },
+  ],
+  reflection_symmetries: {
+    x: false,
+    y: false,
+    z: true,
+  }
+}
+
+IO: {
+  xy_plane_offset: 0.0,
+  xz_plane_offset: 0.0,
+  yz_plane_offset: 0.0,
+
+  # CHANGED: + "diagnostics" (eta_nu, mu_*, beta_eq_tscale, betaeq_*_eq, m1_br_reject,
+  # m1_muon_source(_raw), ...; needs a GRACE_M1_DIAGNOSTICS build, as on Hunter).
+  plane_surface_output_cell_variables: ["metric", "hydro", "m1", "rates", "cons", "diagnostics","pair_active", "pair_transport_kappa3","pair_transport_kappa4","pair_transport_kappa5"],
+  plane_surface_output_every: 32, #128,
+
+  sphere_surface_output_every: 800,
+  sphere_surface_output_cell_variables: ["m1", "hydro"],
+
+  info_output_every: 8, #16,
+  info_output_max_reductions: ["rho","temperature","ye","ymu", "c2p_err"],
+  info_output_min_reductions: ["alp", "ye","ymu"],
+  info_output_norm2_reductions: ["z4c_H","z4c_M","z4c_Gamma","z4c_theta","z4c_Khat","z4c_Bdriver"],
+
+  scalar_output_every: 10,
+  scalar_output_minmax: ["metric", "hydro", "m1","rates"],
+  scalar_output_norm2: ["z4c_H"],
+  scalar_output_integral: ["dens"],
+
+  output_use_hdf5: true,
+  hdf5_compression_level: 0,
+  hdf5_chunk_size: 8192,
+  output_extra_quantities: true,
+
+  diagnostic_output_every: 32, #64,
+
+  performance_metric: "both",
+}
+
+system: {
+  console_log_level: "info",
+  file_log_level: "info",
+  n_device_streams: 4,
+  flush_logs_based_on_severity: true,
+  flush_severity_level: "info"
+}
+
+evolution: {
+  time_stepper: "imex232",          # M1 collisions need the implicit stages
+  cfl_factor: 0.2,
+  force_unit_wavespeed: true,
+  final_walltime: 3, #23.5,
+  final_iteration: 20,
+  final_time: 200.0,
+  termination_condition: "walltime"
+}
+
+grmhd: {
+  id_type: "hot_tov",
+
+  tov: {
+    rho_c: 1.216e-03,
+    press_floor: 1e-13,
+    dr: 1e-3,
+    hot_temperature: 20.0,          # default; T [MeV] of the hot slice, Ye/Ymu in hot beta-eq
+    rho_cut: 1e-6,                  # > 0: hard T step at this rho (FIL uses 1e-10); -1: smooth taper
+  },
+
+  atmosphere: {
+    temp_fl:  0.1,                  # = the EOS temperature floor (table minimum)
+    rho_fl: 1.e-14                  # FIL parity (needs eps_maximum 1e9, see eos)
+  },
+
+  c2p: {
+    tolerance: 1e-10,
+    max_lorentz: 50,
+    # CHANGED: entropy backup on, but only on a real inversion failure (FIL's rule):
+    # an eps below the table floor is clamped and tau/S/entropy rewritten instead.
+    use_c2p_entropy_backup: true,
+    entropy_backup_trigger: "failure"
+  },
+
+  B_field_initialization: "from_Avec",
+
+  Avec_ID: {
+    cutoff_var: "press",
+    cutoff_fact: 0.04,
+    A_n: 2,
+    Bmax_target: 1.197285252143398e-05, # 1e15 G
+    is_binary: false,
+    radius_1: 8
+  }
+}
+
+m1: {
+  #id_type: "equilibrium",
+  eas: {
+    kinds: ["neutrino_weakhub"],
+    weakhub_table: "/zhome/projects/groups/xfp44203/common/WEAKHUB/SFHocompose_grey_npemu_Bollig_suppress_noPP_advopac_20240818_Weakhub_grey.h5",
+    beta_decay: true,
+    plasmon_decay: true,
+    bremsstrahlung: true,
+    pair_annihilation: true,        # heavy flavours only (nue/nuebar pair channel off, as in FIL)
+    # muon decay
+    muon_decay: false, #true,
+    muon_decay_kernel_order: 24,
+    # pair process for muonic
+    pair_treatment: evolved,
+    pair_quadrature_order: 16,
+    weakhub_pair_content: none,
+    pair_plasmon_model: transverse_mass,
+
+    # (T_nu/T)^2 on the opacities only: hot neutrinos absorbed more by colder matter.
+    # Scaling Q,R as well (FIL's Weakhub routine) changed nothing in the head-on test.
+    temperature_correction: true,
+    temperature_correction_emission: false,
+
+    tau_policy: "eikonal",
+
+    betaeq_policy: "off", #"timescale",     # FIL: use_grrt_beta_eq = yes
+    # CHANGED: a failed joint (Ye, Ymu, T) closure solve is retried for (Ye, T) with Ymu
+    # held; > 95 % fewer failures, more mirror-symmetric (head-on efb run).
+    betaeq_partial_e_fallback: true,
+  },
+  # CHANGED: radiation floors as in the head-on (FIL-aligned).
+  atmosphere: {
+    E_fl: 1.e-16,
+    N_fl: 1.e-14,
+    r_damping: 50.0                 # floors fall as (50/r)^2 beyond r = 50
+  },
+  backreaction: {
+    enabled: true,
+    # Optional, still under test in the head-on: a muon pair that would leave the Ymu
+    # table is accepted in the fraction that lands Ymu on the bound (no frozen cells).
+    #muon_partial_at_bound: true,
+  }
+}
+
+z4c: {
+  eta: 1.67,                  # 2/M, M = 1.1984
+  eps_diss: 0.3,
+  kappa_1: 0.04,              # FIL parity; GRACE default 0.02
+  eta_damp_radius: 50.0,      # FIL parity
+  kappa_damp_radius: 50.0,    # FIL parity
+  # theta_damp_radius omitted -> default -1 (off), as in FIL
+}
+
+# CHANGED: the head-on EOS.  No-electron SFHo baryon table + regenerated lepton table
+# (ideal Fermi gas e/mu + photons) with the electrons added from it.
+eos: {
+  eos_type: "leptonic",
+
+  tabulated_eos: {
+    table_filename: "/zhome/projects/groups/xfp44203/common/EOS/4D/sfho_compose_noele_0-5ye.h5",
+    table_format: "compose",
+    # Read at start-up but not used by the leptonic EOS (it generates its own cold slice).
+    cold_table_filename: "/zhome/projects/groups/xfp44203/common/EOS/4D/cold_sfho_nomass.grace",
+    # false: baryon pressure interpolated as ln(P_b + P_e) instead of linearly
+    # (linear overestimated P by up to 1 % between density rows).
+    linear_pressure: false,
+  },
+
+  leptonic: {
+    table_filename: "/zhome/projects/groups/xfp44203/common/EOS/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
+    add_ele_contribution: true,
+    dilute_muon_suppression: true,
+    # cold_table_temperature unset: temperature floor = table minimum 0.1 MeV (FIL parity);
+    # the cold slice is generated there, so no leptonic cold_table_filename is needed.
+  },
+
+  eps_maximum: 1.e+09,              # CHANGED: 1e5 caps the surface at rho_fl = 1e-14
+}
+
+checkpoints: {
+  checkpoint_dir: "../checkpoints",
+  checkpoint_at_startup: true,
+  checkpoint_at_termination: true,
+  max_n_checkpoints: 3,
+  walltime_interval: 6.0,
+}
+
+nan_check: {
+  enabled: true,
+  check_before_first_step: true,
+  check_every: 50,
+  action: abort,
+}
+
+spherical_surfaces: {
+  n_surfaces: 7,
+  spherical_detectors: [
+    { name: "det_020", radius: 20,  resolution: 91 },
+    { name: "det_030", radius: 30,  resolution: 91 },
+    { name: "det_050", radius: 50,  resolution: 91 },
+    { name: "det_075", radius: 75,  resolution: 91 },
+    { name: "det_100", radius: 100, resolution: 91 },
+    { name: "det_150", radius: 150, resolution: 91 },
+    { name: "det_200", radius: 200, resolution: 91 }
+  ]
+}
+outflows: {
+  detector_names: ["det_020","det_030","det_050","det_075","det_100","det_150","det_200"]
+}

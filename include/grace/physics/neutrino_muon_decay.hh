@@ -156,12 +156,15 @@ KOKKOS_INLINE_FUNCTION bool equilibrium_decay_rates(decay_kernel const& k,
 // these reactions. Inputs are individual-species comoving CGS/MeV moments.
 KOKKOS_INLINE_FUNCTION bool leptonic_transport_opacities(kernel const& thermal,
     decay_kernel const* decay,bool thermal_active,double const (&n)[4],
-    double const (&J)[4],double (&opacity)[4]) {
+    double const (&J)[4],double (&opacity)[4],diagnostic* diag=nullptr) {
     double f[4][max_order];
     for(int s=0;s<4;++s) {
         opacity[s]=0;
         if(!decay && s<2) continue;
-        if(!reconstruct(thermal.g,n[s],J[s],f[s])) return false;
+        if(!reconstruct(thermal.g,n[s],J[s],f[s],diag)) {
+            if(diag) diag->species=s;
+            return false;
+        }
     }
     auto const add=[&](sources const& src,int a,int b) {
         if(J[a]>0) opacity[a]+=src.loss[0]/J[a]/time_unit;

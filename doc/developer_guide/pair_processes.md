@@ -385,6 +385,58 @@ quadrature-level LTE mismatch: check order convergence before production.
 The existing generic implicit-solver counters describe the ordinary solver;
 `pair_residual` is the new coupled-pair solver's diagnostic.
 
+## Diagnosing a failed evolved-pair update
+
+The evolved transport pass and two-species implicit pair update collect up to
+four failure records per MPI rank. After the device launch completes, the host
+prints `[PAIR_FAILURE]` records to stderr, flushes them, and aborts before using
+the failed update. This avoids relying on device printf immediately before a
+HIP device assertion. Capture stderr along with stdout in the batch-job log.
+This diagnostic path adds a host synchronization to each evolved-pair launch.
+
+Each report identifies the iteration, transport/implicit phase, rank, local
+block `q`, cell indices (including ghosts), physical coordinates, species,
+matter temperature/composition, kernel scale/order and enabled channels.
+`active_bits` uses 1 for electron-positron annihilation, 2 for nucleon
+bremsstrahlung and 4 for plasmon decay. Species indices are zero based: in a
+five-species build 2/3 are numu/antinu_mu and 4 is the tau aggregate.
+Radiation E, F_i and N are undensitized code values per physical species;
+comoving n is in cm^-3 and J in MeV cm^-3. Aggregate moments are divided by
+their recorded multiplicity.
+
+Failure status meanings:
+
+- `kernel-input`: invalid material, quadrature order or energy scale.
+- `kernel-backend-unavailable`: requested a channel without BNS_NURATES.
+- `kernel-element`: negative/nonfinite kernel value; the energy-node pair and
+  value are recorded.
+- `decay-kernel`: muon-decay kernel construction failed.
+- `moment-input`: reconstruction received nonpositive, non-vacuum moments.
+- `reconstruction-jacobian`, `reconstruction-line-search`, or
+  `reconstruction-iterations`: the spectrum reconstruction failed. Its input
+  n/J, iteration, residual and grid energy range are recorded. This alone does
+  not establish that the continuum moments are physically impossible.
+- `implicit-solve`: the coupled pair solve (including its continuation/final
+  residual check) failed. The record contains its last reported residual and
+  input state; it does not identify the rejected internal Newton trial.
+
+Unused diagnostic fields have sentinel values (iteration/species/node -1).
+The separate four-species muon-decay implicit solver retains its existing abort
+path; the buffered implicit diagnostics cover the two-species thermal pairs.
+
+The `zero` radiation initial data now uses E_floor(r) and N_floor(r), matching
+the evolution/activation reset. Previously it used E_floor(r)/eps_fl for N,
+which could impose a different spectrum before the first floor reset. This
+consistency fix does not establish the cause of any particular solver failure.
+
+Do not work around failures by skipping pairs for the first iterations or by
+resetting the radiation to LTE. Vacuum emission is supported; the intended
+initial-value problem should remain intact. A matter-density cut also needs
+physical and convergence justification, because cold/dilute cells can contain
+neutrinos transported from hotter regions. Diagnose the recorded state first:
+fix invalid inputs, improve reconstruction for representable moments, or use
+a conservative step-rejection/substepping strategy for a stiff source solve.
+
 ## Literature and what can actually be criticized
 
 [Ng et al., WeakHub](https://arxiv.org/html/2309.03526v2) give the pair collision

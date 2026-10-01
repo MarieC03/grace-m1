@@ -929,6 +929,18 @@ struct neutrinos_eas_op
         J=cl.J/pairs::energy_unit/multiplicity;
     }
 
+    pairs::failure_buffer pair_failures;
+
+    GRACE_HOST_DEVICE void save_pair_transport_failure(pairs::material const& m,
+        double mumu, pairs::diagnostic const& diag, int active, double scale,
+        int sa, int sb, int multiplicity,
+        VEC(const int i,const int j,const int k),int64_t q) const {
+        auto r=pairs::make_failure_record(m,diag,q,VEC(i,j,k));
+        r.mu_mu=mumu; r.active=active; r.scale=scale; r.order=pair_order;
+        r.species_a=sa; r.species_b=sb; r.multiplicity=multiplicity;
+        pair_failures.save(r);
+    }
+
     GRACE_HOST_DEVICE void prepare_pair_transport(pairs::material const& m,double mumu,
         int active,VEC(const int i,const int j,const int k),int64_t q) const {
         #if GRACE_M1_NU_SPECIES >= 3
@@ -945,10 +957,20 @@ struct neutrinos_eas_op
         for(int s=0;s<4;++s) if(n[s]>0)
             scale=Kokkos::fmax(scale,Kokkos::sqrt(m.T*J[s]/n[s]/3));
         pairs::kernel thermal; pairs::decay_kernel decay;
-        if(!thermal.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale)
-           || (muon_decay && !decay.init(thermal.g,m.T,m.mu_e,mumu,decay_order))
-           || !pairs::leptonic_transport_opacities(thermal,muon_decay?&decay:nullptr,active!=0,n,J,opacity))
-            Kokkos::abort("Invalid evolved-pair transport moments or kernel");
+        pairs::diagnostic diag;
+        bool ok=thermal.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag);
+        if(ok && muon_decay && !decay.init(thermal.g,m.T,m.mu_e,mumu,decay_order)) {
+            diag.code=pairs::failure_code::decay_kernel;
+            ok=false;
+        }
+        if(ok) ok=pairs::leptonic_transport_opacities(thermal,muon_decay?&decay:nullptr,
+                                                     active!=0,n,J,opacity,&diag);
+        if(!ok) {
+            int const sa=diag.species>=0?diag.species:2;
+            int const sb=muon_decay?(sa==0?3:sa==1?2:sa==2?1:0):(sa==2?3:2);
+            save_pair_transport_failure(m,mumu,diag,active,scale,sa,sb,1,VEC(i,j,k),q);
+            return;
+        }
         for(int s=0;s<4;++s) aux(VEC(i,j,k),PAIR_KAPPA1_+s,q)=opacity[s];
         #endif
         // The aggregate uses its symmetric kernel and per-physical-species
@@ -962,9 +984,13 @@ struct neutrinos_eas_op
             double n,J; pair_fluid_moments<sp>(VEC(i,j,k),q,multiplicity,n,J);
             double const scale=n>0?Kokkos::fmax(m.T,Kokkos::sqrt(m.T*J/n/3)):m.T;
             pairs::kernel kpair; double f[pairs::max_order];
-            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,true)
-               || !pairs::reconstruct(kpair.g,n,J,f))
-                Kokkos::abort("Invalid aggregate-pair transport moments or kernel");
+            pairs::diagnostic aggregate_diag;
+            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,true,&aggregate_diag)
+               || !pairs::reconstruct(kpair.g,n,J,f,&aggregate_diag)) {
+                aggregate_diag.species=sp;
+                save_pair_transport_failure(m,mumu,aggregate_diag,active,scale,sp,sp,multiplicity,VEC(i,j,k),q);
+                return;
+            }
             auto const src=pairs::evaluate(kpair,f,f);
             aux(VEC(i,j,k),PAIR_KAPPA1_+sp,q)=J>0?src.loss[0]/J/pairs::time_unit:0;
         }

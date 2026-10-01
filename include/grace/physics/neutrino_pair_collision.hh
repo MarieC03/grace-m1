@@ -8,6 +8,7 @@
 
 #include <grace_config.h>
 #include <Kokkos_Core.hpp>
+#include <grace/physics/neutrino_pair_diagnostics.hh>
 #ifdef GRACE_HAVE_BNS_NURATES
 #include <kernel_pair.hpp>
 #include <kernel_brem_HR98.hpp>
@@ -27,6 +28,14 @@ struct material {
     double T, mu_e, nb, yn, yp; // nb in cm^-3, chemical potential includes rest mass
 };
 struct channels { bool ee, nn, plasmon; };
+
+KOKKOS_INLINE_FUNCTION failure_record make_failure_record(
+    material const& m, diagnostic const& diag, long long q, int i, int j=0, int k=0) {
+    failure_record r;
+    r.detail=diag; r.q=q; r.i=i; r.j=j; r.k=k;
+    r.T=m.T; r.mu_e=m.mu_e; r.nb=m.nb; r.yn=m.yn; r.yp=m.yp;
+    return r;
+}
 
 KOKKOS_INLINE_FUNCTION double occupation(double x) {
     double const z = Kokkos::exp(-Kokkos::fabs(x));
@@ -106,12 +115,19 @@ struct kernel {
     grid g;
     double a[max_order][max_order], boltz[max_order];
     KOKKOS_INLINE_FUNCTION bool init(material m, channels c, int order, double scale,
-                                     bool symmetric=false) {
+                                     bool symmetric=false, diagnostic* diag=nullptr) {
+        if(diag) *diag = diagnostic{};
         if (!(m.T>0 && scale>0 && m.nb>=0 && m.yn>=0 && m.yn<=1 && m.yp>=0 && m.yp<=1)
             || !Kokkos::isfinite(m.mu_e) || !Kokkos::isfinite(m.T)
-            || !Kokkos::isfinite(scale) || order<8 || order>max_order) return false;
+            || !Kokkos::isfinite(scale) || order<8 || order>max_order) {
+            if(diag) diag->code = failure_code::kernel_input;
+            return false;
+        }
 #ifndef GRACE_HAVE_BNS_NURATES
-        if(c.ee || c.nn) return false;
+        if(c.ee || c.nn) {
+            if(diag) diag->code = failure_code::kernel_backend;
+            return false;
+        }
 #endif
         g.init(order,scale);
         for (int i=0; i<g.n; ++i) boltz[i]=Kokkos::exp(-g.e[i]/m.T);
@@ -119,7 +135,14 @@ struct kernel {
             if(symmetric && j<i) { a[i][j]=a[j][i]; continue; }
             double r=absorption_kernel(m,c,g.e[i],g.e[j]);
             if (symmetric) r=0.5*(r+absorption_kernel(m,c,g.e[j],g.e[i]));
-            if (!(r>=0) || !Kokkos::isfinite(r)) return false;
+            if (!(r>=0) || !Kokkos::isfinite(r)) {
+                if(diag) {
+                    diag->code = failure_code::kernel_element;
+                    diag->node=i; diag->partner_node=j; diag->kernel_value=r;
+                    diag->energy=g.e[i]; diag->partner_energy=g.e[j];
+                }
+                return false;
+            }
             a[i][j]=r;
         }
         return true;
@@ -129,9 +152,18 @@ struct kernel {
 // Discrete maximum-entropy FD reconstruction, matching BOTH supplied moments.
 // A negative or non-Fermi-realizable state is rejected, never clipped to LTE.
 // x=epsilon/mean keeps the two Newton columns well scaled.
-KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, double* f) {
+KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, double* f,
+                                        diagnostic* diag=nullptr) {
+    if(diag) {
+        *diag = diagnostic{};
+        diag->n=n; diag->J=J;
+        diag->emin=g.e[0]; diag->emax=g.e[g.n-1];
+    }
     if (n==0 && J==0) { for(int i=0;i<g.n;++i) f[i]=0; return true; }
-    if (!(n>0 && J>0)) return false;
+    if (!(n>0 && J>0)) {
+        if(diag) diag->code = failure_code::moment_input;
+        return false;
+    }
     double const mean=J/n;
     double a=Kokkos::log(2*phase*Kokkos::pow(mean/3,3)/n), b=3;
     for (int it=0; it<70; ++it) {
@@ -143,9 +175,13 @@ KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, doubl
             m0+=v; m1+=v*x; h0+=h; h1+=h*x; h2+=h*x*x;
         }
         double const err=Kokkos::fmax(Kokkos::fabs(m0-1),Kokkos::fabs(m1-1));
+        if(diag) { diag->iteration=it; diag->residual=err; }
         if (err<2e-11) return true;
         double const det=h0*h2-h1*h1;
-        if (!(det>0) || !Kokkos::isfinite(det)) return false;
+        if (!(det>0) || !Kokkos::isfinite(det)) {
+            if(diag) diag->code = failure_code::reconstruction_jacobian;
+            return false;
+        }
         double const da=((m0-1)*h2-(m1-1)*h1)/det;
         double const db=((m1-1)*h0-(m0-1)*h1)/det;
         bool accepted=false;
@@ -160,8 +196,12 @@ KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, doubl
                 a+=t*da; b+=t*db; accepted=true; break;
             }
         }
-        if(!accepted) return false;
+        if(!accepted) {
+            if(diag) diag->code = failure_code::reconstruction_line_search;
+            return false;
+        }
     }
+    if(diag) diag->code = failure_code::reconstruction_iterations;
     return false;
 }
 

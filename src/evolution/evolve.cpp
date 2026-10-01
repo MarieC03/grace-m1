@@ -2027,7 +2027,8 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     #if GRACE_M1_NU_SPECIES >= 3
     // Separate small-tile launch: do not impose the ordinary 256-thread
     // source kernel's GPU launch bounds on the spectral kernel scratch space.
-    if(m1_is_active() && evolved_pairs)
+    if(m1_is_active() && evolved_pairs) {
+        m1_eq_system.pair_failures.allocate();
         parallel_for(GRACE_EXECUTION_TAG("evol","m1_pair_sources"),
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
                 {VEC(0,0,0),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}, {VEC(4,2,2),1}),
@@ -2041,6 +2042,8 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 #endif
             });
+        check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
+    }
     #endif
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(

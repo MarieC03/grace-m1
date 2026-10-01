@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <grace/physics/neutrino_pair_update.hh>
 #include <grace/physics/m1.hh>
+#include <grace/physics/id/m1_initial_data.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
 #include <cmath>
 using namespace grace;
@@ -17,6 +18,75 @@ void fd(grid const& g,double T,double eta,double* f,double& n,double& J) {
     }
 }
 material const matter{10,20,6e37,0.8,0.2};
+}
+
+TEST_CASE("Pair failures retain reconstruction context and bounded device samples", "[pairs][diagnostics]") {
+    kernel k; diagnostic d;
+    auto bad=matter; bad.T=-1;
+    REQUIRE_FALSE(k.init(bad,{true,false,false},16,10,false,&d));
+    REQUIRE(d.code==failure_code::kernel_input);
+    REQUIRE(k.init(matter,{true,false,false},16,10,false,&d));
+    REQUIRE(d.code==failure_code::none);
+    double f[max_order];
+    REQUIRE_FALSE(reconstruct(k.g,-1,1,f,&d));
+    REQUIRE(d.code==failure_code::moment_input);
+    REQUIRE(d.n==-1);
+    REQUIRE(d.J==1);
+    double n[4]={0,0,-1,0},J[4]={0,0,1,0},opacity[4];
+    REQUIRE_FALSE(leptonic_transport_opacities(k,nullptr,true,n,J,opacity,&d));
+    REQUIRE(d.species==2);
+    REQUIRE(d.code==failure_code::moment_input);
+    // Positive moments whose mean lies below every quadrature node cannot
+    // be represented. This is a reconstruction failure, not a kernel error.
+    REQUIRE_FALSE(reconstruct(k.g,1e20,1e20*k.g.e[0]*0.5,f,&d));
+    REQUIRE(d.code!=failure_code::none);
+    REQUIRE(d.iteration>=0);
+    REQUIRE(d.emin==k.g.e[0]);
+    REQUIRE(d.emax==k.g.e[k.g.n-1]);
+    REQUIRE(reconstruct(k.g,0,0,f,&d));
+    REQUIRE(d.code==failure_code::none);
+
+    failure_buffer buffer; buffer.allocate();
+    Kokkos::parallel_for("pair_failure_capture_test",19,KOKKOS_LAMBDA(int cell) {
+        failure_record r;
+        r.i=cell; r.detail.code=failure_code::moment_input; r.detail.n=-cell-1;
+        buffer.save(r);
+    });
+    auto count=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),buffer.count);
+    auto records=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),buffer.records);
+    REQUIRE(count()==19);
+    for(int slot=0;slot<failure_buffer::capacity;++slot) {
+        REQUIRE(records(slot).i>=0);
+        REQUIRE(records(slot).i<19);
+        REQUIRE(records(slot).detail.n==-records(slot).i-1);
+        REQUIRE(records(slot).detail.code==failure_code::moment_input);
+        for(int other=0;other<slot;++other) REQUIRE(records(other).i!=records(slot).i);
+    }
+}
+
+TEST_CASE("Zero radiation ID matches the independent evolution floors", "[pairs][initial_data]") {
+    m1_atmo_params_t atmo{};
+    atmo.E_fl=1e-16; atmo.N_fl=1e-14; atmo.eps_fl=1; atmo.r_damping=50;
+    m1_excision_params_t excision{};
+    coord_array_t<GRACE_NSPACEDIM> coords("pair_id_coords",VEC(1,1,1),3,1);
+    auto host=Kokkos::create_mirror_view(coords);
+    for(double r:{1.,100.,1e6}) {
+        host(VEC(0,0,0),0,0)=r;
+        Kokkos::deep_copy(coords,host);
+        zero_m1_id_t id(atmo,excision,coords);
+        Kokkos::View<m1_id_t> result("pair_id_result");
+        Kokkos::parallel_for("pair_id_check",1,KOKKOS_LAMBDA(int) {
+            result()=id(VEC(0,0,0),0);
+        });
+        auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),result);
+        REQUIRE(got().erad1==atmo.E_floor(r));
+        REQUIRE(got().nrad1==atmo.N_floor(r));
+        REQUIRE(got().nrad3==atmo.N_floor(r));
+        #if GRACE_M1_NU_SPECIES >= 5
+        REQUIRE(got().nrad4==atmo.N_floor(r));
+        REQUIRE(got().nrad5==atmo.N_floor(r));
+        #endif
+    }
 }
 
 TEST_CASE("Pair units match existing EAS", "[pairs]") {
