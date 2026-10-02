@@ -1821,6 +1821,29 @@ TEST_CASE("M1 closure: Gamma is physical for causal radiation and stays positive
     }
 }
 
+TEST_CASE("M1 closure: thick-limit wavespeeds are the relativistic sum of v and 1/sqrt(3)",
+          "[m1][closure][wavespeeds]")
+{
+    // Thick weights only (dthin = 0): the characteristic speeds of radiation isotropic in the
+    // fluid frame, (v +- c)/(1 +- v c) along v, +-1/sqrt(2W^2+1) across it; alp lam - beta in 3+1.
+    // The kernel takes z = W v (zvec), as compute_cp_cm passes it.
+    double const c = 1.0 / std::sqrt(3.0), alp = 0.7, beta = 0.2 ;
+    for ( double const v : {0.0, 0.3, 0.6, 0.9} ) {
+        INFO("v = " << v) ;
+        double const W = 1.0 / std::sqrt(1.0 - v*v), z = W * v ;
+        double cm, cp ;
+        m1_wavespeeds(W, 0.0, 1.0, 1.0, 1.0, z, 1.0, 0.0, 0.0, &cm, &cp) ;     // along v, flat
+        REQUIRE_THAT(cp, WithinAbs((v + c) / (1.0 + v*c), 1e-12)) ;
+        REQUIRE_THAT(cm, WithinAbs((v - c) / (1.0 - v*c), 1e-12)) ;
+        m1_wavespeeds(W, 0.0, 1.0, 1.0, alp, z, 1.0, beta, 0.0, &cm, &cp) ;     // lapse and shift
+        REQUIRE_THAT(cp, WithinAbs(alp * (v + c) / (1.0 + v*c) - beta, 1e-12)) ;
+        REQUIRE_THAT(cm, WithinAbs(alp * (v - c) / (1.0 - v*c) - beta, 1e-12)) ;
+        m1_wavespeeds(W, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, &cm, &cp) ;    // across v
+        REQUIRE_THAT(cp, WithinAbs( 1.0 / std::sqrt(2.0*W*W + 1.0), 1e-12)) ;
+        REQUIRE_THAT(cm, WithinAbs(-1.0 / std::sqrt(2.0*W*W + 1.0), 1e-12)) ;
+    }
+}
+
 #ifdef GRACE_M1_DIAGNOSTICS
 // =============================================================================
 //  Implicit-solve diagnostic (m1_implicit_err / m1_implicit_res)

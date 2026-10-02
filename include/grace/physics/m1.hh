@@ -1490,9 +1490,11 @@ struct m1_equations_system_t
 
         double dthin = cl.chi * 1.5 - 0.5 ;
         double dthick = 1.5 - cl.chi * 1.5 ;
+        // m1_wavespeeds takes z^d = W v^d (zvec), not v^d: with v it divided by W twice
+        // and the thick speeds missed the relativistic sum of v and 1/sqrt(3).
         m1_wavespeeds(
             cl.W, dthin, dthick, cl.F, metric.alp(),
-            cl.vU[idir], metric.invgamma(icomp),
+            cl.zU[idir], metric.invgamma(icomp),
             metric.beta(idir),cl.FU[idir],
             &cm, &cp
         ) ;
