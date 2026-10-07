@@ -1844,6 +1844,48 @@ TEST_CASE("M1 closure: thick-limit wavespeeds are the relativistic sum of v and 
     }
 }
 
+TEST_CASE("M1 implicit: the initial guess relaxes over the proper time alp dt / W",
+          "[m1][implicit][guess]")
+{
+    // Curved slice, shift, moving fluid, partly streaming radiation, intermediate opacity.
+    std::array<double,6> const g{1.3, 0.1, 0.0, 1.1, 0.05, 0.9} ;
+    std::array<double,3> const beta{0.1, -0.05, 0.02}, F0{0.3, -0.1, 0.05}, z{0.4, 0.2, -0.1} ;
+    m1_eas_array_t eas ;
+    eas[KAL] = 2.0 ; eas[KSL] = 1.0 ; eas[ETAL] = 1.5 ; eas[ETANL] = 1.5 ; eas[KANL] = 2.0 ;
+    double const E0 = 1.0, dt = 0.3, alp = 0.2 ;
+    auto guess = [&] (double a, double dt_) {
+        metric_array_t metric{ g, beta, a } ;
+        m1_closure_t cl(E0, F0, z, metric) ;
+        cl.update_closure(0.) ;
+        double u[4] ;
+        cl.get_implicit_update_initial_guess(eas, u, dt_, 1.0) ;
+        return std::array<double,4>{u[0], u[1], u[2], u[3]} ;
+    } ;
+    auto const ga = guess(alp, dt) ;
+
+    SECTION("dt enters only through alp dt") {
+        auto const g1 = guess(1.0, alp*dt) ;
+        for ( int c=0; c<4; ++c ) REQUIRE_THAT(ga[c], WithinAbs(g1[c], 1e-13)) ;
+        auto const gold = guess(1.0, dt) ;            // the guess without the lapse
+        REQUIRE(std::abs(ga[0] - gold[0]) > 1e-2) ;
+    }
+    SECTION("matches FIL's get_initguess_iteration") {
+        metric_array_t metric{ g, beta, alp } ;
+        m1_closure_t cl(E0, F0, z, metric) ;
+        cl.update_closure(0.) ;
+        double const W = cl.W, dtau = alp * dt / W ;
+        double const Jh = ( cl.J + dtau * eas[ETAL] ) / ( 1.0 + dtau * eas[KAL] ) ;
+        double Hh[3], Hn = 0.0 ;
+        for ( int i=0; i<3; ++i ) {
+            Hh[i] = cl.HD[i] / ( 1.0 + dtau * ( eas[KAL] + eas[KSL] ) ) ;
+            Hn -= Hh[i] * cl.vU[i] ;                    // H.n = -H_i v^i
+        }
+        REQUIRE_THAT(ga[0], WithinRel(Jh/3.0*(4.0*W*W - 1.0) - 2.0*Hn*W, 1e-13)) ;
+        for ( int i=0; i<3; ++i )
+            REQUIRE_THAT(ga[i+1], WithinAbs(W*Hh[i] + (4.0/3.0*W*W*Jh - W*Hn)*cl.vD[i], 1e-13)) ;
+    }
+}
+
 #ifdef GRACE_M1_DIAGNOSTICS
 // =============================================================================
 //  Implicit-solve diagnostic (m1_implicit_err / m1_implicit_res)

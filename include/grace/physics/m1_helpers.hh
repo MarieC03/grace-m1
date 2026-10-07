@@ -356,11 +356,13 @@ struct m1_closure_t {
 
     void GRACE_HOST_DEVICE
     get_implicit_update_initial_guess(m1_eas_array_t const& eas, double (&u)[4], double dt, double dtfact ) {
-        double Jhat = ( J + dt*dtfact/W *  eas[ETAL] )/( 1. + dt*dtfact/W * eas[KAL] ) ;
+        // Fluid-frame relaxation over the proper time alp dt/W (FIL; THC's version lacks alp).
+        double const dtau = metric.alp() * dt * dtfact / W ;
+        double Jhat = ( J + dtau * eas[ETAL] )/( 1. + dtau * eas[KAL] ) ;
         double Hhat[3] = {
-            (HD[0])/(1.+dt*dtfact/W * (eas[KAL] + eas[KSL])),
-            (HD[1])/(1.+dt*dtfact/W * (eas[KAL] + eas[KSL])),
-            (HD[2])/(1.+dt*dtfact/W * (eas[KAL] + eas[KSL]))
+            (HD[0])/(1. + dtau * (eas[KAL] + eas[KSL])),
+            (HD[1])/(1. + dtau * (eas[KAL] + eas[KSL])),
+            (HD[2])/(1. + dtau * (eas[KAL] + eas[KSL]))
         } ;
         // H_\alpha uˆ\alpha = 0 -> H_0 = - H_i u^i/u^0
         double Hhat_0 = 0 ;
