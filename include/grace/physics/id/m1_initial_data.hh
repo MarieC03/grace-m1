@@ -276,12 +276,21 @@ struct equil_m1_id_t {
 } ;
 
 struct straight_beam_m1_id_t {
+    // Direction n (normalised here), half-width hw, source patch s = x.n <= start, and
+    // F = ff E n there (ff < 1).  n = +x keeps the historical square cross-section
+    // |y|,|z| < hw; any other n uses a cylinder of radius hw around the axis (oblique beams).
     straight_beam_m1_id_t(
         m1_atmo_params_t _atmo,
         m1_excision_params_t _excision,
-        coord_array_t<GRACE_NSPACEDIM> _pcoords
-    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords)
-    {}
+        coord_array_t<GRACE_NSPACEDIM> _pcoords,
+        double _nx = 1., double _ny = 0., double _nz = 0.,
+        double _hw = 0.0625, double _start = -0.25, double _ff = M1_ID_CAUSAL_FRAC
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), hw(_hw), start(_start), ff(_ff)
+    {
+        double const nn = Kokkos::sqrt(_nx*_nx + _ny*_ny + _nz*_nz) ;
+        n[0] = _nx/nn ; n[1] = _ny/nn ; n[2] = _nz/nn ;
+        along_x = ( _ny == 0. && _nz == 0. && _nx > 0. ) ;
+    }
 
     m1_id_t KOKKOS_INLINE_FUNCTION
     operator() (
@@ -298,14 +307,16 @@ struct straight_beam_m1_id_t {
         id.erad1 = atmo.E_fl ;
         id.fradx1 = id.frady1 = id.fradz1 = 0. ;
 
-        if ( xyz[0] <= -0.25 and
-            xyz[1] < 0.0625 and xyz[1] > - 0.0625 and
-            xyz[2] < 0.0625 and xyz[2] > - 0.0625) {
-            id.erad1 = id.fradx1 = 1.0 ;
+        double const s = xyz[0]*n[0] + xyz[1]*n[1] + xyz[2]*n[2] ;
+        bool const lit = along_x
+            ? ( xyz[0] <= start and Kokkos::fabs(xyz[1]) < hw and Kokkos::fabs(xyz[2]) < hw )
+            : ( s <= start and xyz[0]*xyz[0] + xyz[1]*xyz[1] + xyz[2]*xyz[2] - s*s < hw*hw ) ;
+        if ( lit ) {
+            id.erad1 = 1.0 ;
+            id.fradx1 = ff * n[0] ; id.frady1 = ff * n[1] ; id.fradz1 = ff * n[2] ;
         }
         // Unit mean energy: N tracks E (beam and atmosphere alike).
         id.nrad1 = id.erad1 ;
-        limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
 
         #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = id.erad1 ;
@@ -335,6 +346,100 @@ struct straight_beam_m1_id_t {
     m1_atmo_params_t atmo ;
     m1_excision_params_t excision ;
     coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    double n[3] ;
+    double hw, start, ff ;
+    bool along_x ;
+} ;
+
+/**
+ * @brief Isotropic ball of unit energy density in r < radius on the floor, no opacities
+ *        (Olsen & Rezzolla "sphere wave").  Exact transport: E(r,t) = (1 - mu_min)/2 with
+ *        mu_min = clip((r^2 + t^2 - R^2)/(2 r t), -1, 1); int E dV is conserved.
+ */
+struct sphere_wave_m1_id_t {
+    sphere_wave_m1_id_t(
+        m1_atmo_params_t _atmo,
+        m1_excision_params_t _excision,
+        coord_array_t<GRACE_NSPACEDIM> _pcoords,
+        double _radius, double _x0 = 0., double _y0 = 0., double _z0 = 0.
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), radius(_radius), x0(_x0), y0(_y0), z0(_z0)
+    {}
+
+    m1_id_t KOKKOS_INLINE_FUNCTION
+    operator() (
+        VEC(int const i, int const j, int const k),
+        int const q) const
+    {
+        m1_id_t id ;
+        double const r = Kokkos::sqrt( SQR(pcoords(VEC(i,j,k),0,q) - x0)
+                                     + SQR(pcoords(VEC(i,j,k),1,q) - y0)
+                                     + SQR(pcoords(VEC(i,j,k),2,q) - z0) ) ;
+        id.erad1 = ( r < radius ) ? 1.0 : atmo.E_fl ;
+        id.fradx1 = id.frady1 = id.fradz1 = 0. ;
+        id.nrad1 = id.erad1 ;
+        #if GRACE_M1_NU_SPECIES >= 3
+        id.erad2 = id.erad3 = id.erad1 ; id.nrad2 = id.nrad3 = id.nrad1 ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        id.erad4 = id.erad5 = id.erad1 ; id.nrad4 = id.nrad5 = id.nrad1 ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        id.eradph = id.erad1 ; id.nradph = id.nrad1 ;
+        #endif
+        return id ;
+    }
+
+    m1_atmo_params_t atmo ;
+    m1_excision_params_t excision ;
+    coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    double radius, x0, y0, z0 ;
+} ;
+
+/**
+ * @brief Smooth plane wave along x, uniform in y and z, no opacities:
+ *        E = E_bg (1 + A sin(2 pi x / lambda)), F_x = f E, N = E.
+ *        At f -> 1 (capped at the causal fraction) it translates rigidly at the speed of
+ *        light; on a periodic box of length lambda it returns to itself after t = lambda.
+ */
+struct plane_wave_m1_id_t {
+    plane_wave_m1_id_t(
+        m1_atmo_params_t _atmo,
+        m1_excision_params_t _excision,
+        coord_array_t<GRACE_NSPACEDIM> _pcoords,
+        double _bg, double _amp, double _lambda, double _ff
+    ) : atmo(_atmo), excision(_excision), pcoords(_pcoords), bg(_bg), amp(_amp), lambda(_lambda), ff(_ff)
+    {}
+
+    m1_id_t KOKKOS_INLINE_FUNCTION
+    operator() (
+        VEC(int const i, int const j, int const k),
+        int const q) const
+    {
+        m1_id_t id ;
+        double const x = pcoords(VEC(i,j,k),0,q) ;
+        id.erad1 = bg * ( 1. + amp * Kokkos::sin( 2. * M_PI * x / lambda ) ) ;
+        id.fradx1 = ff * id.erad1 ; id.frady1 = id.fradz1 = 0. ;
+        id.nrad1 = id.erad1 ;
+        limit_m1_id_flux(id.erad1, id.fradx1, id.frady1, id.fradz1) ;
+        #if GRACE_M1_NU_SPECIES >= 3
+        id.erad2 = id.erad3 = id.erad1 ; id.nrad2 = id.nrad3 = id.nrad1 ;
+        id.fradx2 = id.fradx3 = id.fradx1 ; id.frady2 = id.frady3 = 0. ; id.fradz2 = id.fradz3 = 0. ;
+        #endif
+        #if GRACE_M1_NU_SPECIES >= 5
+        id.erad4 = id.erad5 = id.erad1 ; id.nrad4 = id.nrad5 = id.nrad1 ;
+        id.fradx4 = id.fradx5 = id.fradx1 ; id.frady4 = id.frady5 = 0. ; id.fradz4 = id.fradz5 = 0. ;
+        #endif
+        #ifdef GRACE_M1_PHOTONS
+        id.eradph = id.erad1 ; id.nradph = id.nrad1 ;
+        id.fradxph = id.fradx1 ; id.fradyph = id.fradzph = 0. ;
+        #endif
+        return id ;
+    }
+
+    m1_atmo_params_t atmo ;
+    m1_excision_params_t excision ;
+    coord_array_t<GRACE_NSPACEDIM> pcoords ;
+    double bg, amp, lambda, ff ;
 } ;
 
 /**

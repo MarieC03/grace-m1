@@ -418,6 +418,20 @@ void set_m1_eas(
     // any enumerator added without a case here.
 }
 
+// Straight beam (also the shadow's driver) with the m1.straight_beam_test geometry.
+static straight_beam_m1_id_t make_straight_beam_id(
+    m1_atmo_params_t const& atmo, m1_excision_params_t const& ex,
+    coord_array_t<GRACE_NSPACEDIM> const& pcoords )
+{
+    return straight_beam_m1_id_t(
+        atmo, ex, pcoords,
+        grace::get_param<double>("m1","straight_beam_test","direction_x"),
+        grace::get_param<double>("m1","straight_beam_test","direction_y"),
+        grace::get_param<double>("m1","straight_beam_test","direction_z"),
+        grace::get_param<double>("m1","straight_beam_test","half_width"),
+        grace::get_param<double>("m1","straight_beam_test","start"),
+        grace::get_param<double>("m1","straight_beam_test","flux_factor") ) ;
+}
 
 template < typename id_kernel_t >
 static void set_m1_initial_data_impl(
@@ -539,8 +553,31 @@ void set_m1_initial_data() {
         ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;
         coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
         grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
-        straight_beam_m1_id_t id(
-            m1_atmo_params, m1_excision_params, cart_pcoords
+        straight_beam_m1_id_t id = make_straight_beam_id(m1_atmo_params, m1_excision_params, cart_pcoords) ;
+        set_m1_initial_data_impl(id) ;
+    } else if ( id_type == "sphere_wave" ) {
+        // Any hydro/spacetime ID: on a curved background this is the curved-space transport test.
+        coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
+        grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
+        sphere_wave_m1_id_t id(
+            m1_atmo_params, m1_excision_params, cart_pcoords,
+            grace::get_param<double>("m1","sphere_wave_test","radius"),
+            grace::get_param<double>("m1","sphere_wave_test","x0"),
+            grace::get_param<double>("m1","sphere_wave_test","y0"),
+            grace::get_param<double>("m1","sphere_wave_test","z0")
+        ) ;
+        set_m1_initial_data_impl(id) ;
+    } else if ( id_type == "plane_wave" ) {
+        auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;
+        ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;
+        coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
+        grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
+        plane_wave_m1_id_t id(
+            m1_atmo_params, m1_excision_params, cart_pcoords,
+            grace::get_param<double>("m1","plane_wave_test","background"),
+            grace::get_param<double>("m1","plane_wave_test","amplitude"),
+            grace::get_param<double>("m1","plane_wave_test","wavelength"),
+            grace::get_param<double>("m1","plane_wave_test","flux_factor")
         ) ;
         set_m1_initial_data_impl(id) ;
     } else if ( id_type == "crossed_beams" ) {
@@ -581,9 +618,7 @@ void set_m1_initial_data() {
         ASSERT(hydro_id_type=="minkowski_vacuum", "For M1 tests the hydro must be set to minkowski_vacuum") ;
         coord_array_t<GRACE_NSPACEDIM> cart_pcoords ;
         grace::fill_physical_coordinates(cart_pcoords,grace::STAG_CENTER,/*cartesian coords*/ false) ;
-        straight_beam_m1_id_t id(
-            m1_atmo_params, m1_excision_params, cart_pcoords
-        ) ;
+        straight_beam_m1_id_t id = make_straight_beam_id(m1_atmo_params, m1_excision_params, cart_pcoords) ;
         set_m1_initial_data_impl(id) ;
     } else if ( id_type == "emitting_sphere") {
         auto hydro_id_type = grace::get_param<std::string>("grmhd","id_type") ;

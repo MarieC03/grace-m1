@@ -12,7 +12,7 @@ m1:
 
   id_type:
     type: keyword
-    allowed: ["straight_beam", "crossed_beams", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium"]
+    allowed: ["straight_beam", "crossed_beams", "scattering", "shadow", "emitting_sphere", "zero", "curved_beam", "equilibrium", "sphere_wave", "plane_wave"]
     default: "zero"
     description: >
       Initialization prescription for radiation fields.  "equilibrium" sets
@@ -318,6 +318,121 @@ m1:
         Ye, and Ymu for up to 6 neutrino species.
 
 
+
+  straight_beam_test:
+    type: schema
+    description: >
+      Geometry of the straight-beam test (id_type "straight_beam"; also the beam
+      of "shadow").  The source patch is the part of the beam with x.n <= start,
+      lit with E = 1, F = E n (capped at the causal fraction).  n = +x keeps the
+      historical square cross-section |y|,|z| < half_width; any other direction
+      uses a cylinder of radius half_width around the axis through the origin.
+
+    direction_x:
+      type: double
+      default: 1.
+      range: "(*,*)"
+      description: >
+        x component of the beam direction (normalised internally).
+    direction_y:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        y component of the beam direction.
+    direction_z:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        z component of the beam direction.
+    half_width:
+      type: double
+      default: 0.0625
+      range: "(0,*)"
+      description: >
+        Half-width (square) or radius (cylinder) of the beam [code units].
+    start:
+      type: double
+      default: -0.25
+      range: "(*,*)"
+      description: >
+        The beam is lit where x.n <= start [code units].
+    flux_factor:
+      type: double
+      default: 0.999
+      range: "(0,1)"
+      description: >
+        |F|/E of the lit cells.  The M1 closure gives a beam with |F|/E < 1 a
+        transverse pressure (1 - chi)/2 E, i.e. an intrinsic divergence: at
+        0.999 it spreads sideways at about 0.03 per unit time.
+
+  sphere_wave_test:
+    type: schema
+    description: >
+      Parameters of the sphere-wave test (id_type "sphere_wave"): a unit
+      isotropic energy density inside a sphere on the floor, no opacities.
+      Exact transport: E(r,t) = (1 - mu_min)/2, mu_min = (r^2 + t^2 - R^2)/(2 r t)
+      clipped to [-1,1].
+
+    radius:
+      type: double
+      default: 0.1
+      range: "(0,*)"
+      description: >
+        Radius of the initially filled sphere [code units].
+    x0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (x) [code units].
+    y0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (y) [code units].
+    z0:
+      type: double
+      default: 0.
+      range: "(*,*)"
+      description: >
+        Centre of the sphere (z) [code units].
+
+  plane_wave_test:
+    type: schema
+    description: >
+      Smooth plane wave along x (id_type "plane_wave"), uniform in y and z, no
+      opacities: E = background (1 + amplitude sin(2 pi x / wavelength)),
+      F_x = flux_factor E, N = E.  At flux_factor ~ 1 it translates at the
+      speed of light: on a box periodic in x with length = wavelength it returns
+      to itself after t = wavelength (convergence-order test).
+
+    background:
+      type: double
+      default: 1.
+      range: "(0,*)"
+      description: >
+        Mean energy density.
+    amplitude:
+      type: double
+      default: 0.5
+      range: "[0,1)"
+      description: >
+        Relative amplitude of the sine.
+    wavelength:
+      type: double
+      default: 1.
+      range: "(0,*)"
+      description: >
+        Wavelength [code units].
+    flux_factor:
+      type: double
+      default: 1.
+      range: "[0,1]"
+      description: >
+        F_x / E; capped at the causal fraction 0.999 of the initial data.
 
   crossed_beams_test:
     type: schema

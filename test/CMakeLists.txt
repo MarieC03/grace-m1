@@ -151,6 +151,16 @@ if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
 
+# Initial data of the M1 test problems (straight/oblique beam, sphere wave, plane wave)
+# evaluated on a small flat grid against their defining formulas.
+if(GRACE_M1_NU_SPECIES GREATER_EQUAL 1)
+    add_kokkos_test(m1_test_id_test test_m1_test_id.cpp)
+    add_test(NAME m1_test_id_test COMMAND mpirun -n 1 ./m1_test_id_test)
+    set_tests_properties(m1_test_id_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # Timescale beta-eq closure with the electron-only fallback: a successful joint
 # solve is untouched, a failed one is rescued with Ymu held (5 species only).
 if(GRACE_M1_NU_SPECIES EQUAL 5)
