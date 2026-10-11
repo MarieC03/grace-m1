@@ -118,6 +118,10 @@ add_grace_test(particle_advance_test      test_particle_advance.cpp)
 endif()
 
 if( GRACE_ENABLE_M1 )
+# Number flux with sqrt(gamma) != 1: definition and consistency with the energy flux (header only).
+add_standalone_test(m1_number_flux_test test_m1_number_flux.cpp)
+add_test(NAME m1_number_flux_test COMMAND ./m1_number_flux_test)
+set_tests_properties(m1_number_flux_test PROPERTIES LABELS "fast;physics;m1")
 add_kokkos_test(m1_analytic_rates_test test_m1_analytic_rates.cpp)
 add_test(NAME m1_analytic_rates_test COMMAND mpirun -n 1 ./m1_analytic_rates_test)
 # Pure serial unit checks — pin OpenMP to one thread so the test is immune
@@ -440,6 +444,17 @@ if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES GREATER_EQUAL 1)
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/run_${_c})
         set_tests_properties(${_c}_run PROPERTIES LABELS "m1;integration" TIMEOUT 900)
     endforeach()
+    # Curved beam: E/N against the geodesic energy shift (extra-sqrt(gamma) number-flux regression).
+    if(GRACE_METRIC_EVOL STREQUAL "COWLING")
+        add_standalone_test(m1_curved_beam_number_test test_m1_curved_beam_number.cpp)
+        target_link_libraries(m1_curved_beam_number_test PRIVATE HDF5::HDF5 MPI::MPI_CXX)
+        add_test(NAME m1_curved_beam_number_test COMMAND ./m1_curved_beam_number_test)
+        set_tests_properties(m1_curved_beam_run PROPERTIES FIXTURES_SETUP m1_curved_beam)
+        set_tests_properties(m1_curved_beam_number_test PROPERTIES
+            FIXTURES_REQUIRED m1_curved_beam
+            LABELS "m1;integration"
+            ENVIRONMENT "M1_CURVED_BEAM_PLANE=${CMAKE_CURRENT_BINARY_DIR}/run_m1_curved_beam/output_surface/surface_out_plane_xz_000096.h5")
+    endif()
 endif()
 
 # errors.  "~[leptonic]" excludes the leptonic case (which needs eos_type =

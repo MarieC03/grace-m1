@@ -10,8 +10,10 @@
 # conservation failure; it should plateau once the beam reaches the far boundary.
 # NB Erad and Nrad diverge by construction: the geometric source terms act on E
 # and F only (m1.hh compute_source_terms), never on N, because neutrino NUMBER is
-# conserved along the flow while its ENERGY redshifts.  MEASURED E-weighted mean
-# E/N over the beam at t = 9.19: 1.36.  E/N = 1 everywhere at t = 0.
+# conserved along the flow while the normal-observer energy shifts as
+# E_inf/(alpha - beta_i l^i).  m1_curved_beam_number_test checks that
+# q = (E/N)(alpha - beta_i l^i) is uniform over the beam: +-3.5 % (median 0.82);
+# the old extra sqrt(gamma) in the number flux gave 0.10 .. 1.92.  E/N = 1 at t = 0.
 # LBM twin: test/configs/lbm_curved_beam.yaml (same grid, rk3 at cfl 0.9, 24 iterations).
 # 32 quadrants of 12^3, dx = 0.375.
 # Build: -DGRACE_RADIATION_SCHEME=M1 -DGRACE_M1_NU_SPECIES=1 -DGRACE_METRIC_EVOL=COWLING
