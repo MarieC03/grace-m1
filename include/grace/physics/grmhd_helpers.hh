@@ -57,6 +57,9 @@ struct c2p_params_t {
   double beta_fallback ; //!< beta < fallback we use ent
   bool use_ent_backup  ; //!< Use backup c2p?
   bool ent_backup_on_failure_only ; //!< entropy_backup_trigger="failure": not on EPS_TOO_LOW (FIL)
+  bool   keep_cold_deficit ;    //!< cold_deficit_policy="keep": small sub-cold dips leave tau, S_i untouched
+  double cold_deficit_max ;     //!< largest kept deficit (eps_min - eps)/(1 + eps_min)
+  double cold_deficit_min_rho ; //!< below this density deficits are always refilled
   double alp_bh_thresh ; //!< alp theshold for BH horizon
   bool   always_enforce_floors ; //!< false: intermediate RK substeps clamp only to EOS absolute bounds
 } ;
@@ -244,6 +247,10 @@ c2p_params_t get_c2p_params()
   c2p_params.use_ent_backup = grace::get_param<bool>("grmhd","c2p","use_c2p_entropy_backup") ;
   c2p_params.ent_backup_on_failure_only =
       grace::get_param<std::string>("grmhd","c2p","entropy_backup_trigger") == "failure" ;
+  c2p_params.keep_cold_deficit =
+      grace::get_param<std::string>("grmhd","c2p","cold_deficit_policy") == "keep" ;
+  c2p_params.cold_deficit_max = grace::get_param<double>("grmhd","c2p","cold_deficit_max") ;
+  c2p_params.cold_deficit_min_rho = grace::get_param<double>("grmhd","c2p","cold_deficit_min_rho") ;
   c2p_params.alp_bh_thresh = grace::get_param<double>("grmhd","c2p","bh_alp_thresh") ;
   c2p_params.always_enforce_floors = grace::get_param<bool>("grmhd","c2p","always_enforce_floors") ;
   return c2p_params ;

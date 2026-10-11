@@ -421,7 +421,24 @@ conservs_to_prims(  grace::grmhd_cons_array_t&  cons
         }
         // handle the return signals from within the
         // c2p operators
+        bool const tau_reset_before    = c2p_err.test(c2p_err_enum_t::C2P_RESET_TAU) ;
+        bool const stilde_reset_before = c2p_err.test(c2p_err_enum_t::C2P_RESET_STILDE) ;
         c2p_handle_signals<eos_t>(c2p_ret, c2p_is_lenient, c2p_err) ;
+        // cold_deficit_policy = "keep": a small dip below the cold curve, and nothing else wrong,
+        // keeps its deficit in tau (energy conserved) instead of being refilled; the primitives
+        // stay clamped.  Resets requested for any other reason are left in place.
+        if (   c2p_pars.keep_cold_deficit
+            && c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_LOW)
+            && !c2p_err.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED)
+            && !c2p_ret.test(c2p_sig_enum_t::C2P_EPS_TOO_HIGH)
+            && !c2p_ret.test(c2p_sig_enum_t::C2P_RHO_TOO_LOW)
+            && !c2p_ret.test(c2p_sig_enum_t::C2P_RHO_TOO_HIGH)
+            && !c2p_ret.test(c2p_sig_enum_t::C2P_VEL_TOO_HIGH)
+            && prims[RHOL] >= c2p_pars.cold_deficit_min_rho
+            && c2p.eps_deficit <= c2p_pars.cold_deficit_max * (1.0 + prims[EPSL]) ) {
+            if ( !tau_reset_before )    c2p_err.unset(c2p_err_enum_t::C2P_RESET_TAU) ;
+            if ( !stilde_reset_before ) c2p_err.unset(c2p_err_enum_t::C2P_RESET_STILDE) ;
+        }
     } else {
         c2p_failed = true ;
     }

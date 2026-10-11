@@ -3234,3 +3234,141 @@ TEST_CASE("leptonic EOS: log-P interpolation is geometric between density rows",
     REQUIRE(atm.csnd2 <= 1.) ;
 }
 #endif // GRACE_ENABLE_MUONS
+
+// ---------------------------------------------------------------------------
+// grmhd.c2p.cold_deficit_policy: a state on the cold curve, its tau lowered by D W delta,
+// run through conservs_to_prims.  Both policies must give the same primitives; only keep
+// leaves tau and S_i alone, and only for a small deficit in the bulk.
+// ---------------------------------------------------------------------------
+namespace {
+
+enum cd_out_idx : int {
+    CD_RESET_TAU = 0, CD_RESET_STILDE, CD_SIG_EPS_LO, CD_BACKUP, CD_ATMO, CD_TFLOOR,
+    CD_ERR_WORD, CD_EPS, CD_TEMP, CD_PRESS, CD_ZX, CD_EPSMIN, CD_N
+} ;
+
+template <typename eos_t>
+std::array<double, CD_N> cold_deficit_single(eos_t const& eos, atmo_params_t const& atmo,
+    excision_params_t const& excision, c2p_params_t const& pars,
+    double rho0, double ye0, double ymu0, double W, double delta, double tfac = 1.)
+{
+    metric_array_t metric({1.0, 0.0, 0.0, 1.0, 0.0, 1.0}, {0.0, 0.0, 0.0}, 1.0) ;
+    Kokkos::View<double*> out("cd_out", CD_N) ;
+    double const t0 = tfac * eos.temperature_minimum() ;
+    Kokkos::parallel_for("cd_single", 1, KOKKOS_LAMBDA(int) {
+        grmhd_prims_array_t p0{} ;
+        p0[RHOL] = rho0 ; p0[TEMPL] = t0 ; p0[YEL] = ye0 ;
+    #ifdef GRACE_ENABLE_MUONS
+        p0[YMUL] = ymu0 ;
+        double& ymu = p0[YMUL] ;
+    #else
+        double ymu = ymu0 ;
+    #endif
+        p0[ZXL] = Kokkos::sqrt(W*W - 1.0) ; p0[ZYL] = 0. ; p0[ZZL] = 0. ;
+        p0[BXL] = p0[BYL] = p0[BZL] = 0. ;
+        double csnd2 ;
+        eos_err_t err{} ;
+        p0[PRESSL] = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(
+                        p0[EPSL], csnd2, p0[ENTL], p0[TEMPL], p0[RHOL], p0[YEL], ymu, err) ;
+        grmhd_cons_array_t cons{} ;
+        prims_to_conservs(p0, cons, metric) ;
+        cons[TAUL] -= rho0 * W * W * delta * (1. + p0[EPSL]) ;
+        grmhd_prims_array_t p1 = p0 ;
+        c2p_err_t c2p_err ;
+        double rtp[3] = {10.0, 1.0, 1.0} ;
+        conservs_to_prims(cons, p1, metric, eos, atmo, excision, pars, rtp, c2p_err) ;
+        double r = rho0, y = ye0, m = ymu, emin, emax ;
+        eos.eps_range__rho_ye_ymu(emin, emax, r, y, m, err) ;
+        out(CD_RESET_TAU)    = c2p_err.test(c2p_err_enum_t::C2P_RESET_TAU)       ? 1. : 0. ;
+        out(CD_RESET_STILDE) = c2p_err.test(c2p_err_enum_t::C2P_RESET_STILDE)    ? 1. : 0. ;
+        out(CD_SIG_EPS_LO)   = c2p_err.test(c2p_err_enum_t::C2P_SIG_EPS_TOO_LOW) ? 1. : 0. ;
+        out(CD_BACKUP)       = c2p_err.test(c2p_err_enum_t::C2P_ENT_BACKUP_USED) ? 1. : 0. ;
+        out(CD_ATMO)         = c2p_err.test(c2p_err_enum_t::C2P_ATMO_RESET)      ? 1. : 0. ;
+        out(CD_TFLOOR)       = c2p_err.test(c2p_err_enum_t::C2P_T_FLOORED)       ? 1. : 0. ;
+        out(CD_ERR_WORD)     = static_cast<double>(c2p_err.words[0]) ;
+        out(CD_EPS) = p1[EPSL] ; out(CD_TEMP) = p1[TEMPL] ; out(CD_PRESS) = p1[PRESSL] ; out(CD_ZX) = p1[ZXL] ;
+        out(CD_EPSMIN) = emin ;
+    }) ;
+    Kokkos::fence() ;
+    auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), out) ;
+    std::array<double, CD_N> a ;
+    for ( int i = 0 ; i < CD_N ; ++i ) a[i] = h(i) ;
+    return a ;
+}
+
+template <typename eos_t>
+void cold_deficit_checks(eos_t const& eos, std::vector<std::pair<double,double>> const& comps)
+{
+    auto atmo = get_atmo_params() ;
+    auto excision = get_excision_params() ;
+    atmo.temp_fl = eos.temperature_minimum() ;   // keep needs the floor at the cold curve
+    auto refill = get_c2p_params() ;
+    refill.use_ent_backup = true ;
+    refill.ent_backup_on_failure_only = true ;
+    refill.keep_cold_deficit = false ;
+    auto keep = refill ;
+    keep.keep_cold_deficit = true ;
+    keep.cold_deficit_max = 1e-4 ;
+    keep.cold_deficit_min_rho = 1e-10 ;
+    int n_kept = 0, n_cases = 0 ;
+    for ( double rho : {1e-5, 3e-4, 1.2e-3} )
+    for ( auto const& c : comps )
+    for ( double W : {1.0, 1.2} ) {
+        double const ye = c.first, ymu = c.second ;
+        auto const r_small = cold_deficit_single(eos, atmo, excision, refill, rho, ye, ymu, W, 1e-6) ;
+        auto const k_small = cold_deficit_single(eos, atmo, excision, keep,   rho, ye, ymu, W, 1e-6) ;
+        auto const k_large = cold_deficit_single(eos, atmo, excision, keep,   rho, ye, ymu, W, 1e-3) ;
+        auto k_lowrho_pars = keep ; k_lowrho_pars.cold_deficit_min_rho = 10. * rho ;
+        auto const k_lowrho = cold_deficit_single(eos, atmo, excision, k_lowrho_pars, rho, ye, ymu, W, 1e-6) ;
+        // slightly above the cold curve: a state exactly on it can round to just below
+        auto const r_none = cold_deficit_single(eos, atmo, excision, refill, rho, ye, ymu, W, 0., 1.5) ;
+        auto const k_none = cold_deficit_single(eos, atmo, excision, keep,   rho, ye, ymu, W, 0., 1.5) ;
+        auto r_bk = refill ; r_bk.ent_backup_on_failure_only = false ;
+        auto k_bk = keep   ; k_bk.ent_backup_on_failure_only = false ;
+        auto const r_backup = cold_deficit_single(eos, atmo, excision, r_bk, rho, ye, ymu, W, 1e-6) ;
+        auto const k_backup = cold_deficit_single(eos, atmo, excision, k_bk, rho, ye, ymu, W, 1e-6) ;
+        INFO("rho " << rho << " Ye " << ye << " Ymu " << ymu << " W " << W) ;
+        ++n_cases ;
+        // the small deficit is seen and clamped, nothing else fires
+        REQUIRE(r_small[CD_SIG_EPS_LO] == 1.) ;
+        REQUIRE(r_small[CD_ATMO] == 0.) ;
+        REQUIRE(r_small[CD_TFLOOR] == 0.) ;
+        REQUIRE(r_small[CD_BACKUP] == 0.) ;
+        CHECK(std::fabs(r_small[CD_EPS] - r_small[CD_EPSMIN]) <= 1e-12 * (1. + std::fabs(r_small[CD_EPSMIN]))) ;
+        REQUIRE(r_none[CD_SIG_EPS_LO] == 0.) ;
+        // refill rewrites tau and S_i, keep leaves them; identical primitives
+        CHECK(r_small[CD_RESET_TAU] == 1.) ; CHECK(r_small[CD_RESET_STILDE] == 1.) ;
+        CHECK(k_small[CD_RESET_TAU] == 0.) ; CHECK(k_small[CD_RESET_STILDE] == 0.) ;
+        CHECK(k_small[CD_SIG_EPS_LO] == 1.) ;
+        for ( int q : {CD_EPS, CD_TEMP, CD_PRESS, CD_ZX} ) CHECK(k_small[q] == r_small[q]) ;
+        if ( k_small[CD_RESET_TAU] == 0. ) ++n_kept ;
+        // large deficits and low densities are still refilled
+        CHECK(k_large[CD_RESET_TAU] == 1.) ;
+        CHECK(k_lowrho[CD_RESET_TAU] == 1.) ;
+        // no deficit: the policies are indistinguishable
+        CHECK(k_none[CD_ERR_WORD] == r_none[CD_ERR_WORD]) ;
+        for ( int q : {CD_EPS, CD_TEMP, CD_PRESS, CD_ZX} ) CHECK(k_none[q] == r_none[q]) ;
+        // a cell the entropy backup recovered is never kept
+        if ( k_backup[CD_BACKUP] == 1. ) CHECK(k_backup[CD_ERR_WORD] == r_backup[CD_ERR_WORD]) ;
+    }
+    printf("   cold_deficit_policy keep: tau kept in %d of %d small-deficit cases\n", n_kept, n_cases) ;
+}
+
+} // namespace
+
+TEST_CASE("c2p cold_deficit_policy: keep leaves small sub-cold deficits in tau",
+          "[c2p][cold_deficit]")
+{
+    auto const eos_type = grace::get_param<std::string>("eos","eos_type") ;
+    if ( eos_type == "tabulated" ) {
+        cold_deficit_checks(eos::get().get_eos<tabulated_eos_t>(), {{0.06, 0.}, {0.3, 0.}}) ;
+    }
+#ifdef GRACE_ENABLE_MUONS
+    else if ( eos_type == "leptonic" ) {
+        cold_deficit_checks(eos::get().get_eos<leptonic_eos_4d_t>(), {{0.06, 2e-4}, {0.06, 0.05}, {0.3, 0.02}}) ;
+    }
+#endif
+    else {
+        SKIP("tabulated or leptonic EOS only") ;
+    }
+}

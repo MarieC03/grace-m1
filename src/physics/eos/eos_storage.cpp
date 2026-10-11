@@ -246,6 +246,25 @@ eos_storage_t::eos_storage_t() {
          ERROR("Unsupported eos_type") ;
     }
 
+    // Gate of grmhd.c2p.cold_deficit_policy: reject combinations where it would silently do nothing.
+    if ( get_param<std::string>("grmhd","c2p","cold_deficit_policy") == "keep" ) {
+        if ( eos_type == "ideal_gas" )
+            ERROR("grmhd.c2p.cold_deficit_policy=keep needs an EOS with a cold curve "
+                  "(tabulated, leptonic or hybrid), not ideal_gas.") ;
+        double const temp_fl = get_param<double>("grmhd","atmosphere","temp_fl") ;
+        double const tmin = eos_type == "tabulated" ? _tabulated.temperature_minimum()
+                          : eos_type == "leptonic"  ? _leptonic_4d.temperature_minimum()
+                          : temp_fl ;
+        if ( temp_fl > tmin * (1. + 1e-12) )
+            GRACE_WARN("grmhd.c2p.cold_deficit_policy=keep: atmosphere temp_fl = {} lies above the "
+                       "EOS temperature minimum {}, so cells on the cold curve go through the "
+                       "T-floor branch, which refills tau.  Set temp_fl = {} for keep to act.",
+                       temp_fl, tmin, tmin) ;
+        GRACE_INFO("c2p: cold_deficit_policy = keep (max {}, min rho {}).",
+                   get_param<double>("grmhd","c2p","cold_deficit_max"),
+                   get_param<double>("grmhd","c2p","cold_deficit_min_rho")) ;
+    }
+
 }
 
 }

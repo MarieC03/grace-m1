@@ -463,6 +463,10 @@ endif()
 add_test(NAME gamma2_c2p_test COMMAND
         mpirun -n 1 ./c2p_test "~[leptonic]~[tabulated]" --grace-parfile ./configs/c2p_test_gamma2.yaml )
 set_tests_properties(gamma2_c2p_test PROPERTIES LABELS "fast;physics")
+# grmhd.c2p.cold_deficit_policy = keep against refill through conservs_to_prims.
+add_test(NAME tabulated_cold_deficit_test COMMAND
+        mpirun -n 1 ./c2p_test "[cold_deficit]" --grace-parfile ./configs/c2p_test_tabulated.yaml )
+set_tests_properties(tabulated_cold_deficit_test PROPERTIES LABELS "physics;eos")
 
 # Leptonic (4D, with muons) c2p round-trip.  Only meaningful in a 5-species
 # build: the test case carries the YMUL/YMUSL slots and is #if'd out when the
@@ -495,6 +499,11 @@ if(GRACE_ENABLE_MUONS)
     add_test(NAME replay_c2p_test COMMAND
             mpirun -n 1 ./c2p_test "[replay]" --grace-parfile ./configs/c2p_test_replay.yaml )
     set_tests_properties(replay_c2p_test PROPERTIES LABELS "physics;leptonic;replay")
+
+    # Leptonic twin of the cold-deficit test.
+    add_test(NAME leptonic_cold_deficit_test COMMAND
+            mpirun -n 1 ./c2p_test "[cold_deficit]" --grace-parfile ./configs/c2p_test_leptonic.yaml )
+    set_tests_properties(leptonic_cold_deficit_test PROPERTIES LABELS "physics;leptonic;eos")
 
     # Tabulated-EOS twin of the EOS [determinism] case: the same forward+inverse
     # code path on tabulated_eos_t.  In the muon block only because it shares

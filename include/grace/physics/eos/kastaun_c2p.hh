@@ -219,11 +219,13 @@ namespace grace {
       double epsmin, epsmax ;
       get_eps_range(epsmin,epsmax,rho) ;
       epsmax = Kokkos::fmin(epsmax, eos.get_c2p_eps_max()) ;
+      eps_deficit = 0.0 ;
       if ( eps >= epsmax ) {
         err.set(c2p_sig_enum_t::C2P_EPS_TOO_HIGH);
         eps = epsmax * 0.999;
       } else if ( eps < epsmin ) {
         err.set(c2p_sig_enum_t::C2P_EPS_TOO_LOW) ;
+        eps_deficit = epsmin - eps ;   // for grmhd.c2p.cold_deficit_policy
         eps = epsmin;
       }
 
@@ -296,6 +298,8 @@ namespace grace {
     double rsqr, bsqr, rbsqr, brosqr, h0sqr; //!< Helpers
     /************************************************/
     double vsqrmax, wmax ; //!< Maximum v^2 and W
+    /************************************************/
+    double eps_deficit = 0.0 ; //!< eps_min - eps_raw when compute_primitives clamped up, else 0
     /************************************************/
   } ;
   /************************************************/
@@ -382,6 +386,7 @@ namespace grace {
       double residual = fmu.compute_primitives(
         mu, c2p_errors, x, w, rho, press, eps, temp, entropy
       ) ;
+      eps_deficit = fmu.eps_deficit ;
 
       prims[EPSL]   = eps       ;
       prims[RHOL]   = rho       ;
@@ -398,6 +403,8 @@ namespace grace {
 
       return fabs(residual) ;
     }
+
+    double eps_deficit = 0.0 ; //!< energy per mass below the cold curve before the clamp (0 if none)
 
   private:
     eos_t eos ;

@@ -124,6 +124,36 @@ grmhd:
         only after a failed inversion or when beta <= beta_fallback; a cell
         below the energy floor is clamped to it, and tau, S_i and the entropy
         are rewritten from the clamped state.
+    cold_deficit_policy:
+      type: keyword
+      allowed: ["refill", "keep"]
+      default: "refill"
+      description: >
+        What to do with the conserved energy of a cell whose recovered eps lies
+        below the EOS cold curve (EPS_TOO_LOW) when that is its only problem.
+        "refill" (default): the primitives are clamped to the cold curve and
+        tau, S_i are rewritten from them, which adds energy every time.
+        "keep": for deficits up to cold_deficit_max and densities above
+        cold_deficit_min_rho, only the primitives are clamped and tau, S_i keep
+        the deficit, so energy is conserved and zero-mean errors stay zero-mean
+        (what FIL's Kastaun path does).  Larger deficits, cells that used the
+        entropy backup or hit any other clamp are still refilled.  Needs an EOS
+        with a cold curve (rejected for ideal_gas) and atmosphere.temp_fl at the
+        EOS temperature minimum, otherwise the T-floor branch refills anyway.
+    cold_deficit_max:
+      type: double
+      range: "[0,*)"
+      default: 1e-4
+      description: >
+        Largest deficit (eps_min - eps)/(1 + eps_min) left in tau under
+        cold_deficit_policy = "keep".
+    cold_deficit_min_rho:
+      type: double
+      range: "[0,*)"
+      default: 1e-10
+      description: >
+        Under cold_deficit_policy = "keep", deficits are always refilled below
+        this rest-mass density (atmosphere and near-vacuum surface layers).
     beta_fallback:
       type: double
       range: "[0,*)"
