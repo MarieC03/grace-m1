@@ -31,6 +31,7 @@
 
 #include <grace/utils/grace_utils.hh>
 #include <grace/physics/eos/eos_base.hh>
+#include <grace/physics/eos/tabeos_free_energy.hh>
 #include <grace/data_structures/memory_defaults.hh>
 #include <grace/amr/ghostzone_kernels/type_helpers.hh>
 #include <grace/utils/rootfinding.hh>
@@ -286,6 +287,13 @@ class tabulated_eos_t
         ltempmin = _logT[0] ; ltempmax = _logT[_logT.size()-1] ;
     }
     /**************************************************************************************/
+    // eos.tabulated_eos.interpolation = "hermite_free_energy": P, eps, s, T and cs2 come
+    // from the free-energy interpolant; chemical potentials and composition stay trilinear.
+    void set_free_energy_interpolation(tabeos_free_energy_t const& fe) {
+        fe_table  = fe ;
+        fe_interp = true ;
+    }
+    /**************************************************************************************/
     /**
      * @brief Get pressure given eps rho and ye.
      *
@@ -301,6 +309,11 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err)   ;
         auto lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
+            double e, s, c ;
+            return fe_state(lrho,lt,ye,e,s,c) ;
+        }
         // this call imposes limits on eps !
         auto ltemp = ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
         return press__lrho_ltemp_ye(lrho,ltemp,ye) ;
@@ -322,6 +335,12 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err)   ;
         auto lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
+            temp = Kokkos::exp(lt) ;
+            double e, s, c ;
+            return fe_state(lrho,lt,ye,e,s,c) ;
+        }
         // this call limits epsilon!
         auto ltemp = ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
         temp = Kokkos::exp(ltemp) ;
@@ -345,6 +364,10 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         double lrho  = Kokkos::log(rho)  ;
         double ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e, s, c ;
+            return fe_state(lrho,ltemp,ye,e,s,c) ;
+        }
         return press__lrho_ltemp_ye(lrho,ltemp,ye) ;
     }
     /**************************************************************************************/
@@ -365,6 +388,11 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         double lrho = Kokkos::log(rho) ;
         double ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e, s, c ;
+            fe_state(lrho,ltemp,ye,e,s,c) ;
+            return e ;
+        }
         auto leps = tables.interp(lrho,ltemp,ye,TABEPS) ;
         return  Kokkos::exp(leps) - energy_shift ;
     }
@@ -391,6 +419,13 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err)   ;
         auto lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
+            double e, s ;
+            double const press = fe_state(lrho,lt,ye,e,s,csnd2) ;
+            h = 1 + eps + press/rho ;
+            return press ;
+        }
         auto ltemp = ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
         auto press = press__lrho_ltemp_ye(lrho,ltemp,ye) ;
         csnd2 = tables.interp(lrho,ltemp,ye,TABCSND2) ;
@@ -421,6 +456,12 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         auto lrho = Kokkos::log(rho) ;
         auto ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e, s ;
+            double const press = fe_state(lrho,ltemp,ye,e,s,csnd2) ;
+            h = 1 + e + press/rho ;
+            return press ;
+        }
         double eps = Kokkos::exp(tables.interp(lrho,ltemp,ye,TABEPS)) - energy_shift ;
         auto press = press__lrho_ltemp_ye(lrho,ltemp,ye) ;
         csnd2 = tables.interp(lrho,ltemp,ye,TABCSND2) ;
@@ -451,6 +492,10 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         auto lrho = Kokkos::log(rho) ;
         auto ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double s ;
+            return fe_state(lrho,ltemp,ye,eps,s,csnd2) ;
+        }
         eps = Kokkos::exp(tables.interp(lrho,ltemp,ye,TABEPS)) - energy_shift ;
         auto press = press__lrho_ltemp_ye(lrho,ltemp,ye) ;
         csnd2 = tables.interp(lrho,ltemp,ye,TABCSND2) ;
@@ -482,6 +527,14 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err)   ;
         auto lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
+            temp = Kokkos::exp(lt) ;
+            double e ;
+            double const press = fe_state(lrho,lt,ye,e,entropy,csnd2) ;
+            h = 1 + eps + press/rho ;
+            return press ;
+        }
         // this call limits eps
         auto ltemp = ltemp__eps_lrho_ye(eps,lrho,ye,err) ;
         temp = Kokkos::exp(ltemp) ;
@@ -514,6 +567,11 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         auto lrho  = Kokkos::log(rho) ;
         auto ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e ;
+            fe_state(lrho,ltemp,ye,e,entropy,csnd2) ;
+            return e ;
+        }
         csnd2 = tables.interp(lrho,ltemp,ye,TABCSND2) ;
         entropy = tables.interp(lrho,ltemp,ye,TABENTROPY) ;
         return Kokkos::exp(tables.interp(lrho,ltemp,ye,TABEPS)) - energy_shift ;
@@ -529,6 +587,7 @@ class tabulated_eos_t
         limit_temp(temp,err) ;
         auto lrho  = Kokkos::log(rho) ;
         auto ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) return fe_state(lrho,ltemp,ye,eps,entropy,csnd2) ;
         eps = Kokkos::exp(tables.interp(lrho,ltemp,ye,TABEPS)) - energy_shift ;
         csnd2 = tables.interp(lrho,ltemp,ye,TABCSND2) ;
         entropy = tables.interp(lrho,ltemp,ye,TABENTROPY) ;
@@ -545,6 +604,14 @@ class tabulated_eos_t
         limit_ye(ye,err)   ;
         limit_entropy_rho_ye(entropy,rho,ye,err) ;
         double lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__entropy_lrho_ye(entropy,lrho,ye) ;
+            temp = Kokkos::exp(lt) ;
+            double s ;
+            double const press = fe_state(lrho,lt,ye,eps,s,csnd2) ;
+            h = 1 + eps + press/rho ;
+            return press ;
+        }
         auto ltemp = ltemp__entropy_lrho_ye(entropy,lrho,ye) ;
         temp = Kokkos::exp(ltemp) ;
         eps = Kokkos::exp(tables.interp(lrho,ltemp,ye,TABEPS)) - energy_shift ;
@@ -587,6 +654,14 @@ class tabulated_eos_t
         limit_rho(rho, err) ;
         limit_ye(ye, err)   ;
         auto lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__press_lrho_ye(press, lrho, ye, err) ;
+            temp = Kokkos::exp(lt) ;
+            double eps ;
+            fe_state(lrho, lt, ye, eps, entropy, csnd2) ;
+            h = 1. + eps + press/rho ;
+            return eps ;
+        }
         // this call clamps press to the (rho, ye) T-range and returns ltemp.
         auto ltemp = ltemp__press_lrho_ye(press, lrho, ye, err) ;
         temp = Kokkos::exp(ltemp) ;
@@ -793,6 +868,12 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err) ;
         double lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double dum ;
+            fe_value(FE_EPS, lrho, ltempmin, ye, eps_min, dum) ;
+            fe_value(FE_EPS, lrho, ltempmax, ye, eps_max, dum) ;
+            return ;
+        }
         eps_min = Kokkos::exp(tables.interp(lrho,ltempmin,ye,TABEPS)) - energy_shift ;
         eps_max = Kokkos::exp(tables.interp(lrho,ltempmax,ye,TABEPS)) - energy_shift ;
     }
@@ -805,6 +886,12 @@ class tabulated_eos_t
         limit_rho(rho,err) ;
         limit_ye(ye,err) ;
         double lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double dum ;
+            fe_value(FE_ENTROPY, lrho, ltempmin, ye, s_min, dum) ;
+            fe_value(FE_ENTROPY, lrho, ltempmax, ye, s_max, dum) ;
+            return ;
+        }
         s_min = tables.interp(lrho,ltempmin,ye,TABENTROPY) ;
         s_max = tables.interp(lrho,ltempmax,ye,TABENTROPY) ;
     }
@@ -1024,6 +1111,90 @@ class tabulated_eos_t
         return ltl + (lpress - pl) * (lth - ltl) / (ph - pl) ;
     }
     /**************************************************************************************/
+    /*                       FREE-ENERGY (HERMITE) INTERPOLATION                          */
+    /**************************************************************************************/
+    // P (returned), eps, entropy [k_B/baryon] and cs2 from one evaluation of f.
+    // cs2 = [(dP/drho)_s]/h; falls back to the trilinear table where c_v <= 0 or cs2 is
+    // outside (0,1) (the cells where the table's own cs2 is clamped).
+    double KOKKOS_INLINE_FUNCTION
+    fe_state(double const lrho, double const ltemp, double const ye
+            , double& eps, double& entropy, double& csnd2) const
+    {
+        tabeos_free_energy_t::derivs_t d ;
+        fe_table.eval(lrho, ltemp, ye, d) ;
+        double const press = Kokkos::exp(lrho) * d.fx ;
+        eps     = d.f - d.fy ;
+        entropy = -fe_table.mb_MeV * d.fy * Kokkos::exp(-ltemp) ;
+        double const deps_dy = d.fy - d.fyy ;
+        double cs2 = -1. ;
+        if ( deps_dy > 0. ) cs2 = (d.fx + d.fxx + d.fxy * d.fxy / deps_dy) / (1. + eps + d.fx) ;
+        if ( !(cs2 > 0. && cs2 < 1.) ) cs2 = tables.interp(lrho, ltemp, ye, TABCSND2) ;
+        csnd2 = cs2 ;
+        return press ;
+    }
+    /**************************************************************************************/
+    // FE_EPS: eps, FE_ENTROPY: s [k_B/baryon], FE_PRESS: P, and their d/d ln T at fixed (rho, ye)
+    enum FE_INV : int { FE_EPS = 0, FE_ENTROPY, FE_PRESS } ;
+    void KOKKOS_INLINE_FUNCTION
+    fe_value(int const which, double const lrho, double const ltemp, double const ye
+            , double& val, double& dval) const
+    {
+        tabeos_free_energy_t::derivs_t d ;
+        fe_table.eval(lrho, ltemp, ye, d) ;
+        if ( which == FE_EPS ) {
+            val = d.f - d.fy ; dval = d.fy - d.fyy ;
+        } else if ( which == FE_ENTROPY ) {
+            double const sf = -fe_table.mb_MeV * Kokkos::exp(-ltemp) ;
+            val = sf * d.fy ; dval = sf * (d.fyy - d.fy) ;
+        } else {
+            double const rho = Kokkos::exp(lrho) ;
+            val = rho * d.fx ; dval = rho * d.fxy ;
+        }
+    }
+    /**************************************************************************************/
+    // ln T with value(ln T) = target, given vmin < target < vmax at the table's T bounds
+    double KOKKOS_INLINE_FUNCTION
+    fe_ltemp__value(int const which, double const target, double const lrho, double const ye
+                   , double const vmin, double const vmax) const
+    {
+        auto const value = [&] (double const lt, double& v, double& dv) {
+            fe_value(which, lrho, lt, ye, v, dv) ;
+        } ;
+        return fe_invert_ltemp(value, tables._logT, nT, target, vmin, vmax) ;
+    }
+    /**************************************************************************************/
+    // free-energy twins of ltemp__{eps,entropy,press}_lrho_ye: same clamps and error bits
+    double KOKKOS_INLINE_FUNCTION
+    fe_ltemp__eps_lrho_ye(double& eps, double const lrho, double const ye, err_t& err) const
+    {
+        double emin, emax, dum ;
+        fe_value(FE_EPS, lrho, ltempmin, ye, emin, dum) ;
+        fe_value(FE_EPS, lrho, ltempmax, ye, emax, dum) ;
+        if ( eps <= emin ) { eps = emin ; err.set(EOS_EPS_TOO_LOW)  ; return ltempmin ; }
+        if ( eps >= emax ) { eps = emax ; err.set(EOS_EPS_TOO_HIGH) ; return ltempmax ; }
+        return fe_ltemp__value(FE_EPS, eps, lrho, ye, emin, emax) ;
+    }
+    double KOKKOS_INLINE_FUNCTION
+    fe_ltemp__entropy_lrho_ye(double const entropy, double const lrho, double const ye) const
+    {
+        double smin, smax, dum ;
+        fe_value(FE_ENTROPY, lrho, ltempmin, ye, smin, dum) ;
+        fe_value(FE_ENTROPY, lrho, ltempmax, ye, smax, dum) ;
+        if ( entropy <= smin ) return ltempmin ;
+        if ( entropy >= smax ) return ltempmax ;
+        return fe_ltemp__value(FE_ENTROPY, entropy, lrho, ye, smin, smax) ;
+    }
+    double KOKKOS_INLINE_FUNCTION
+    fe_ltemp__press_lrho_ye(double& press, double const lrho, double const ye, err_t& err) const
+    {
+        double pmin, pmax, dum ;
+        fe_value(FE_PRESS, lrho, ltempmin, ye, pmin, dum) ;
+        fe_value(FE_PRESS, lrho, ltempmax, ye, pmax, dum) ;
+        if ( press <= pmin ) { press = pmin ; err.set(EOS_PRESS_TOO_LOW)  ; return ltempmin ; }
+        if ( press >= pmax ) { press = pmax ; err.set(EOS_PRESS_TOO_HIGH) ; return ltempmax ; }
+        return fe_ltemp__value(FE_PRESS, press, lrho, ye, pmin, pmax) ;
+    }
+    /**************************************************************************************/
     /**************************************************************************************/
     double KOKKOS_INLINE_FUNCTION
     press__lrho_ltemp_ye(double const lrho, double const ltemp, double const ye) const
@@ -1061,6 +1232,9 @@ class tabulated_eos_t
     double ltempmin, ltempmax ;
     /**************************************************************************************/
     int nrho,nT,nye ;
+    /**************************************************************************************/
+    tabeos_free_energy_t fe_table ;
+    bool fe_interp = false ;   //!< true: thermodynamics from fe_table (see set_free_energy_interpolation)
     /**************************************************************************************/
 } ;
 

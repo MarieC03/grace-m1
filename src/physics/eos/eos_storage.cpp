@@ -246,7 +246,13 @@ eos_storage_t::eos_storage_t() {
          ERROR("Unsupported eos_type") ;
     }
 
-    // Gate of grmhd.c2p.cold_deficit_policy: reject combinations where it would silently do nothing.
+    // Gates of the two energy-consistency options (eos.tabulated_eos.interpolation and
+    // grmhd.c2p.cold_deficit_policy): reject combinations where they would silently do nothing.
+    if ( get_param<std::string>("eos","tabulated_eos","interpolation") != "linear"
+      && eos_type != "tabulated" && eos_type != "leptonic" ) {
+        ERROR("eos.tabulated_eos.interpolation=hermite_free_energy needs eos_type "
+              "tabulated or leptonic.") ;
+    }
     if ( get_param<std::string>("grmhd","c2p","cold_deficit_policy") == "keep" ) {
         if ( eos_type == "ideal_gas" )
             ERROR("grmhd.c2p.cold_deficit_policy=keep needs an EOS with a cold curve "

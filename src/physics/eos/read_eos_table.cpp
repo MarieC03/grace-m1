@@ -1019,7 +1019,7 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
                                  energy_shift, baryon_mass) ;
 
     GRACE_INFO("Done reading cold table, size rho {} size table {} {}", cold_table_rho.extent(0), cold_tables.extent(0), cold_tables.extent(1)) ;
-    return tabulated_eos_t(
+    tabulated_eos_t eos(
         _tables,
         _lrho, _lt, _ye,
         cold_tables,
@@ -1033,6 +1033,20 @@ grace::tabulated_eos_t read_compose_table(std::string const& fname, std::string 
         hmin, hmax,
         temp_floor, ye_atmo, atm_beta_eq
     ) ;
+    // interpolation = "hermite_free_energy".  linear_pressure: the leptonic loader, which builds
+    // its own per-component tables (read_leptonic_4d_table.cpp).
+    if ( !linear_pressure
+      && grace::get_param<std::string>("eos","tabulated_eos","interpolation") == "hermite_free_energy" ) {
+        using TV = tabulated_eos_t::TEOS_VIDX ;
+        eos.set_free_energy_interpolation( build_free_energy_table(
+            "eos_free_energy_table", logrho, logtemp, yes, mb_MeV,
+            [&] (int i, int j, int k) { return std::exp(alltables(i,j,k,TV::TABEPS)) - energy_shift ; },
+            [&] (int i, int j, int k) { return std::exp(alltables(i,j,k,TV::TABPRESS) - logrho[i]) ; },
+            [&] (int i, int j, int k) { return alltables(i,j,k,TV::TABENTROPY) ; } ) ) ;
+        GRACE_INFO("Tabulated EOS: thermodynamics from the Hermite free-energy interpolant "
+                   "(chemical potentials and composition stay trilinear)") ;
+    }
+    return eos ;
 
 }
 
@@ -1046,6 +1060,8 @@ grace::tabulated_eos_t read_eos_table(bool const linear_pressure)
         return read_compose_table(eos_tab_name, eos_cold_tab_name, linear_pressure) ;
     } else {
         ASSERT(eos_tab_kind=="stellarcollapse", "Should have been caught at parcheck") ;
+        if ( grace::get_param<std::string>("eos","tabulated_eos","interpolation") != "linear" )
+            ERROR("eos.tabulated_eos.interpolation=hermite_free_energy needs table_format=compose.") ;
         return read_scollapse_table(eos_tab_name, eos_cold_tab_name, linear_pressure) ;
     }
 

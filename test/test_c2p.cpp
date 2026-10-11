@@ -3236,6 +3236,267 @@ TEST_CASE("leptonic EOS: log-P interpolation is geometric between density rows",
 #endif // GRACE_ENABLE_MUONS
 
 // ---------------------------------------------------------------------------
+// Energy-consistency options: eos.tabulated_eos.interpolation = hermite_free_energy
+// (configs/c2p_test_{tabulated,leptonic}_fe.yaml; those cases SKIP otherwise) and
+// grmhd.c2p.cold_deficit_policy = keep (any tabulated or leptonic config).
+// ---------------------------------------------------------------------------
+namespace {
+
+struct fe_pt_t { double rho, T, ye, ymu ; } ;
+
+Kokkos::View<double**> fe_points_view(std::vector<fe_pt_t> const& pts)
+{
+    Kokkos::View<double**> p("fe_pts", pts.size(), 4) ;
+    auto h = Kokkos::create_mirror_view(p) ;
+    for ( size_t n = 0 ; n < pts.size() ; ++n ) {
+        h(n,0) = pts[n].rho ; h(n,1) = pts[n].T ; h(n,2) = pts[n].ye ; h(n,3) = pts[n].ymu ;
+    }
+    Kokkos::deep_copy(p, h) ;
+    return p ;
+}
+
+// T inversions from eps, s and P: the value always round-trips; the temperature does where
+// the interpolant is monotone in T (c_v > 0), i.e. everywhere but its rare pockets.
+template <typename eos_t>
+void fe_check_inversions(eos_t const& eos, std::vector<fe_pt_t> const& pts, char const* name)
+{
+    using namespace Kokkos ;
+    size_t const N = pts.size() ;
+    auto p = fe_points_view(pts) ;
+    View<double**> out("fe_inv_out", N, 7) ;
+    parallel_for("fe_inv", N, KOKKOS_LAMBDA(size_t const n) {
+        double rho = p(n,0), T = p(n,1), ye = p(n,2), ymu = p(n,3), cs2, s, h ;
+        eos_err_t err ;
+        double const eps = eos.eps_csnd2_entropy__temp_rho_ye_ymu_impl(cs2, s, T, rho, ye, ymu, err) ;
+        double const P   = eos.press__temp_rho_ye_ymu_impl(T, rho, ye, ymu, err) ;
+        double e1 = eps, T1 ;
+        eos.press_temp__eps_rho_ye_ymu_impl(T1, e1, rho, ye, ymu, err) ;
+        double e2, T2, s2 = s ;
+        eos.press_h_csnd2_temp_eps__entropy_rho_ye_ymu_impl(h, cs2, T2, e2, s2, rho, ye, ymu, err) ;
+        double s2b ;
+        eos.eps_csnd2_entropy__temp_rho_ye_ymu_impl(cs2, s2b, T2, rho, ye, ymu, err) ;
+        double P3 = P, T3, s3 ;
+        eos.eps_h_csnd2_temp_entropy__press_rho_ye_ymu_impl(h, cs2, T3, s3, P3, rho, ye, ymu, err) ;
+        double const P3b = eos.press__temp_rho_ye_ymu_impl(T3, rho, ye, ymu, err) ;
+        out(n,0) = Kokkos::fabs(eos.eps__temp_rho_ye_ymu_impl(T1, rho, ye, ymu, err) - eps) / (1. + Kokkos::fabs(eps)) ;
+        out(n,1) = Kokkos::fabs(s2b - s) / (1e-3 + Kokkos::fabs(s)) ;
+        out(n,2) = Kokkos::fabs(P3b / P - 1.) ;
+        out(n,3) = Kokkos::fabs(Kokkos::log(T1 / T)) ;
+        out(n,4) = Kokkos::fabs(Kokkos::log(T2 / T)) ;
+        out(n,5) = Kokkos::fabs(Kokkos::log(T3 / T)) ;
+        out(n,6) = Kokkos::fabs(e2 - eps) / (1. + Kokkos::fabs(eps)) ;
+    }) ;
+    fence() ;
+    auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+    double m[7] = {0,0,0,0,0,0,0} ;
+    int n_multi = 0 ;
+    for ( size_t n = 0 ; n < N ; ++n ) {
+        for ( int c = 0 ; c < 7 ; ++c ) m[c] = std::max(m[c], h(n,c)) ;
+        if ( h(n,3) > 1e-8 || h(n,4) > 1e-8 ) {
+            ++n_multi ;
+            printf("     %s: T not unique at rho %.3e T %.3e Ye %.3f Ymu %.2e: eps->T dlnT %.2e, s->T dlnT %.2e\n",
+                   name, pts[n].rho, pts[n].T, pts[n].ye, pts[n].ymu, h(n,3), h(n,4)) ;
+        }
+    }
+    printf("   %s free energy inversions (%zu states): value round trips eps %.2e s %.2e P %.2e;  "
+           "max dlnT eps->T %.2e s->T %.2e P->T %.2e;  T not unique at %d\n",
+           name, N, m[0], m[1], m[2], m[3], m[4], m[5], n_multi) ;
+    CHECK(m[0] < 1e-12) ; CHECK(m[1] < 1e-9) ; CHECK(m[2] < 1e-10) ;
+    CHECK(n_multi <= 0.02 * N) ;
+}
+
+// Adiabats: |deps - int P/rho^2 drho| / |deps| over a 4.5 % compression, free energy against
+// the linear path of the same tables; and cs2 against the adiabatic slope dP/de|_s.
+template <typename eos_t>
+void fe_check_adiabats(eos_t const& eos, eos_t const& lin, std::vector<fe_pt_t> const& pts, char const* name)
+{
+    using namespace Kokkos ;
+    constexpr int M = 128 ;   // Simpson intervals
+    size_t const N = pts.size() ;
+    auto p = fe_points_view(pts) ;
+    View<double**> out("fe_adiabat_out", N, 4) ;
+    auto const drift = KOKKOS_LAMBDA (eos_t const& e, double rho0, double T0, double ye, double ymu) {
+        double cs2, s, h, T, eps, r = rho0, t = T0, y = ye, m = ymu ;
+        eos_err_t err ;
+        e.eps_csnd2_entropy__temp_rho_ye_ymu_impl(cs2, s, t, r, y, m, err) ;
+        double const dl = Kokkos::log(1.045) / M ;
+        double integral = 0., eps0 = 0., eps1 = 0. ;
+        for ( int k = 0 ; k <= M ; ++k ) {
+            r = rho0 * Kokkos::exp(dl * k) ; y = ye ; m = ymu ; double ss = s ;
+            double const P = e.press_h_csnd2_temp_eps__entropy_rho_ye_ymu_impl(h, cs2, T, eps, ss, r, y, m, err) ;
+            double const w = (k == 0 || k == M) ? 1. : (k % 2 ? 4. : 2.) ;
+            integral += w * P / r * dl / 3. ;   // int P/rho d ln rho
+            if ( k == 0 ) eps0 = eps ;
+            if ( k == M ) eps1 = eps ;
+        }
+        return Kokkos::fabs((eps1 - eps0) - integral) / Kokkos::fabs(eps1 - eps0) ;
+    } ;
+    parallel_for("fe_adiabat", N, KOKKOS_LAMBDA(size_t const n) {
+        double const rho = p(n,0), T = p(n,1), ye = p(n,2), ymu = p(n,3) ;
+        out(n,0) = drift(eos, rho, T, ye, ymu) ;
+        out(n,1) = drift(lin, rho, T, ye, ymu) ;
+        double cs2, s, Tm, em, ep, hh, cc, r = rho, t = T, y = ye, m = ymu ;
+        eos_err_t err ;
+        double const eps = eos.eps_csnd2_entropy__temp_rho_ye_ymu_impl(cs2, s, t, r, y, m, err) ;
+        double const P = eos.press__temp_rho_ye_ymu_impl(t, r, y, m, err) ;
+        double const del = 1e-4 ;
+        double rp = rho * (1. + del), rm = rho * (1. - del), sp = s, sm = s, yp = ye, ym = ye, mp = ymu, mm = ymu ;
+        double const Pp = eos.press_h_csnd2_temp_eps__entropy_rho_ye_ymu_impl(hh, cc, Tm, ep, sp, rp, yp, mp, err) ;
+        double const Pm = eos.press_h_csnd2_temp_eps__entropy_rho_ye_ymu_impl(hh, cc, Tm, em, sm, rm, ym, mm, err) ;
+        out(n,2) = cs2 ;
+        out(n,3) = (Pp - Pm) / (2. * del * rho) / (1. + eps + P / rho) ;
+    }) ;
+    fence() ;
+    auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+    // the interpolant has c_v < 0 pockets (~0.2 % of an SFHo table, where the table's eps and
+    // s disagree across a T cell); an adiabat through one jumps T branches, so check the bulk
+    std::vector<double> fe, li ;
+    int n_out = 0, cs_ok = 0, cs_n = 0 ;
+    for ( size_t n = 0 ; n < N ; ++n ) {
+        fe.push_back(h(n,0)) ; li.push_back(h(n,1)) ;
+        if ( h(n,0) > 1e-6 ) {
+            ++n_out ;
+            printf("     %s drift %.2e (linear %.2e) at rho %.3e T %.3e Ye %.3f Ymu %.2e\n",
+                   name, h(n,0), h(n,1), pts[n].rho, pts[n].T, pts[n].ye, pts[n].ymu) ;
+        }
+        if ( h(n,3) > 1e-3 && h(n,3) < 0.999 ) {
+            ++cs_n ;
+            if ( std::fabs(h(n,2) / h(n,3) - 1.) < 1e-5 ) ++cs_ok ;
+        }
+    }
+    std::sort(fe.begin(), fe.end()) ; std::sort(li.begin(), li.end()) ;
+    printf("   %s adiabatic drift |deps - int P/rho^2 drho| / |deps| over %zu states: free energy median %.2e "
+           "p95 %.2e max %.2e, linear median %.2e max %.2e;  cs2 matches the adiabat in %d of %d\n",
+           name, N, fe[N/2], fe[(95*N)/100], fe[N-1], li[N/2], li[N-1], cs_ok, cs_n) ;
+    CHECK(n_out <= 0.02 * N) ;
+    CHECK(fe[(95*N)/100] < 1e-6) ;
+    CHECK(fe[N/2] < 1e-3 * li[N/2]) ;
+    CHECK(cs_ok >= 0.95 * cs_n) ;
+}
+
+std::vector<fe_pt_t> fe_grid(std::vector<std::pair<double,double>> const& compositions)
+{
+    std::vector<fe_pt_t> pts ;
+    for ( int i = 0 ; i < 8 ; ++i ) for ( int j = 0 ; j < 6 ; ++j ) for ( auto const& c : compositions )
+        pts.push_back({ std::exp(std::log(1e-7) + (std::log(1.4e-3) - std::log(1e-7)) * i / 7.)
+                      , std::exp(std::log(0.15) + (std::log(30.) - std::log(0.15)) * j / 5.)
+                      , c.first, c.second }) ;
+    return pts ;
+}
+
+} // namespace
+
+TEST_CASE("tabulated EOS: free-energy interpolation is thermodynamically consistent",
+          "[eos][tabulated][free_energy]")
+{
+    using namespace Kokkos ;
+    auto eos = eos::get().get_eos<tabulated_eos_t>() ;
+    if ( !eos.fe_interp ) SKIP("needs eos.tabulated_eos.interpolation = hermite_free_energy") ;
+    auto lin = eos ;
+    lin.fe_interp = false ;
+    using TV = tabulated_eos_t::TEOS_VIDX ;
+
+    SECTION("table nodes are reproduced") {
+        std::vector<std::array<int,3>> nodes ;
+        for ( int i = 2 ; i < eos.nrho - 2 ; i += 11 )
+            for ( int j = 1 ; j < eos.nT - 1 ; j += 7 )
+                for ( int k = 1 ; k < eos.nye - 1 ; k += 9 ) nodes.push_back({i,j,k}) ;
+        size_t const N = nodes.size() ;
+        View<int**> idx("fe_nodes", N, 3) ;
+        auto h_idx = create_mirror_view(idx) ;
+        for ( size_t n = 0 ; n < N ; ++n ) for ( int c = 0 ; c < 3 ; ++c ) h_idx(n,c) = nodes[n][c] ;
+        deep_copy(idx, h_idx) ;
+        View<double**> out("fe_node_out", N, 6) ;
+        parallel_for("fe_nodes", N, KOKKOS_LAMBDA(size_t const n) {
+            int const i = idx(n,0), j = idx(n,1), k = idx(n,2) ;
+            double rho = Kokkos::exp(eos.tables.lrho(i)), T = Kokkos::exp(eos.tables.ltemp(j)) ;
+            double ye = eos.tables.ye(k), ymu = 0., eps, cs2, s ;
+            eos_err_t err ;
+            out(n,0) = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(eps, cs2, s, T, rho, ye, ymu, err) ;
+            out(n,1) = eps ; out(n,2) = s ;
+            out(n,3) = Kokkos::exp(eos.tables(i,j,k,TV::TABPRESS)) ;
+            out(n,4) = Kokkos::exp(eos.tables(i,j,k,TV::TABEPS)) - eos.energy_shift ;
+            out(n,5) = eos.tables(i,j,k,TV::TABENTROPY) ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        double dP = 0, de = 0, ds = 0 ;
+        for ( size_t n = 0 ; n < N ; ++n ) {
+            dP = std::max(dP, std::fabs(h(n,0) / h(n,3) - 1.)) ;
+            de = std::max(de, std::fabs(h(n,1) - h(n,4)) / (1. + std::fabs(h(n,4)))) ;
+            ds = std::max(ds, std::fabs(h(n,2) - h(n,5)) / (1e-3 + std::fabs(h(n,5)))) ;
+        }
+        printf("   tabulated free energy: %zu nodes, max rel dP %.2e, dEps/(1+eps) %.2e, dS %.2e\n", N, dP, de, ds) ;
+        CHECK(dP < 1e-12) ; CHECK(de < 1e-12) ; CHECK(ds < 1e-11) ;
+    }
+
+    auto const pts = fe_grid({{0.04, 0.}, {0.04 + 0.4/3., 0.}, {0.04 + 0.8/3., 0.}, {0.44, 0.}}) ;
+    SECTION("T inversions from eps, s and P round-trip") { fe_check_inversions(eos, pts, "tabulated") ; }
+    SECTION("adiabats obey de = P/rho^2 drho, cs2 = (dP/drho)_s / h") { fe_check_adiabats(eos, lin, pts, "tabulated") ; }
+}
+
+#ifdef GRACE_ENABLE_MUONS
+TEST_CASE("leptonic EOS: free-energy interpolation is thermodynamically consistent",
+          "[eos][leptonic][free_energy]")
+{
+    using namespace Kokkos ;
+    auto eos = eos::get().get_eos<leptonic_eos_4d_t>() ;
+    if ( !eos.fe_interp ) SKIP("needs eos.tabulated_eos.interpolation = hermite_free_energy") ;
+    auto lin = eos ;
+    lin.fe_interp = false ;
+
+    SECTION("totals at (rho, T) nodes with Y_p on a baryon node match the linear path") {
+        // eps and s are linear in every composition axis in both paths there; P too unless the
+        // linear path reads ln(P_b + P_e) (log_baryon_press).
+        auto const h_yb = create_mirror_view_and_copy(HostSpace(), eos.baryon_table._ye) ;
+        std::vector<std::array<double,4>> st ;
+        for ( int i = 2 ; i < eos.nrho - 2 ; i += 13 )
+            for ( int j = 1 ; j < eos.nT - 1 ; j += 9 )
+                for ( int k = 4 ; k < static_cast<int>(h_yb.extent(0)) - 1 ; k += 11 )
+                    for ( double ymu : {eos.get_c2p_ymu_min(), 2e-2} )   // dilute floor and resolved
+                        st.push_back({double(i), double(j), h_yb(k) - ymu, ymu}) ;
+        size_t const N = st.size() ;
+        View<double**> in("fe_lnodes_in", N, 4), out("fe_lnodes_out", N, 6) ;
+        auto h_in = create_mirror_view(in) ;
+        for ( size_t n = 0 ; n < N ; ++n ) for ( int c = 0 ; c < 4 ; ++c ) h_in(n,c) = st[n][c] ;
+        deep_copy(in, h_in) ;
+        parallel_for("fe_lnodes", N, KOKKOS_LAMBDA(size_t const n) {
+            int const i = static_cast<int>(in(n,0)), j = static_cast<int>(in(n,1)) ;
+            double rho = Kokkos::exp(eos.baryon_table.lrho(i)), T = Kokkos::exp(eos.baryon_table.ltemp(j)) ;
+            double ye = in(n,2), ymu = in(n,3), eps, cs2, s ;
+            double r2 = rho, T2 = T, y2 = ye, m2 = ymu, eps2, cs22, s2 ;
+            eos_err_t err ;
+            out(n,0) = eos.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(eps, cs2, s, T, rho, ye, ymu, err) ;
+            out(n,1) = eps ; out(n,2) = s ;
+            out(n,3) = lin.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(eps2, cs22, s2, T2, r2, y2, m2, err) ;
+            out(n,4) = eps2 ; out(n,5) = s2 ;
+        }) ;
+        fence() ;
+        auto h = create_mirror_view_and_copy(HostSpace(), out) ;
+        double dP = 0, de = 0, ds = 0 ;
+        int nprint = 0 ;
+        for ( size_t n = 0 ; n < N ; ++n ) {
+            dP = std::max(dP, std::fabs(h(n,0) / h(n,3) - 1.)) ;
+            de = std::max(de, std::fabs(h(n,1) - h(n,4)) / (1. + std::fabs(h(n,4)))) ;
+            ds = std::max(ds, std::fabs(h(n,2) - h(n,5)) / (1e-3 + std::fabs(h(n,5)))) ;
+            if ( std::fabs(h(n,1) - h(n,4)) / (1. + std::fabs(h(n,4))) > 1e-11 && nprint++ < 8 )
+                printf("     node outlier i %d j %d Ye %.4f Ymu %.1e: eps fe %.10e lin %.10e\n",
+                       int(st[n][0]), int(st[n][1]), st[n][2], st[n][3], h(n,1), h(n,4)) ;
+        }
+        printf("   leptonic free energy: %zu node states, max rel dP %.2e%s, dEps/(1+eps) %.2e, dS %.2e\n",
+               N, dP, eos.log_baryon_press ? " (log-P linear path, not checked)" : "", de, ds) ;
+        if ( !eos.log_baryon_press ) CHECK(dP < 1e-11) ;
+        CHECK(de < 1e-11) ; CHECK(ds < 1e-10) ;
+    }
+
+    // dilute and resolved muons
+    auto const pts = fe_grid({{0.05, eos.get_c2p_ymu_min()}, {0.06, 0.05}, {0.15, 0.01}, {0.35, 0.02}}) ;
+    SECTION("T inversions from eps, s and P round-trip") { fe_check_inversions(eos, pts, "leptonic") ; }
+    SECTION("adiabats obey de = P/rho^2 drho, cs2 = (dP/drho)_s / h") { fe_check_adiabats(eos, lin, pts, "leptonic") ; }
+}
+#endif // GRACE_ENABLE_MUONS
+
+// ---------------------------------------------------------------------------
 // grmhd.c2p.cold_deficit_policy: a state on the cold curve, its tau lowered by D W delta,
 // run through conservs_to_prims.  Both policies must give the same primitives; only keep
 // leaves tau and S_i alone, and only for a small deficit in the bulk.

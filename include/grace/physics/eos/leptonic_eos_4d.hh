@@ -269,6 +269,16 @@ class leptonic_eos_4d_t
 
     double GRACE_HOST_DEVICE temperature_floor() const { return temp_floor_ ; }
 
+    // eos.tabulated_eos.interpolation = "hermite_free_energy": P, eps, s, T and cs2 from the
+    // sum of per-component free energies (baryon at yp, electrons at Y_le, muons at ln Y_mu),
+    // with the same composition rules as total_*; chemical potentials stay trilinear.
+    void set_free_energy_interpolation(tabeos_free_energy_t const& bar,
+                                       tabeos_free_energy_t const& ele,
+                                       tabeos_free_energy_t const& mu) {
+        fe_bar = bar ; fe_ele = ele ; fe_mu = mu ;
+        fe_interp = true ;
+    }
+
     // ===========================================================
     //  CRTP _impl methods
     // ===========================================================
@@ -281,6 +291,11 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            double e, s, c ;
+            return fe_state(lrho, lt, ye, ymu, e, s, c) ;
+        }
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         return total_press(lrho, ltemp, ye, ymu) ;
     }
@@ -293,6 +308,12 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            temp = Kokkos::exp(lt) ;
+            double e, s, c ;
+            return fe_state(lrho, lt, ye, ymu, e, s, c) ;
+        }
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
         return total_press(lrho, ltemp, ye, ymu) ;
@@ -306,6 +327,10 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ye, ymu,  err) ;
         limit_temp(temp, err) ;
+        if ( fe_interp ) {
+            double e, s, c ;
+            return fe_state(Kokkos::log(rho), Kokkos::log(temp), ye, ymu, e, s, c) ;
+        }
         return total_press(Kokkos::log(rho), Kokkos::log(temp), ye, ymu) ;
     }
 
@@ -317,6 +342,11 @@ class leptonic_eos_4d_t
         limit_ye  (ye,   err) ;
         limit_ymu (ye, ymu,  err) ;
         limit_temp(temp, err) ;
+        if ( fe_interp ) {
+            double e, s, c ;
+            fe_state(Kokkos::log(rho), Kokkos::log(temp), ye, ymu, e, s, c) ;
+            return e ;
+        }
         return total_eps(Kokkos::log(rho), Kokkos::log(temp), ye, ymu) ;
     }
 
@@ -329,6 +359,12 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double dum ;
+            fe_value(FE_EPS, lrho, ltempmin, ye, ymu, epsmin, dum) ;
+            fe_value(FE_EPS, lrho, ltempmax, ye, ymu, epsmax, dum) ;
+            return ;
+        }
         epsmin = total_eps(lrho, ltempmin, ye, ymu) ;
         epsmax = total_eps(lrho, ltempmax, ye, ymu) ;
     }
@@ -342,6 +378,12 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double dum ;
+            fe_value(FE_ENTROPY, lrho, ltempmin, ye, ymu, smin, dum) ;
+            fe_value(FE_ENTROPY, lrho, ltempmax, ye, ymu, smax, dum) ;
+            return ;
+        }
         smin = total_entropy(lrho, ltempmin, ye, ymu) ;
         smax = total_entropy(lrho, ltempmax, ye, ymu) ;
     }
@@ -355,6 +397,13 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            double e, s ;
+            double const press = fe_state(lrho, lt, ye, ymu, e, s, csnd2) ;
+            h = 1. + eps + press/rho ;
+            return press ;
+        }
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         double const press = total_press(lrho, ltemp, ye, ymu) ;
         csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
@@ -373,6 +422,12 @@ class leptonic_eos_4d_t
         limit_temp(temp, err) ;
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e, s ;
+            double const press = fe_state(lrho, ltemp, ye, ymu, e, s, csnd2) ;
+            h = 1. + e + press/rho ;
+            return press ;
+        }
         double const press = total_press(lrho, ltemp, ye, ymu) ;
         double const eps   = total_eps  (lrho, ltemp, ye, ymu) ;
         csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
@@ -392,6 +447,10 @@ class leptonic_eos_4d_t
         limit_temp(temp, err) ;
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double s ;
+            return fe_state(lrho, ltemp, ye, ymu, eps, s, csnd2) ;
+        }
         eps   = total_eps  (lrho, ltemp, ye, ymu) ;
         csnd2 = total_csnd2 (lrho, ltemp, ye, ymu) ;
         return total_press(lrho, ltemp, ye, ymu) ;
@@ -406,6 +465,14 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            temp = Kokkos::exp(lt) ;
+            double e ;
+            double const press = fe_state(lrho, lt, ye, ymu, e, entropy, csnd2) ;
+            h = 1. + eps + press / rho ;
+            return press ;
+        }
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
         double const press = total_press(lrho, ltemp, ye, ymu) ;
@@ -426,6 +493,11 @@ class leptonic_eos_4d_t
         limit_temp(temp, err) ;
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) {
+            double e ;
+            fe_state(lrho, ltemp, ye, ymu, e, entropy, csnd2) ;
+            return e ;
+        }
         csnd2   = total_csnd2  (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         return total_eps(lrho, ltemp, ye, ymu) ;
@@ -442,6 +514,7 @@ class leptonic_eos_4d_t
         limit_temp(temp, err) ;
         double const lrho  = Kokkos::log(rho)  ;
         double const ltemp = Kokkos::log(temp) ;
+        if ( fe_interp ) return fe_state(lrho, ltemp, ye, ymu, eps, entropy, csnd2) ;
         eps     = total_eps    (lrho, ltemp, ye, ymu) ;
         csnd2   = total_csnd2  (lrho, ltemp, ye, ymu) ;
         entropy = total_entropy(lrho, ltemp, ye, ymu) ;
@@ -459,6 +532,14 @@ class leptonic_eos_4d_t
         limit_ymu(ye, ymu, err) ;
         limit_entropy_rho_ye_ymu(entropy, rho, ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__entropy(entropy, lrho, ye, ymu) ;
+            temp = Kokkos::exp(lt) ;
+            double s ;
+            double const press = fe_state(lrho, lt, ye, ymu, eps, s, csnd2) ;
+            h = 1. + eps + press / rho ;
+            return press ;
+        }
         double const ltemp = ltemp__entropy_lrho_ye_ymu(entropy, lrho, ye, ymu) ;
         temp = Kokkos::exp(ltemp) ;
         double const press = total_press   (lrho, ltemp, ye, ymu) ;
@@ -488,6 +569,14 @@ class leptonic_eos_4d_t
         limit_ye (ye,  err) ;
         limit_ymu(ye, ymu, err) ;
         double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__press(press, lrho, ye, ymu, err) ;
+            temp = Kokkos::exp(lt) ;
+            double eps ;
+            fe_state(lrho, lt, ye, ymu, eps, entropy, csnd2) ;
+            h = 1. + eps + press / rho ;
+            return eps ;
+        }
         double const ltemp = ltemp__press_lrho_ye_ymu(press, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
         double const eps = total_eps(lrho, ltemp, ye, ymu) ;
@@ -761,6 +850,9 @@ class leptonic_eos_4d_t
     // Baryon pressure storage.  false (linear_pressure=true): TABPRESS is the
     // signed P_b.  true: TABPRESS = ln(P_b + P_e(Y_e=Y_q)), see total_press.
     bool log_baryon_press = false ;
+    // Free-energy tables per component (see set_free_energy_interpolation).
+    tabeos_free_energy_t fe_bar, fe_ele, fe_mu ;
+    bool fe_interp = false ;
 
     // Electron + positron pressure of the lepton table.  The same function adds
     // the shift into TABPRESS and removes it again in total_press.
@@ -1182,6 +1274,124 @@ class leptonic_eos_4d_t
             return total_entropy(lrho, lt, ye, ymu) - entropy ;
         } ;
         return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
+    }
+
+    // ----------------------------------------------------------
+    //  Free-energy interpolation (fe_interp).  f = sum of components with the
+    //  composition rules of total_*: baryons at yp, muons only when resolved,
+    //  electrons only with add_ele_contribution.
+    // ----------------------------------------------------------
+    KOKKOS_INLINE_FUNCTION void
+    fe_total(double lrho, double ltemp, double ye, double ymu,
+             tabeos_free_energy_t::derivs_t& d) const
+    {
+        fe_bar.eval(lrho, ltemp, table_yp(ye, ymu), d) ;
+        tabeos_free_energy_t::derivs_t c ;
+        if ( muons_resolved(ymu) ) { fe_mu.eval(lrho, ltemp, Kokkos::log(ymu), c) ; fe_add(d, c) ; }
+        if ( add_ele_contribution ) { fe_ele.eval(lrho, ltemp, ye, c) ; fe_add(d, c) ; }
+    }
+
+    // P (returned), eps, entropy and cs2 = [(dP/drho)_s]/h; cs2 falls back to the linear
+    // total_csnd2 where c_v <= 0 or cs2 is outside (0,1).
+    KOKKOS_INLINE_FUNCTION double
+    fe_state(double lrho, double ltemp, double ye, double ymu,
+             double& eps, double& entropy, double& csnd2) const
+    {
+        tabeos_free_energy_t::derivs_t d ;
+        fe_total(lrho, ltemp, ye, ymu, d) ;
+        double const press = Kokkos::exp(lrho) * d.fx ;
+        eps     = d.f - d.fy ;
+        entropy = -fe_bar.mb_MeV * d.fy * Kokkos::exp(-ltemp) ;
+        double const deps_dy = d.fy - d.fyy ;
+        double cs2 = -1. ;
+        if ( deps_dy > 0. ) cs2 = (d.fx + d.fxx + d.fxy * d.fxy / deps_dy) / (1. + eps + d.fx) ;
+        if ( !(cs2 > 0. && cs2 < 1.) ) cs2 = total_csnd2(lrho, ltemp, ye, ymu) ;
+        csnd2 = cs2 ;
+        return press ;
+    }
+
+    // FE_EPS: eps, FE_ENTROPY: s [k_B/baryon], FE_PRESS: P, with d/d ln T at fixed (rho, ye, ymu)
+    enum FE_INV : int { FE_EPS = 0, FE_ENTROPY, FE_PRESS } ;
+    KOKKOS_INLINE_FUNCTION void
+    fe_value(int which, double lrho, double ltemp, double ye, double ymu,
+             double& val, double& dval) const
+    {
+        tabeos_free_energy_t::derivs_t d ;
+        fe_total(lrho, ltemp, ye, ymu, d) ;
+        if ( which == FE_EPS ) {
+            val = d.f - d.fy ; dval = d.fy - d.fyy ;
+        } else if ( which == FE_ENTROPY ) {
+            double const sf = -fe_bar.mb_MeV * Kokkos::exp(-ltemp) ;
+            val = sf * d.fy ; dval = sf * (d.fyy - d.fy) ;
+        } else {
+            double const rho = Kokkos::exp(lrho) ;
+            val = rho * d.fx ; dval = rho * d.fxy ;
+        }
+    }
+
+    KOKKOS_INLINE_FUNCTION double
+    fe_ltemp__value(int which, double target, double lrho, double ye, double ymu,
+                    double vmin, double vmax) const
+    {
+        auto const value = [&] (double const lt, double& v, double& dv) {
+            fe_value(which, lrho, lt, ye, ymu, v, dv) ;
+        } ;
+        return fe_invert_ltemp(value, baryon_table._logT, nT, target, vmin, vmax) ;
+    }
+
+    // Free-energy twins of ltemp__{eps,press,entropy}_lrho_ye_ymu, with the same silent
+    // clamp inside eps_bracket_tol_ at the bracket ends.
+    KOKKOS_INLINE_FUNCTION double
+    fe_ltemp__eps(double& eps, double lrho, double ye, double ymu, err_t& err) const
+    {
+        double lo, hi, dum ;
+        fe_value(FE_EPS, lrho, ltempmin, ye, ymu, lo, dum) ;
+        fe_value(FE_EPS, lrho, ltempmax, ye, ymu, hi, dum) ;
+        if ( eps <= lo ) {
+            bool const significant = eps < lo - eps_bracket_tol_ * Kokkos::fabs(lo) ;
+            eps = lo ;
+            if ( significant ) err.set(EOS_EPS_TOO_LOW) ;
+            return ltempmin ;
+        }
+        if ( eps >= hi ) {
+            bool const significant = eps > hi + eps_bracket_tol_ * Kokkos::fabs(hi) ;
+            eps = hi ;
+            if ( significant ) err.set(EOS_EPS_TOO_HIGH) ;
+            return ltempmax ;
+        }
+        return fe_ltemp__value(FE_EPS, eps, lrho, ye, ymu, lo, hi) ;
+    }
+
+    KOKKOS_INLINE_FUNCTION double
+    fe_ltemp__press(double& press, double lrho, double ye, double ymu, err_t& err) const
+    {
+        double lo, hi, dum ;
+        fe_value(FE_PRESS, lrho, ltempmin, ye, ymu, lo, dum) ;
+        fe_value(FE_PRESS, lrho, ltempmax, ye, ymu, hi, dum) ;
+        if ( press <= lo ) {
+            bool const significant = press < lo - eps_bracket_tol_ * Kokkos::fabs(lo) ;
+            press = lo ;
+            if ( significant ) err.set(EOS_PRESS_TOO_LOW) ;
+            return ltempmin ;
+        }
+        if ( press >= hi ) {
+            bool const significant = press > hi + eps_bracket_tol_ * Kokkos::fabs(hi) ;
+            press = hi ;
+            if ( significant ) err.set(EOS_PRESS_TOO_HIGH) ;
+            return ltempmax ;
+        }
+        return fe_ltemp__value(FE_PRESS, press, lrho, ye, ymu, lo, hi) ;
+    }
+
+    KOKKOS_INLINE_FUNCTION double
+    fe_ltemp__entropy(double entropy, double lrho, double ye, double ymu) const
+    {
+        double lo, hi, dum ;
+        fe_value(FE_ENTROPY, lrho, ltempmin, ye, ymu, lo, dum) ;
+        fe_value(FE_ENTROPY, lrho, ltempmax, ye, ymu, hi, dum) ;
+        if ( entropy <= lo ) return ltempmin ;
+        if ( entropy >= hi ) return ltempmax ;
+        return fe_ltemp__value(FE_ENTROPY, entropy, lrho, ye, ymu, lo, hi) ;
     }
 
     KOKKOS_INLINE_FUNCTION double

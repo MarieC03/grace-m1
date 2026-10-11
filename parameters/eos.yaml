@@ -158,6 +158,26 @@ eos:
         naming the node, if the sum is <= 0 anywhere.  true: the signed P_b is
         interpolated linearly (the behaviour before log interpolation existed).
 
+    interpolation:
+      type: keyword
+      allowed: ["linear", "hermite_free_energy"]
+      default: "linear"
+      description: >
+        Thermodynamics of eos_type=tabulated and eos_type=leptonic (CompOSE
+        baryon table).  "linear" (default): trilinear in (ln rho, ln T, Ye) on
+        ln P, ln(eps + shift), s and cs2 separately; P, eps and s are then not
+        thermodynamically consistent between the nodes (an adiabatic
+        excursion of a few % drifts eps by ~4e-3 of its change).
+        "hermite_free_energy": P, eps, s, T and cs2 all derive from bicubic
+        Hermite interpolants of the free energy per mass f = eps - T s in
+        (ln rho, ln T), linear in the composition axis, so de = T ds +
+        P/rho^2 drho holds between the nodes (~1e-10).  The leptonic EOS sums
+        one such f per component (baryons at Y_p, electrons at Y_e when
+        add_ele_contribution, muons at ln Y_mu when resolved).  Node values
+        are reproduced exactly; chemical potentials and composition stay
+        trilinear; cs2 falls back to the linear value where the interpolant's
+        heat capacity is not positive.  Other eos_type values are rejected.
+
   leptonic:
     type: schema
     description: >

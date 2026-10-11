@@ -60,6 +60,7 @@
 #include <grace/physics/eos/tabulated_eos.hh>
 #include <grace/parallel/mpi_wrappers.hh>
 #include <grace/physics/eos/unit_system.hh>
+#include <grace/physics/eos/physical_constants.hh>
 #include <grace/utils/grace_utils.hh>
 #include <grace/system/grace_system.hh>
 #include <grace/config/config_parser.hh>
@@ -917,6 +918,49 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         add_ele,
         log_press
     ) ;
+
+    // -------------------------------------------------------
+    //  7a) eos.tabulated_eos.interpolation = "hermite_free_energy": one free-energy
+    //      table per component, from the signed baryon P (so before 7b) and the
+    //      e-/e+ and mu-/mu+ sums of the lepton tables.
+    // -------------------------------------------------------
+    if ( grace::get_param<std::string>("eos","tabulated_eos","interpolation") == "hermite_free_energy" ) {
+        using LV = leptonic_eos_4d_t ;
+        double const mb_MeV =
+            grace::get_param<std::string>("eos","tabulated_eos","baryon_mass") == "m_u"
+            ? grace::physical_constants::mu_MeV : grace::physical_constants::mn_MeV ;
+        auto const hb  = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bt._tables) ;
+        auto const hlr = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bt._logrho) ;
+        auto const hlt = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bt._logT) ;
+        auto const hyb = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bt._ye) ;
+        std::vector<double> lr(hlr.extent(0)), lt(hlt.extent(0)), yb(hyb.extent(0)) ;
+        for (size_t i=0; i<lr.size(); ++i) lr[i] = hlr(i) ;
+        for (size_t i=0; i<lt.size(); ++i) lt[i] = hlt(i) ;
+        for (size_t i=0; i<yb.size(); ++i) yb[i] = hyb(i) ;
+        double const shift = baryon_eos.energy_shift ;
+        auto const fe_b = build_free_energy_table("eos4d_fe_baryon", lr, lt, yb, mb_MeV,
+            [&] (int i, int j, int k) { return std::exp(hb(i,j,k,LV::TABEPS)) - shift ; },
+            [&] (int i, int j, int k) { return hb(i,j,k,LV::TABPRESS) / std::exp(lr[i]) ; },
+            [&] (int i, int j, int k) { return hb(i,j,k,LV::TABENTROPY) ; }) ;
+        // lepton tables: (minus + plus) sums; the electron table is only used with add_ele
+        auto const lepton_fe = [&] (std::string const& label, auto const& hv,
+                                    std::vector<double> const& axis, int P0, int E0, int S0) {
+            return build_free_energy_table(label, lr, lt, axis, mb_MeV,
+                [&] (int i, int j, int k) { return hv(i,j,k,E0) + hv(i,j,k,E0+1) ; },
+                [&] (int i, int j, int k) { return (hv(i,j,k,P0) + hv(i,j,k,P0+1)) / std::exp(lr[i]) ; },
+                [&] (int i, int j, int k) { return hv(i,j,k,S0) + hv(i,j,k,S0+1) ; }) ;
+        } ;
+        tabeos_free_energy_t fe_e ;
+        if ( add_ele )
+            fe_e = lepton_fe("eos4d_fe_ele", h_ele, yle, LV::TABPRESS_E_MINUS,
+                             LV::TABEPS_E_MINUS, LV::TABS_E_MINUS) ;
+        auto const fe_m = lepton_fe("eos4d_fe_muon", h_muon, ymu, LV::TABPRESS_MU_MINUS,
+                                    LV::TABEPS_MU_MINUS, LV::TABS_MU_MINUS) ;
+        eos.set_free_energy_interpolation(fe_b, fe_e, fe_m) ;
+        GRACE_INFO("Leptonic EOS: thermodynamics from the sum of Hermite free-energy "
+                   "interpolants (baryons{}, muons); chemical potentials stay trilinear.",
+                   add_ele ? ", electrons" : "") ;
+    }
 
     // -------------------------------------------------------
     //  7b) Baryon pressure interpolation.  log_press: TABPRESS becomes
