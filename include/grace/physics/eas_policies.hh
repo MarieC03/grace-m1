@@ -384,6 +384,7 @@ struct neutrinos_eas_op
         pair_annihilation(grace::get_param<bool>("m1", "eas", "pair_annihilation")),
         apply_temp_correction(grace::get_param<bool>("m1", "eas", "temperature_correction")),
         temp_correction_emission(grace::get_param<bool>("m1", "eas", "temperature_correction_emission")),
+        atmo(get_m1_atmo_params()),
         use_weakhub(grace::weakhub::weakhub_enabled_from_params()),
         betaeq_mode(get_betaeq_mode()),
         betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
@@ -485,12 +486,12 @@ struct neutrinos_eas_op
     // correction off the ACTUAL radiation field (FIL parity: temp_nue =
     // neutrino_temperature(eps_nue, eta), eps_nue = avg energy of the radiation,
     // NOT the emission spectrum Q/R).  Returns 0 when there is no radiation
-    // (N -> 0, e.g. iteration 0 / atmosphere) so the correction stays inert
-    // (fact = 1), exactly as in the reference where eps_nue -> 0 gives fact 1.
+    // (N -> 0, or a floor-reset cell) so the correction stays inert (fact = 1),
+    // exactly as in the reference where eps_nue -> 0 gives fact 1.
     template<int ispec>
     GRACE_HOST_DEVICE double fluid_frame_eps_mev(
         VEC(const int i, const int j, const int k), int64_t q,
-        metric_array_t const& metric) const
+        metric_array_t const& metric, double const r) const
     {
         m1_prims_array_t prims ;
         FILL_M1_PRIMS_ARRAY(prims, state, aux, q, ispec, VEC(i,j,k)) ;
@@ -502,15 +503,16 @@ struct neutrinos_eas_op
         prims[FZL]   *= oosg ;
         const double N = prims[NRADL] ;
         if ( !(N > 1.0e-30) ) return 0.0 ;
+        // Floor cells (the reset test of m1.hh compute_auxiliaries) hold no radiation: mean energy 0,
+        // correction off, as FIL does on its atmosphere reset (driver_M1_conserv_to_prims.cc:262).
+        if (   prims[ERADL] < atmo.E_floor(r) * (1. + atmo.atmo_tol)
+            || N            < atmo.N_floor(r) * (1. + atmo.atmo_tol) ) return 0.0 ;
         m1_closure_t cl{ prims, metric } ;
         cl.update_closure(0) ;
         if ( !(cl.J > 0.0) ) return 0.0 ;
-        // Mean energy in nucleon-mass units.  At the M1 ATMOSPHERE floor the
-        // field has E ~ N (eps_code ~ 1), i.e. a "neutrino" carrying ~m_nuc --
-        // unphysical; this is the it=0 / no-radiation state.  Treat eps_code
-        // >= 0.5 as that atmosphere artifact and return 0 so the T_nu
-        // correction stays inert (fact = 1), exactly like the reference where
-        // eps_nue -> 0.  Real trapped/streaming neutrinos: eps_code << 0.1.
+        // Mean energy in nucleon-mass units.  Above 0.5 (T_nu ~ 150 MeV, beyond any thermal radiation) it is
+        // energised or an E ~ N state: correction off.  Uncapped (FIL), the factor hit 1e4..1e10 and wrecked
+        // the cells around the forming BH (head-on run, 10 Oct 2026).
         const double eps_code = cl.J / N * cl.Gamma ;
         if ( !(eps_code < 0.5) ) return 0.0 ;
         return eps_code * nu_constants::mp_MeV ;
@@ -1065,20 +1067,21 @@ struct neutrinos_eas_op
         if (apply_temp_correction) {
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
+            const double r = Kokkos::sqrt(SQR(xyz[0]) + SQR(xyz[1]) + SQR(xyz[2])) ;
             #if GRACE_M1_NU_SPECIES >= 1
-            eps_rad[0] = fluid_frame_eps_mev<0>(VEC(i,j,k), q, metric) ;
+            eps_rad[0] = fluid_frame_eps_mev<0>(VEC(i,j,k), q, metric, r) ;
             #endif
             // Species index 1 exists only from 3 species on: at 1 species
             // m1_erad_idx<1>() is N_HRSC_CC, i.e. the first metric slot.
             #if GRACE_M1_NU_SPECIES >= 5
-            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
-            eps_rad[2] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
-            eps_rad[3] = fluid_frame_eps_mev<3>(VEC(i,j,k), q, metric) ;
-            eps_rad[4] = fluid_frame_eps_mev<4>(VEC(i,j,k), q, metric) ;
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric, r) ;
+            eps_rad[2] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric, r) ;
+            eps_rad[3] = fluid_frame_eps_mev<3>(VEC(i,j,k), q, metric, r) ;
+            eps_rad[4] = fluid_frame_eps_mev<4>(VEC(i,j,k), q, metric, r) ;
             #elif GRACE_M1_NU_SPECIES >= 3
-            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric) ;
+            eps_rad[1] = fluid_frame_eps_mev<1>(VEC(i,j,k), q, metric, r) ;
             // 3-species: evolved index 2 is NUX -> rates slot NUX (4).
-            eps_rad[NUX] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric) ;
+            eps_rad[NUX] = fluid_frame_eps_mev<2>(VEC(i,j,k), q, metric, r) ;
             #endif
         }
 
@@ -1396,6 +1399,7 @@ struct neutrinos_eas_op
   bool beta_decay, plasmon_decay, bremsstrahlung, pair_annihilation;
   bool apply_temp_correction;
   bool temp_correction_emission;   // also scale nue/nuebar Q,R by the T_nu factor (FIL Weakhub)
+  m1_atmo_params_t atmo;           // M1 floors, to recognise floor-reset cells in fluid_frame_eps_mev
   bool use_weakhub;
   betaeq_mode_t betaeq_mode;
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
