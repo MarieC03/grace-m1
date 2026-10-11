@@ -102,6 +102,22 @@ m1:
     description: >
       Excision parameters for M1 transport
 
+    excision_lapse:
+      type: double
+      default: -1
+      range: "(*,*)"
+      description: >
+        Lapse below which the radiation is excised (grmhd.excision_criterion = lapse).
+        Negative (default): use grmhd.excision.excision_lapse; 0 disables M1 excision.
+
+    excision_radius:
+      type: double
+      default: -1
+      range: "(*,*)"
+      description: >
+        Radius inside which the radiation is excised (grmhd.excision_criterion = radius).
+        Negative (default): use grmhd.excision.excision_radius; 0 disables M1 excision.
+
     E_excision:
       type: double
       default: 1.e-14

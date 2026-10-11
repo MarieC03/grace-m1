@@ -515,8 +515,11 @@ static m1_excision_params_t
 get_m1_excision_params() {
     m1_excision_params_t m1_excision_params ;
     m1_excision_params.excise_by_radius = ( grace::get_param<std::string>("grmhd", "excision", "excision_criterion") == "radius");
-    m1_excision_params.r_ex = grace::get_param<double>("grmhd", "excision", "excision_radius");
-    m1_excision_params.alp_ex = grace::get_param<double>("grmhd", "excision", "excision_lapse");
+    // M1 thresholds fall back to the hydro ones when negative (unset); the criterion is shared.
+    double const r_ex = grace::get_param<double>("m1", "excision", "excision_radius");
+    double const alp_ex = grace::get_param<double>("m1", "excision", "excision_lapse");
+    m1_excision_params.r_ex = r_ex < 0. ? grace::get_param<double>("grmhd", "excision", "excision_radius") : r_ex ;
+    m1_excision_params.alp_ex = alp_ex < 0. ? grace::get_param<double>("grmhd", "excision", "excision_lapse") : alp_ex ;
     m1_excision_params.E_ex = grace::get_param<double>("m1", "excision", "E_excision") ;
     m1_excision_params.eps_ex = grace::get_param<double>("m1", "excision", "eps_excision") ;
     return m1_excision_params ;
