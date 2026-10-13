@@ -1,0 +1,606 @@
+# Equal-mass BHBlp BNS from FUKA, based on the FIL Mass139/B16 seed run.
+# Physics: GRMHD + Z4c, finite-temperature BHBlp EOS, 1e16 G seeded B field.
+# No M1/radiation section is present; run this with GRACE_ENABLE_M1=OFF.
+
+# Human-readable run label used in output metadata/logging.
+name: "fuka_bns_bhblp_m139_B16_noM1"
+
+# Mesh hierarchy, domain size, regridding and AMR refinement policy.
+amr: {
+  # Number of cells per AMR block in x; 32 gives dx_finest ~= 369 m at level 7.
+  npoints_block_x: 32,
+  # Number of cells per AMR block in y; must match x/z in current GRACE.
+  npoints_block_y: 32,
+  # Number of cells per AMR block in z; must match x/y in current GRACE.
+  npoints_block_z: 32,
+
+  # Lower x boundary of the computational domain.
+  xmin: -1024.0,
+  # Upper x boundary of the computational domain.
+  xmax:  1024.0,
+  # Lower y boundary of the computational domain.
+  ymin: -1024.0,
+  # Upper y boundary of the computational domain.
+  ymax:  1024.0,
+  # Lower z boundary; 0 with z-reflection gives an equatorial half-domain.
+  zmin:     0.0,
+  # Upper z boundary of the half-domain.
+  zmax:  1024.0,
+
+  # Reflection symmetries applied at coordinate planes.
+  reflection_symmetries: {
+    # Enable equatorial symmetry across z=0, as in the FIL run.
+    z: true
+  },
+
+  # Ghost cells per block; 4 is needed for WENO/4th-order stencils.
+  n_ghostzones: 4,
+  # Uniform base refinement level used when the forest is created.
+  initial_refinement_level: 2,
+  # Maximum dynamic AMR level allowed during regridding; level 7 on a 1024 tree
+  # has the same dx as level 8 on a 2048 tree.
+  max_refinement_level: 7,
+
+  # Number of fixed refinement boxes that seed the wave-zone hierarchy.
+  n_fmr_boxes: 4,
+  # Fixed mesh-refinement boxes, kept as a minimum refinement skeleton.
+  fmr_boxes: [
+    {
+      # Refine this box one level above the base level.
+      target_level_delta: 1,
+      # Lower x extent of this FMR box.
+      x_min: -512,
+      # Upper x extent of this FMR box.
+      x_max:  512,
+      # Lower y extent of this FMR box.
+      y_min: -512,
+      # Upper y extent of this FMR box.
+      y_max:  512,
+      # Lower z extent of this FMR box.
+      z_min:     0,
+      # Upper z extent of this FMR box.
+      z_max:  512
+    },
+
+    {
+      # Refine this box two levels above the base level.
+      target_level_delta: 2,
+      # Lower x extent of this FMR box.
+      x_min: -256,
+      # Upper x extent of this FMR box.
+      x_max:  256,
+      # Lower y extent of this FMR box.
+      y_min: -256,
+      # Upper y extent of this FMR box.
+      y_max:  256,
+      # Lower z extent of this FMR box.
+      z_min:    0,
+      # Upper z extent of this FMR box.
+      z_max:  256
+    },
+
+    {
+      # Refine this box three levels above the base level.
+      target_level_delta: 3,
+      # Lower x extent of this FMR box.
+      x_min: -128,
+      # Upper x extent of this FMR box.
+      x_max:  128,
+      # Lower y extent of this FMR box.
+      y_min: -128,
+      # Upper y extent of this FMR box.
+      y_max:  128,
+      # Lower z extent of this FMR box.
+      z_min:    0,
+      # Upper z extent of this FMR box.
+      z_max:  128
+    },
+
+    {
+      # Refine this box four levels above the base level.
+      target_level_delta: 4,
+      # Lower x extent of the finest static central box.
+      x_min: -90,
+      # Upper x extent of the finest static central box.
+      x_max:  90,
+      # Lower y extent of the finest static central box.
+      y_min: -90,
+      # Upper y extent of the finest static central box.
+      y_max:  90,
+      # Lower z extent of the finest static central box.
+      z_min:   0,
+      # Upper z extent of the finest static central box.
+      z_max:  90
+    }
+  ],
+
+  # Evolution-time regrid cadence in iterations.
+  regrid_every: 64,
+  # Regrid before initial data to build geometry-based tracker refinement cheaply.
+  regrid_at_preinitial: true,
+  # Number of pre-initial regrid passes; each pass can add one level.
+  preinitial_regrid_depth: 3,
+  # Regrid after initial data so the populated stars/remnant start on the target mesh.
+  regrid_at_postinitial: true,
+  # Number of post-initial regrid passes.
+  postinitial_regrid_depth: 2,
+
+  # AMR policy: track the two neutron-star centers, then the central remnant.
+  refinement_criterion: "binary_tracker",
+  # Radius factors and post-merger AMR radii for the binary tracker policy.
+  binary_tracker_amr_criterion: {
+    # Refine within this many NS radii around compact object 1.
+    compact_object_1_refine_radius_factor: 2.5,
+    # Refine within this many NS radii around compact object 2.
+    compact_object_2_refine_radius_factor: 2.5,
+    # Coarsen object-1 tracking refinement outside this many NS radii.
+    compact_object_1_coarsen_radius_factor: 5.0,
+    # Coarsen object-2 tracking refinement outside this many NS radii.
+    compact_object_2_coarsen_radius_factor: 5.0,
+    # After merger, refine this radius around the origin.
+    post_merger_refine_radius: 32,
+    # After merger, coarsen outside this central radius.
+    post_merger_coarsen_radius: 60
+  }
+}
+
+# Output, reductions, diagnostics cadence and output file naming.
+IO: {
+  # Cell-centered groups/variables written to full 3D volume files.
+  volume_output_cell_variables: ["hydro", "metric"],
+  # Directory for 3D HDF5 output.
+  volume_output_base_directory: "output_volume",
+  # Base filename for 3D HDF5 output.
+  volume_output_base_filename: "volume_out",
+  # 3D output cadence in iterations; FIL used sparse 3D dumps.
+  volume_output_every: 21320,
+
+  # Cell-centered groups/variables written to planar slices.
+  plane_surface_output_cell_variables: ["metric", "hydro", "c2p_err"],
+  # Directory for planar slice output.
+  surface_output_base_directory: "output_surface",
+  # Base filename for planar slice output.
+  surface_output_base_filename: "surface_out",
+  # Planar slice cadence in iterations.
+  plane_surface_output_every: 256,
+  # z-coordinate of the xy slice, slightly above the symmetry plane as in FIL.
+  xy_plane_offset: 0.2,
+  # y-coordinate of the xz slice.
+  xz_plane_offset: 0.0,
+  # x-coordinate of the yz slice.
+  yz_plane_offset: 0.0,
+
+  # Cell-centered groups/variables interpolated to spherical detector output.
+  sphere_surface_output_cell_variables: ["metric", "hydro"],
+  # Directory for spherical surface output.
+  sphere_surface_output_base_directory: "output_spheres",
+  # Sphere-output cadence in iterations.
+  sphere_surface_output_every: 512,
+  # Number of detector spheres selected for raw sphere output.
+  n_output_spheres: 7,
+  # Names of detector spheres to write as raw spherical surface data.
+  output_sphere_names: [
+    "sphere_35", "sphere_300", "sphere_400", "sphere_500",
+    "sphere_600", "sphere_700", "sphere_1000"
+  ],
+
+  # Directory for per-rank log files.
+  log_output_base_directory: "logs",
+  # Base filename for logs.
+  log_output_base_filename: "grace_log",
+  # Directory for scalar/reduction output.
+  scalar_output_base_directory: "output_scalar",
+  # Optional scalar-output filename prefix; empty keeps default per-variable names.
+  scalar_output_base_filename: "",
+
+  # Write initial data outputs before the first evolution step.
+  do_initial_output: true,
+  # Console info-output cadence in iterations.
+  info_output_every: 16,
+  # Variables whose maxima are printed in info output.
+  info_output_max_reductions: ["rho", "temperature"],
+  # Variables whose minima are printed in info output.
+  info_output_min_reductions: ["alp"],
+  # Variables whose L2 norms are printed in info output.
+  info_output_norm2_reductions: ["z4c_H"],
+
+  # Scalar/reduction file cadence in iterations.
+  scalar_output_every: 32,
+  # Variables whose min/max values are written to scalar files.
+  scalar_output_minmax: ["rho", "press", "eps", "ye", "temperature", "entropy", "alp", "Bdiv"],
+  # Variables whose L2 norms are written to scalar files.
+  scalar_output_norm2: ["z4c_H", "Bdiv"],
+  # Variables whose coordinate-volume integrals are written to scalar files.
+  scalar_output_integral: ["dens", "c2p_dens_corr", "Bdiv"],
+
+  # Use HDF5 rather than legacy VTK output.
+  output_use_hdf5: true,
+  # HDF5 compression level; 0 avoids parallel-compression overhead.
+  hdf5_compression_level: 0,
+  # HDF5 chunk size for datasets.
+  hdf5_chunk_size: 8192,
+  # Add rank/quadrant/tree metadata to outputs for debugging AMR layout.
+  output_extra_quantities: true,
+  # Print/write performance metrics in info/scalar output.
+  performance_metric: "both",
+
+  # Cadence for GW, outflow and ADM diagnostic integrations.
+  diagnostic_output_every: 128
+}
+
+# Runtime/logging options.
+system: {
+  # Rank responsible for single-rank work.
+  master_rank: 0,
+  # Verbosity level printed to stdout.
+  console_log_level: "info",
+  # Verbosity level written to log files.
+  file_log_level: "verbose",
+  # Flush logs immediately for messages at or above the chosen severity.
+  flush_logs_based_on_severity: true,
+  # Severity threshold that triggers log flushing.
+  flush_severity_level: "warn",
+  # Also flush logs periodically by wall-clock time.
+  flush_logs_based_on_time: true,
+  # Time between periodic log flushes, in seconds.
+  flush_time: 60,
+  # Number of GPU/device streams used for asynchronous work.
+  n_device_streams: 4
+}
+
+# Time integration and termination.
+evolution: {
+  # Method-of-lines time stepper; RK3 matches the FIL MoL choice.
+  time_stepper: "rk3",
+  # Courant factor controlling the automatic timestep.
+  cfl_factor: 0.25,
+  # Let GRACE choose dt from the CFL condition.
+  timestep_selection_mode: "automatic",
+  # Manual timestep value; ignored when timestep_selection_mode is automatic.
+  timestep: 0.1,
+  # Stop condition used for production queue jobs.
+  termination_condition: "walltime",
+  # Final simulation time; ignored when termination_condition is walltime.
+  final_time: 203000,
+  # Final iteration; ignored when termination_condition is walltime.
+  final_iteration: 360066,
+  # Wall-clock runtime limit in hours.
+  final_walltime: 49.5
+}
+
+# NaN checks for catching bad initial data or numerical failure.
+nan_check: {
+  # Enable NaN scanning.
+  enabled: true,
+  # Check once before the first time step.
+  check_before_first_step: true,
+  # In-loop NaN check cadence in iterations.
+  check_every: 32,
+  # On NaN, request clean termination and checkpoint/output.
+  action: "terminate"
+}
+
+# Coordinate-system metadata.
+coordinate_system: {
+  # False for Cartesian-like BNS coordinates, true only for CKS black-hole runs.
+  is_kerr_schild: false,
+  # Kerr-Schild spin parameter; unused here.
+  bh_spin: 0.0,
+  # Mass scaling of the coordinate system; keep 1 for these code units.
+  mass_scale: 1.0
+}
+
+# GRMHD physics, initial data, atmosphere, C2P and magnetic field.
+grmhd: {
+  # Outer boundary condition for GRMHD variables.
+  bc_kind: "outgoing",
+  # Initial-data source; this run imports a FUKA/Kadath BNS.
+  id_type: "fuka",
+
+  # FUKA/Kadath initial-data settings.
+  fuka: {
+    # FUKA info filename for the equal-mass BHBlp 2.78 Msun binary.
+    filename: "BNS_ECC_RED.BHBlp.30.2.0.0.2.78.q1.0.0.11.info",
+    # Directory containing the FUKA info/data files; replace with machine path.
+    id_dir: "/path/fuka/fukaID/BNS_BHBL_M139Msun",
+    # Type of FUKA data being imported.
+    fuka_id_type: "BNS",
+    # Set initial shift to zero, as in the existing GRACE FUKA examples.
+    set_shift_to_zero: true
+  },
+
+  # Low-density atmosphere/floor state.
+  atmosphere: {
+    # Rest-mass density floor in code units.
+    rho_fl: 1e-14,
+    # Temperature floor in MeV-like EOS units.
+    temp_fl: 0.01
+  },
+
+  # Excision/flooring behavior in collapsed regions.
+  excision: {
+    # Excise by lapse threshold rather than by coordinate radius.
+    excision_criterion: "lapse",
+    # Lapse threshold below which GRMHD variables are excised/floored.
+    excision_lapse: 0.08
+  },
+
+  # Conservative-to-primitive inversion controls.
+  c2p: {
+    # C2P residual tolerance.
+    tolerance: 1.e-9,
+    # Allow entropy backup when the main C2P inversion fails.
+    use_c2p_entropy_backup: true
+  },
+
+  # Initialize B from a vector potential at t=0.
+  B_field_initialization: "from_Avec",
+
+  # Vector-potential prescription for the initial confined poloidal field.
+  Avec_ID: {
+    # Quantity used to confine the vector potential.
+    cutoff_var: "press",
+    # Fraction of max(cutoff_var) below which A is set to zero.
+    cutoff_fact: 0.04,
+    # Power-law exponent in the vector-potential prescription.
+    A_n: 2,
+    # Target maximum magnetic field strength; this value corresponds to 1e16 G.
+    Bmax_target: 1.197285252143398e-04,
+    # Treat the vector-potential prescription as a binary.
+    is_binary: true,
+    # Initial x-center of star 1 for magnetic-field confinement.
+    x_c_1: -15.1,
+    # Initial x-center of star 2 for magnetic-field confinement.
+    x_c_2:  15.1,
+    # Approximate radius of star 1 used by the vector-potential mask.
+    radius_1: 12,
+    # Approximate radius of star 2 used by the vector-potential mask.
+    radius_2: 12
+  }
+}
+
+# Optional delayed magnetic-field injection.
+b_field_injection: {
+  # Keep false: this run seeds B at initial data, not during evolution.
+  enable: false,
+  # Simulation time at which delayed injection would fire; ignored when disabled.
+  trigger_time: 0.0
+}
+
+# Equation of state.
+eos: {
+  # Use a finite-temperature tabulated nuclear EOS.
+  eos_type: "tabulated",
+  # Tabulated-EOS file paths and conventions.
+  tabulated_eos: {
+    # Hot BHBlp EOS table; replace with machine path.
+    table_filename: "/path/EoS/BHB_lpEOS_rho234_temp180_ye60_version_1.02_20140422.h5",
+    # Table layout used by the BHBlp file from FIL.
+    table_format: "stellarcollapse",
+    # GRACE cold-slice table consistent with the hot table/FUKA ID.
+    cold_table_filename: "/path/EoS/BHB_lpEOS_rho234_temp180_ye60_version_1.02_20140422_cold_mu.grace",
+    # Baryon-mass convention; m_u matches FUKA/Margherita.
+    baryon_mass: "m_u"
+  },
+  # Upper bound on specific internal energy for EOS/C2P safety.
+  eps_maximum: 10.0,
+  # Lower entropy bound to avoid log/zero pathologies.
+  entropy_minimum: 1.e-13
+}
+
+# Z4c spacetime evolution.
+z4c: {
+  # Outer boundary condition for spacetime variables.
+  bc_kind: "sommerfeld",
+  # Constraint damping parameter kappa_1.
+  kappa_1: 0.02,
+  # Constraint damping parameter kappa_2.
+  kappa_2: 0.0,
+  # Kreiss-Oliger dissipation strength.
+  eps_diss: 0.2,
+  # Gamma-driver shift damping parameter, matching FIL Antelope eta.
+  eta: 0.6,
+  # Radius beyond which eta is radially damped.
+  eta_damp_radius: 50,
+  # Radius beyond which kappa_1 is radially damped.
+  kappa_damp_radius: 50,
+  # Theta damping radius; huge value effectively disables this damping.
+  theta_damp_radius: 1.e99,
+  # Floor for the conformal factor chi.
+  chi_floor: 1.e-11,
+  # Floor for the lapse.
+  alp_min: 1.e-11,
+  # Matter is present, so this is not a vacuum evolution.
+  is_vacuum: false,
+  # Disable Lousto-style adaptive eta.
+  adaptive_eta: false,
+  # Adaptive-eta parameter; unused while adaptive_eta is false.
+  adaptive_eta_a: 1,
+  # Adaptive-eta parameter; unused while adaptive_eta is false.
+  adaptive_eta_b: 2
+}
+
+# Registered spherical detector surfaces.
+spherical_surfaces: {
+  # Number of spherical detector surfaces below.
+  n_surfaces: 7,
+
+  # FIL used the Cactus healpix thorn. This GRACE version only exposes
+  # sampling_policy: "uniform" for registered spherical detectors, so these
+  # are the GRACE-native GW/outflow sphere analogues of the FIL healpix slices.
+  spherical_detectors: [
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_35",
+      # Detector radius in code units.
+      radius: 35,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 64
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_300",
+      # Detector radius in code units.
+      radius: 300,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 91
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_400",
+      # Detector radius in code units.
+      radius: 400,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 91
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_500",
+      # Detector radius in code units.
+      radius: 500,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 91
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_600",
+      # Detector radius in code units.
+      radius: 600,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 91
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_700",
+      # Detector radius in code units.
+      radius: 700,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 91
+    },
+
+    {
+      # Name used by output and diagnostics.
+      name: "sphere_1000",
+      # Detector radius in code units.
+      radius: 1000,
+      # Angular sampling backend; only uniform is supported here.
+      sampling_policy: "uniform",
+      # Angular sampling resolution.
+      resolution: 64
+    }
+  ]
+}
+
+# Gravitational-wave Psi4 extraction.
+gw_integrals: {
+  # Detector spheres where GW diagnostics are computed.
+  detector_names: ["sphere_300", "sphere_400", "sphere_500", "sphere_600", "sphere_700"]
+}
+
+# Outflow/ejecta flux diagnostics.
+outflows: {
+  # FIL outflow_plusplus used healpix detector ids 1..4, i.e. the
+  # 300, 500, 700 and 1000 radius slices. The 35-radius slice was present
+  # in healpix output but not used by outflow_plusplus.
+  # Detector spheres where mass/outflow fluxes are integrated.
+  detector_names: ["sphere_300", "sphere_500", "sphere_700", "sphere_1000"]
+}
+
+# ADM mass surface integrals.
+adm_integrals: {
+  # Detector spheres where ADM integrals are computed.
+  detector_names: ["sphere_300", "sphere_700"]
+}
+
+# Black-hole horizon diagnostics.
+bh_diagnostics: {
+  # No AH/horizon detector is active for this BNS inspiral setup.
+  detector_names: []
+}
+
+# Compact-object tracker used by AMR and diagnostics.
+co_tracker: {
+  # Number of compact objects to track.
+  n_cos: 2,
+  # Tracker update/output cadence in iterations.
+  update_every: 1,
+
+  # When the tracker separation falls below this coordinate distance,
+  # AMR switches from two moving NS boxes to the central post-merger box.
+  # For this ID the initial separation is about 30.2 and R_NS is about 12,
+  # so 20 is a post-contact/plunge switch before the two individual
+  # centers become unreliable.
+  merge_distance: 20,
+
+  # Initial tracker definitions for the two neutron stars.
+  cos: [
+    {
+      # Tracker type; ns uses a matter center-of-mass tracker.
+      kind: "ns",
+      # Tracker output/name label for star 1.
+      name: "ns_1",
+      # Initial x coordinate of star 1.
+      x_i: -15.1,
+      # Initial mask radius used by the NS tracker.
+      radius: 12
+    },
+
+    {
+      # Tracker type; ns uses a matter center-of-mass tracker.
+      kind: "ns",
+      # Tracker output/name label for star 2.
+      name: "ns_2",
+      # Initial x coordinate of star 2.
+      x_i: 15.1,
+      # Initial mask radius used by the NS tracker.
+      radius: 12
+    }
+  ]
+}
+
+# MHD diagnostic reductions such as magnetic energy and disk mass.
+mhd_diagnostics: {
+  # Magnetic-energy diagnostic cadence in iterations.
+  compute_energy_every: 128,
+  # Other MHD diagnostics cadence, including disk mass.
+  compute_other_diagnostics_every: 128,
+  # Density threshold above atmosphere for disk-mass-like diagnostics.
+  disk_mass_rho_threshold: 6.475995334760533e-07
+}
+
+# Checkpoint/restart settings.
+checkpoints: {
+  # Directory where checkpoints are written.
+  checkpoint_dir: "../checkpoint",
+  # Checkpoint cadence type; walltime means wall-clock hours.
+  interval_kind: "walltime",
+  # Wall-clock hours between checkpoints, matching FIL's 1-hour cadence.
+  walltime_interval: 1,
+  # Iterations between checkpoints; ignored unless interval_kind is iteration.
+  iteration_interval: 1000,
+  # Simulation-time interval, in code/Msun units; ignored unless interval_kind is time.
+  time_interval: 204,
+  # Number of checkpoints to retain.
+  max_n_checkpoints: 8,
+  # Do not checkpoint immediately after startup.
+  checkpoint_at_startup: false,
+  # Write a final checkpoint during clean termination.
+  checkpoint_at_termination: true
+}

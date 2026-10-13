@@ -38,6 +38,9 @@ function(add_kokkos_test target_name source_file)
     Kokkos::kokkos
     MPI::MPI_CXX
     p4est::sc 
+    p4est::p4est
+    yaml_cpp::yaml
+    HDF5::HDF5
     spdlog::spdlog 
     ZLIB::ZLIB
     )

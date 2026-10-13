@@ -104,7 +104,9 @@ struct zero_m1_id_t {
         };
 
         auto E_atmo = atmo.E_floor(rtp[0]) ;
-        auto eps_atmo = atmo.eps_fl * Kokkos::pow(rtp[0], atmo.eps_fl_scaling) ;
+        // Match the independent floors used by evolution and activation.
+        // E/eps_fl was a different spectrum whenever N_fl != E_fl/eps_fl.
+        auto N_atmo = atmo.N_floor(rtp[0]) ;
 
         bool excise = excision.excise_by_radius ? rtp[0] <= excision.r_ex : false ; /*we don't have alp here*/
 
@@ -129,22 +131,22 @@ struct zero_m1_id_t {
             #endif
         } else {
             id.erad1 = E_atmo ;
-            id.nrad1 = E_atmo / eps_atmo ;
+            id.nrad1 = N_atmo ;
             #if GRACE_M1_NU_SPECIES >= 3
             id.erad2 = E_atmo ;
-            id.nrad2 = E_atmo / eps_atmo ;
+            id.nrad2 = N_atmo ;
             id.erad3 = E_atmo ;
-            id.nrad3 = E_atmo / eps_atmo ;
+            id.nrad3 = N_atmo ;
             #endif
             #if GRACE_M1_NU_SPECIES >= 5
             id.erad4 = E_atmo ;
-            id.nrad4 = E_atmo / eps_atmo ;
+            id.nrad4 = N_atmo ;
             id.erad5 = E_atmo ;
-            id.nrad5 = E_atmo / eps_atmo ;
+            id.nrad5 = N_atmo ;
             #endif
             #ifdef GRACE_M1_PHOTONS
             id.eradph = E_atmo ;
-            id.nradph = E_atmo / eps_atmo ;
+            id.nradph = N_atmo ;
             #endif
         }
         id.fradx1 = id.frady1 = id.fradz1 = 0. ;

@@ -191,6 +191,78 @@ m1:
         in both the analytic and weakhub paths (added on top of the table
         opacities in the latter).
 
+    pair_treatment:
+      type: keyword
+      allowed: ["legacy", "equilibrium", "evolved"]
+      default: "legacy"
+      description: >
+        Heavy-flavour thermal pairs. New modes use blocked isotropic spectral
+        kernels; equilibrium freezes the partner at matter LTE, evolved couples
+        the two M1 source updates. Require analytic/WeakHub EAS, 3/5 species,
+        bns_nurates and betaeq_policy=off. See developer_guide/pair_processes.md.
+
+    pair_quadrature_order:
+      type: int
+      range: "[8,32]"
+      default: 16
+      description: >
+        Nodes per energy dimension. Check convergence with 24 and 32,
+        especially for degeneracy or the plasmon threshold.
+
+    pair_trace_iterations:
+      type: int
+      range: "[0,*)"
+      default: 0
+      description: >
+        Debug only: for this many steps after startup/restart, print per-rank,
+        per-species moment summaries around ARS IMEX stages and pair source /
+        backreaction updates. Includes ghost cells. Adds reductions and host
+        synchronization; zero disables it. The reported E/N mean is a lab-frame
+        energy-per-number proxy, not the comoving mean used by pair kernels.
+
+    muon_decay:
+      type: bool
+      default: false
+      description: >
+        Include mu- <-> e- + numu + anti-nue and the charge conjugate.
+        Requires five species, leptonic EOS without dilute-muon suppression,
+        additive electron thermodynamics and non-legacy pair_treatment.
+        Equilibrium partners are a non-stoichiometric comparison approximation
+        away from LTE; evolved partners use a connected four-species solve.
+
+    muon_decay_kernel_order:
+      type: int
+      range: "[8,64]"
+      default: 24
+      description: >
+        Gauss nodes for each inner decay-kernel integral (angle and charged
+        lepton energy). Independent of pair_quadrature_order. Check convergence.
+
+    weakhub_muon_decay_content:
+      type: keyword
+      allowed: ["unknown", "none", "included"]
+      default: "unknown"
+      description: >
+        Table provenance declaration, not a filter. Explicit muon decay requires
+        none so that inclusive grey tables cannot silently double count decay.
+
+    weakhub_pair_content:
+      type: keyword
+      allowed: ["unknown", "none", "included"]
+      default: "unknown"
+      description: >
+        User declaration of table provenance. New pair treatments require none;
+        this setting does not subtract channels from an inclusive table.
+
+    pair_plasmon_model:
+      type: keyword
+      allowed: ["none", "transverse_mass"]
+      default: "none"
+      description: >
+        Explicit opt-in for transverse constant-mass plasmons with relativistic
+        electron plasma frequency. Omits longitudinal, axial, mixed and muon
+        plasma contributions. Required for new modes with plasmon_decay=true.
+
     pair_annihilation:
       type: bool
       default: true
@@ -597,7 +669,9 @@ m1:
         old), so energy, momentum and muon lepton number are conserved and E/N
         does not drift.  The electron pair keeps the all-or-nothing hard stop.
         Partly accepted cells carry bit 8 in m1_br_reject.  false (default)
-        reverts the pair as before.
+        reverts the pair as before. With muon_decay enabled, a shared connected
+        limiter supersedes this option; all neutrino species then use one
+        acceptance fraction and bit 16 records limiting.
 
     electron_partial_at_bound:
       type: bool

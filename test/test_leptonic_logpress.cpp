@@ -189,6 +189,21 @@ struct csnd2_f {
         return cs2 ;
     }
 } ;
+struct eps_f {
+    KOKKOS_INLINE_FUNCTION double operator()(E const& eos,query_t q) const {
+        eos_err_t err;
+        return eos.eps__temp_rho_ye_ymu(q.temp,q.rho,q.ye,q.ymu,err);
+    }
+};
+struct chemical_f {
+    bool electron;
+    KOKKOS_INLINE_FUNCTION double operator()(E const& eos,query_t q) const {
+        eos_err_t err; double mm,mp,mn,xa,xh,xn,xp,abar,zbar;
+        double const me=eos.mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
+            mm,mp,mn,xa,xh,xn,xp,abar,zbar,q.temp,q.rho,q.ye,q.ymu,err);
+        return electron?me:mm;
+    }
+};
 // T -> P -> T: returns the recovered temperature.
 struct invert_f {
     KOKKOS_INLINE_FUNCTION double operator()(E const& eos, query_t q) const {
@@ -216,6 +231,24 @@ constexpr double K_S = 1.0, C_S = 2.0 ;
 double s_power(double rho, double T, double y) { return K_S*rho*rho*std::sqrt(T)*std::exp(C_S*y) ; }
 
 } // namespace
+
+TEST_CASE("leptonic EOS: decay compatibility restores dilute muon thermodynamics",
+          "[leptonic][decay]") {
+    auto t=make_tables([](double,double,double,double){return 1e-9;},false);
+    auto legacy=make_eos(t,t.bar,true,false),full=legacy;
+    full.dilute_muon_suppression=false;
+    std::vector<query_t> const q={{std::exp(lr_(2)),std::exp(lt_(1)),yq_(1),1e-6}};
+    auto const p0=eval(legacy,q,press_f{}),p1=eval(full,q,press_f{});
+    auto const e0=eval(legacy,q,eps_f{}),e1=eval(full,q,eps_f{});
+    double const dp=1e-3*q[0].rho*q[0].temp*q[0].ymu;
+    REQUIRE(std::abs(p1[0]-p0[0]-dp)<dp*1e-7);
+    REQUIRE(std::abs(e1[0]-e0[0]-1e-5*q[0].temp)<1e-14);
+    REQUIRE(eval(legacy,q,chemical_f{false})[0]==0);
+    REQUIRE(std::abs(eval(full,q,chemical_f{false})[0]-105.66)<1e-10);
+    // The electron table, not the baryonic mu_e, is used at charge saturation.
+    std::vector<query_t> const edge={{q[0].rho,q[0].temp,0.44,0.01}};
+    REQUIRE(std::abs(eval(full,edge,chemical_f{true})[0]-1)<1e-14);
+}
 
 TEST_CASE("leptonic log pressure: log and linear agree on every table node",
           "[leptonic][logpress][nodes]")

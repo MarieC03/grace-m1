@@ -485,6 +485,24 @@ void register_variables() {
     register_aux_scalar(ETAN5_,"eta_n5") ;
     #endif
     register_aux_scalar(BETAEQ_ERR_,"betaeq_err") ;
+    #if GRACE_M1_NU_SPECIES >= 3
+    register_aux_scalar(PAIR_T_,"pair_T") ;
+    register_aux_scalar(PAIR_MUE_,"pair_mu_e") ;
+    register_aux_scalar(PAIR_NB_,"pair_nb") ;
+    register_aux_scalar(PAIR_YN_,"pair_yn") ;
+    register_aux_scalar(PAIR_YP_,"pair_yp") ;
+    register_aux_scalar(PAIR_ACTIVE_,"pair_active") ;
+    register_aux_scalar(PAIR_MUMU_,"pair_mu_mu") ;
+    register_aux_scalar(PAIR_DECAY_,"pair_muon_decay") ;
+    register_aux_scalar(PAIR_DORDER_,"pair_decay_order") ;
+    register_aux_scalar(PAIR_DECAY_QDEF_,"decay_equilibrium_charge_defect") ;
+    register_aux_scalar(PAIR_KAPPA1_,"pair_transport_kappa1") ;
+    register_aux_scalar(PAIR_KAPPA2_,"pair_transport_kappa2") ;
+    register_aux_scalar(PAIR_KAPPA3_,"pair_transport_kappa3") ;
+    register_aux_scalar(PAIR_KAPPA4_,"pair_transport_kappa4") ;
+    register_aux_scalar(PAIR_KAPPA5_,"pair_transport_kappa5") ;
+    register_aux_scalar(PAIR_RES_,"pair_residual") ;
+    #endif
     #ifdef GRACE_M1_PHOTONS
     register_aux_scalar(KAPPAAPH_,"kappa_a_ph") ;
     register_aux_scalar(KAPPASPH_,"kappa_s_ph") ;

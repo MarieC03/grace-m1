@@ -73,6 +73,10 @@ message(STATUS "Z4c FD order              : ${GRACE_Z4C_DER_ORDER}")
 message(STATUS "Matter metric-deriv order : ${GRACE_MATTER_METRIC_DER_ORDER}")
 
 set(HEADER_DIR "${PROJECT_SOURCE_DIR}/include/")
+if(GRACE_HAVE_BNS_NURATES)
+    # The pair collision operator is consumed by EAS, evolution and tests.
+    include_directories(SYSTEM "${PROJECT_SOURCE_DIR}/extern/bns_nurates/include")
+endif()
 
 option(GRACE_BUILD_DOCS "Build the docs" OFF)
 option(GRACE_BUILD_DOCS_ONLY "Only build docs" OFF)

@@ -696,18 +696,26 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
     mock_eos_t eos;
     tau_policy_analytic_density tau;
 
-    // Below either threshold (rho < 1e10 g/cc OR T < 2.5 MeV) the muon
-    // channels are zeroed; kappa_s intentionally survives.
+    // The legacy gate is smooth, not a hard cutoff. Verify its actual factor
+    // for emission AND absorption; kappa_s intentionally survives.
     SECTION("cold matter suppresses muon emission") {
+        auto const F=make_fugacity_state(eos,1.0e13*RHOGF,1.0,0.1,0.05,1.0,kXyzOrigin,tau);
         const nu_rates_all_out all = compute_all_species(
-                make_fugacity_state(eos, 1.0e13 * RHOGF, /*T=*/1.0, 0.1, 0.05, 1.0, kXyzOrigin, tau),
+                F,
                 true, true, true, true,
                 kXyzOrigin, tau, false);
+        rates_accum raw{};
+        add_pair_process_emission(F,raw);
+        add_brems_emission(F,raw);
+        add_plasmon_decay_emission(F,raw,false);
+        apply_kirchhoff(F,{{1,1,1,1,2}},raw);
+        double const gate=muon_rate_gate(F.rho_cgs,F.temp_mev);
+        REQUIRE(gate>0); REQUIRE(gate<0.01);
         for (int s : {static_cast<int>(NUMU), static_cast<int>(NUMUBAR)}) {
-            REQUIRE(all.out[s].eta_E   == 0.0);
-            REQUIRE(all.out[s].eta_N   == 0.0);
-            REQUIRE(all.out[s].kappa_a == 0.0);
-            REQUIRE(all.out[s].kappa_n == 0.0);
+            REQUIRE_THAT(all.out[s].eta_E,WithinRel(Q_mev_to_code(gate*raw.Q[s],1),1e-12));
+            REQUIRE_THAT(all.out[s].eta_N,WithinRel(R_to_code(gate*raw.R[s],1),1e-12));
+            REQUIRE_THAT(all.out[s].kappa_a,WithinRel(kappa_to_code(gate*raw.kappa_a[s],1),1e-12));
+            REQUIRE_THAT(all.out[s].kappa_n,WithinRel(kappa_to_code(gate*raw.kappa_n[s],1),1e-12));
         }
     }
 
@@ -749,12 +757,12 @@ TEST_CASE("compute_all_species: heavy-lepton emissivities equal the thermal "
     REQUIRE_THAT(all.out[NUX].eta_N,
                  WithinRel(R_to_code(thermal.R[NUX], 1.0), 1e-12));
 #if GRACE_M1_NU_SPECIES >= 5
-    // rho = 1e13 g/cc and T = 10 MeV are above the muon suppression
-    // thresholds, so the muon channels must carry exactly 1x brems too.
+    // Exactly one copy of brems, multiplied by the existing smooth gate.
+    double const gate=muon_rate_gate(F.rho_cgs,F.temp_mev);
     REQUIRE_THAT(all.out[NUMU].eta_E,
-                 WithinRel(Q_mev_to_code(thermal.Q[NUMU], 1.0), 1e-12));
+                 WithinRel(Q_mev_to_code(gate*thermal.Q[NUMU], 1.0), 1e-12));
     REQUIRE_THAT(all.out[NUMUBAR].eta_N,
-                 WithinRel(R_to_code(thermal.R[NUMUBAR], 1.0), 1e-12));
+                 WithinRel(R_to_code(gate*thermal.R[NUMUBAR], 1.0), 1e-12));
 #endif
     // Electron flavours get nothing: brems is heavy-only and beta is off.
     REQUIRE(all.out[NUE].eta_E    == 0.0);

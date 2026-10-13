@@ -60,9 +60,9 @@
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
+#include <grace/physics/eas_kinds.hh>
 #ifdef GRACE_M1_OPTICAL_DEPTH
 #include <grace/physics/eas_optical_depth.hh>
-#include <grace/physics/eas_kinds.hh>
 #endif
 #endif
 #include <grace/physics/eos/eos_types.hh>
@@ -210,16 +210,28 @@ void evolve_impl() {
     // Stage helpers for the ARS IMEX steppers: nw += c dt X(od) and ghost zones,
     // then `hook` (accumulations on the RAW stage, so that floors and constraint
     // projections never leak into the stage derivatives), constraints, auxiliaries.
+    int explicit_stage=0, implicit_stage=0;
+    auto trace_stage = [&] (var_array_t st, char const* label, int stage, double factor) {
+        #ifdef GRACE_ENABLE_M1
+        trace_pair_moments(st,label,stage,factor);
+        #endif
+    };
     auto imex_explicit = [&] ( double c
                              , var_array_t& nw, var_array_t& od
                              , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
                              , bool last, auto&& hook ) {
+        ++explicit_stage;
+        trace_stage(od,"explicit-input",explicit_stage,c);
         advance_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        trace_stage(nw,"explicit-raw",explicit_stage,c);
         amr::apply_boundary_conditions(nw,snw,od,sod,dt,c) ;
+        trace_stage(nw,"explicit-after-bc",explicit_stage,c);
         hook() ;
         enforce_algebraic_constraints_after_bc(nw) ;
+        trace_stage(nw,"explicit-before-aux",explicit_stage,c);
         if ( last ) compute_auxiliary_quantities<eos_t>(nw, snw, aux) ;
         else        compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+        trace_stage(nw,"explicit-after-aux",explicit_stage,c);
     } ;
     // nw = od + c dt G(nw), `hook` on the raw solution.  With no implicit physics
     // active nw is a copy of od, whose auxiliaries are current: skip the c2p pass.
@@ -227,10 +239,15 @@ void evolve_impl() {
                              , var_array_t& nw, var_array_t& od
                              , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
                              , auto&& hook ) {
+        ++implicit_stage;
+        trace_stage(od,"implicit-input",implicit_stage,c);
         advance_implicit_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        trace_stage(nw,"implicit-raw",implicit_stage,c);
         hook() ;
+        trace_stage(nw,"implicit-before-aux",implicit_stage,c);
         if ( m1_is_active() )
             compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+        trace_stage(nw,"implicit-after-aux",implicit_stage,c);
     } ;
 
     if ( tstepper == "euler" ) {
@@ -894,8 +911,8 @@ void apply_fofc_correction(
     // M1-aware FOFC: recompute flagged faces' radiation fluxes first-order
     // (donor cell + HLLE) per species, gated by the per-species bits packed
     // into the shared face tag (bit 0 = hydro, bit s+1 = species s).  Eface IS
-    // the GS getefarray() the M1 flux takes as 'vbar'; recon_t (donor_cell)
-    // serves both hydro and M1.
+    // the GS getefarray(). M1 uses its dedicated conserved-input donor path:
+    // compute_fluxes has already undone the temporary E, N/E, F/E encoding.
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     bool const m1_on = m1_is_active() ;   // captured by value into the kernels below
     #endif
@@ -936,17 +953,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),0,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_x_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<0,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_x_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_x_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<0,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<0,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_x_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_x_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<0,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<0,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_x_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<0,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
@@ -965,17 +982,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),1,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_y_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<1,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_y_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_y_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<1,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<1,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_y_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_y_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<1,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<1,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_y_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<1,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
@@ -994,17 +1011,17 @@ void apply_fofc_correction(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
         int const m = fofc_faces(VEC(i,j,k),2,q) ;   // bit s+1 = species s
         if ( !(m >> 1) ) return ;
-        if ( m & (1<<1) ) m1_eq_system.template compute_z_flux<recon_t,0>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<1) ) m1_eq_system.template compute_fofc_flux<2,0>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        if ( m & (1<<2) ) m1_eq_system.template compute_z_flux<recon_t,1>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<3) ) m1_eq_system.template compute_z_flux<recon_t,2>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<2) ) m1_eq_system.template compute_fofc_flux<2,1>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<3) ) m1_eq_system.template compute_fofc_flux<2,2>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        if ( m & (1<<4) ) m1_eq_system.template compute_z_flux<recon_t,3>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
-        if ( m & (1<<5) ) m1_eq_system.template compute_z_flux<recon_t,4>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<4) ) m1_eq_system.template compute_fofc_flux<2,3>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
+        if ( m & (1<<5) ) m1_eq_system.template compute_fofc_flux<2,4>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
         #ifdef GRACE_M1_PHOTONS
-        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_z_flux<recon_t,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, Eface, dx, dt, dtfact) ;
+        if ( m & (1<<(M1_PHOTON_SPECIES+1)) ) m1_eq_system.template compute_fofc_flux<2,M1_PHOTON_SPECIES>(q,VEC(i,j,k), fluxes, dx, dt, dtfact) ;
         #endif
     }) ;
     #endif
@@ -2023,27 +2040,52 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
         ) ;
 #endif
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
+    bool const coupled_leptons=evolved_pairs && get_muon_decay();
+    int const pair_order=get_pair_quadrature_order();
+    #if GRACE_M1_NU_SPECIES >= 3
+    // Separate small-tile launch: do not impose the ordinary 256-thread
+    // source kernel's GPU launch bounds on the spectral kernel scratch space.
+    if(m1_is_active() && evolved_pairs) {
+        m1_eq_system.pair_failures.allocate();
+        parallel_for(GRACE_EXECUTION_TAG("evol","m1_pair_sources"),
+            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
+                {VEC(0,0,0),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}, {VEC(4,2,2),1}),
+            KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q) {
+                #if GRACE_M1_NU_SPECIES >= 5
+                if(coupled_leptons)
+                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                #else
+                m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                #endif
+            });
+        check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
+        trace_pair_moments(new_state,"source-after-pairs",0,dtfact);
+    }
+    #endif
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
           GRACE_EXECUTION_TAG("evol", "m1_implicit_sources")
         , policy
         , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
-            m1_eq_system.compute_implicit_update<0>(
+            if (!coupled_leptons) m1_eq_system.compute_implicit_update<0>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #if GRACE_M1_NU_SPECIES >= 3
-            m1_eq_system.compute_implicit_update<1>(
+            if (!coupled_leptons) m1_eq_system.compute_implicit_update<1>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
-            m1_eq_system.compute_implicit_update<2>(
+            if (!evolved_pairs) m1_eq_system.compute_implicit_update<2>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #endif
             #if GRACE_M1_NU_SPECIES >= 5
-            m1_eq_system.compute_implicit_update<3>(
+            if (!evolved_pairs) m1_eq_system.compute_implicit_update<3>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
-            m1_eq_system.compute_implicit_update<4>(
+            if (!evolved_pairs) m1_eq_system.compute_implicit_update<4>(
                 q, VEC(i,j,k), _idx, new_state, dt, dtfact
             );
             #endif

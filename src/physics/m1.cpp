@@ -72,8 +72,122 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <cstdio>
 
 namespace grace {
+
+void trace_pair_moments(var_array_t state, char const* label, int stage, double factor) {
+    int const steps=get_param<int>("m1","eas","pair_trace_iterations");
+    if(steps==0 || get_iteration()-get_initial_iteration()>=static_cast<size_t>(steps)
+       || !m1_is_active() || get_pair_treatment()!=pair_treatment_t::evolved) return;
+    DECLARE_GRID_EXTENTS;
+    using namespace Kokkos;
+    MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> policy(
+        {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq});
+    int const rank=parallel::mpi_comm_rank();
+    for(int sp=0;sp<GRACE_M1_NU_SPECIES;++sp) {
+        double minE=0,minN=0,maxMean=0;
+        int bad=0;
+        parallel_reduce("pair_trace_moments",policy,
+            KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q,
+                          double& e,double& n,double& mean,int& invalid) {
+                int const off=sp*GRACE_N_M1_VARS;
+                double const E=state(VEC(i,j,k),ERAD1_+off,q);
+                double const N=state(VEC(i,j,k),NRAD1_+off,q);
+                e=Kokkos::fmin(e,E); n=Kokkos::fmin(n,N);
+                if(!Kokkos::isfinite(E) || !Kokkos::isfinite(N) || E<0 || N<0 || ((E==0)!=(N==0))) ++invalid;
+                else if(N>0) mean=Kokkos::fmax(mean,E/N*pairs::number_unit/pairs::energy_unit);
+            },Min<double>(minE),Min<double>(minN),Max<double>(maxMean),Sum<int>(bad));
+        maxMean=std::max(0.0,maxMean); // no positive-N cells (e.g. exact vacuum)
+        std::fprintf(stderr,"[PAIR_TRACE] rank=%d iteration=%zu phase=%s stage=%d factor=%.17e "
+                     "species=%d min_densitized_E=%.17e min_densitized_N=%.17e "
+                     "max_lab_mean_MeV=%.17e invalid_EN_cells=%d\n",
+                     rank,get_iteration(),label,stage,factor,sp,minE,minN,maxMean,bad);
+    }
+    std::fflush(stderr);
+}
+
+void check_pair_failures(pairs::failure_buffer const& failures, var_array_t state,
+                         var_array_t aux, char const* phase, double stage_h) {
+    if(!failures.count.data()) return;
+    // Synchronizes the producing kernel, including all writes to its records.
+    auto const count=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),failures.count);
+    if(count()==0) return;
+    int const n=std::min(count(),pairs::failure_buffer::capacity);
+    auto records=failures.records;
+    auto coords=coordinate_system::get().get_device_coord_system();
+    Kokkos::parallel_for("pair_failure_context",n,KOKKOS_LAMBDA(int slot) {
+        auto& r=records(slot);
+        int const i=r.i,j=r.j,k=r.k;
+        auto const q=r.q;
+        coords.get_physical_coordinates(i,j,k,q,r.xyz);
+        r.hydro[0]=aux(VEC(i,j,k),RHO_,q);
+        r.hydro[1]=aux(VEC(i,j,k),TEMP_,q);
+        r.hydro[2]=aux(VEC(i,j,k),YE_,q);
+        #ifdef GRACE_ENABLE_MUONS
+        r.hydro[3]=aux(VEC(i,j,k),YMU_,q);
+        #endif
+        metric_array_t metric; FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k));
+        for(int s=0;s<2;++s) {
+            int const sp=s==0?r.species_a:r.species_b;
+            if(sp<0) continue;
+            int const offset=sp*GRACE_N_M1_VARS;
+            int const v[5]={ERAD1_,FRADX1_,FRADY1_,FRADZ1_,NRAD1_};
+            int const pidx[5]={ERADL,FXL,FYL,FZL,NRADL};
+            m1_prims_array_t p{};
+            for(int a=0;a<5;++a) {
+                r.moments[s][a]=state(VEC(i,j,k),v[a]+offset,q)/(metric.sqrtg()*r.multiplicity);
+                p[pidx[a]]=r.moments[s][a];
+            }
+            p[ZXL]=aux(VEC(i,j,k),ZVECX_,q);
+            p[ZYL]=aux(VEC(i,j,k),ZVECY_,q);
+            p[ZZL]=aux(VEC(i,j,k),ZVECZ_,q);
+            m1_closure_t cl{p,metric}; cl.update_closure(0);
+            r.fluid[s][0]=p[NRADL]/cl.Gamma/pairs::number_unit;
+            r.fluid[s][1]=cl.J/pairs::energy_unit;
+        }
+    });
+    auto const host=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),records);
+    int const rank=parallel::mpi_comm_rank();
+    std::ostringstream os;
+    os << std::scientific << std::setprecision(17);
+    os << "[PAIR_FAILURE] rank=" << rank << " iteration=" << get_iteration()
+       << " phase=" << phase << " stage_h_code=" << stage_h
+       << " failures=" << count() << " samples=" << n << '\n';
+    for(int slot=0;slot<n;++slot) {
+        auto const& r=host(slot); auto const& d=r.detail;
+        os << "[PAIR_FAILURE] rank=" << rank << " sample=" << slot
+           << " status=" << pairs::failure_name(d.code)
+           << " q=" << r.q << " ijk=" << r.i << ',' << r.j << ',' << r.k
+           << " xyz_code=" << r.xyz[0] << ',' << r.xyz[1] << ',' << r.xyz[2]
+           << " species_zero_based=" << r.species_a << ',' << r.species_b
+           << " multiplicity=" << r.multiplicity << '\n';
+        os << "  rho_code=" << r.hydro[0] << " T_MeV=" << r.T
+           << " hydro_T_MeV=" << r.hydro[1] << " Ye=" << r.hydro[2] << " Ymu=" << r.hydro[3]
+           << " mu_e_MeV=" << r.mu_e << " mu_mu_MeV=" << r.mu_mu
+           << " nb_cm^-3=" << r.nb << " Xn=" << r.yn << " Xp=" << r.yp
+           << " active_bits=" << r.active << " order=" << r.order << " scale_MeV=" << r.scale << '\n';
+        for(int s=0;s<2;++s) {
+            os << "  input_species=" << (s==0?r.species_a:r.species_b)
+               << " E_Fx_Fy_Fz_N_code_per_species=";
+            for(double v:r.moments[s]) os << v << ' ';
+            os << " n_cm^-3=" << r.fluid[s][0] << " J_MeV_cm^-3=" << r.fluid[s][1]
+               << " mean_MeV=" << (r.fluid[s][0]>0?r.fluid[s][1]/r.fluid[s][0]:0) << '\n';
+        }
+        os << "  reconstruction_species=" << d.species << " iteration=" << d.iteration
+           << " residual=" << d.residual << " n_cm^-3=" << d.n << " J_MeV_cm^-3=" << d.J
+           << " grid_emin_MeV=" << d.emin << " grid_emax_MeV=" << d.emax
+           << " kernel_nodes=" << d.node << ',' << d.partner_node
+           << " kernel_energies_MeV=" << d.energy << ',' << d.partner_energy
+           << " kernel_value=" << d.kernel_value << '\n';
+    }
+    // stderr is explicit on EVERY failing rank; the usual console logger may
+    // only emit rank zero. Flush before throwing/aborting the MPI job.
+    auto const message=os.str();
+    std::fputs(message.c_str(),stderr);
+    std::fflush(stderr);
+    ERROR(message);
+}
 //**************************************************************************************************
 /**
  * @brief Report how many cells failed the beta-equilibrium solve this step.
@@ -335,6 +449,7 @@ void set_m1_eas(
     auto eos = eos::get().get_eos<eos_t>() ;
 
     auto const eas = get_eas_selection() ;
+    auto const pair_mode = get_pair_treatment(); // validate before any device launch
 
     // Launch-bounds switch: undefined leaves the policy and tile as-is.
     // The tile product must equal MaxThreadsPerBlock or HIP rejects the launch.
@@ -391,14 +506,19 @@ void set_m1_eas(
     case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
         neutrinos_eas_op<eos_t> op(state, aux) ;
-        parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"), policy,
-            KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
+        if(pair_mode==pair_treatment_t::evolved) op.pair_failures.allocate();
+        auto const evaluate = KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
                 double xyz[3] ;
                 coords.get_physical_coordinates(i,j,k,q,xyz) ;
                 op(VEC(i,j,k),q,xyz) ;
-            }
-        );
+            };
+        if(pair_mode!=pair_treatment_t::legacy) {
+            MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
+                {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
+            parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);
+        } else parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"),policy,evaluate);
+        check_pair_failures(op.pair_failures,state,aux,"transport");
         break ;
     }
 
@@ -660,6 +780,24 @@ void set_m1_initial_data() {
         // which the set_m1_eas call at the END of this function would fill too
         // late — evaluate the EAS from the hydro state first.
         set_m1_eas<eos_t>() ;
+        // The evolved solver's ordinary EAS intentionally excludes pairs.
+        // For LTE-blended initial data only, construct the equilibrium pair
+        // coefficients; the final set_m1_eas below restores evolved-mode EAS.
+        if(m1_is_active() && get_pair_treatment()==pair_treatment_t::evolved) {
+            DECLARE_GRID_EXTENTS;
+            auto state=variable_list::get().getstate();
+            auto aux=variable_list::get().getaux();
+            auto coords=coordinate_system::get().get_device_coord_system();
+            neutrinos_eas_op<eos_t> op(state,aux);
+            op.pair_treatment=pair_treatment_t::equilibrium;
+            Kokkos::parallel_for(GRACE_EXECUTION_TAG("ID","pair_equilibrium_rates"),
+                Kokkos::MDRangePolicy<Kokkos::Rank<GRACE_NSPACEDIM+1>>(
+                    {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1}),
+                KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q) {
+                    double xyz[3]; coords.get_physical_coordinates(i,j,k,q,xyz);
+                    op(VEC(i,j,k),q,xyz);
+                });
+        }
         coord_array_t<GRACE_NSPACEDIM> sph_pcoords ;
         grace::fill_physical_coordinates(sph_pcoords,grace::STAG_CENTER,/*spherical coords*/ true) ;
         equil_m1_id_t id(
