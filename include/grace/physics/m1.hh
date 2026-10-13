@@ -695,6 +695,7 @@ struct m1_equations_system_t
         pairs::diagnostic diag;
         auto const fail=[&]() {
             auto r=pairs::make_failure_record(mat,diag,q,VEC(i,j,k));
+            r.mu_mu=this->_aux(VEC(i,j,k),PAIR_MUMU_,q);
             r.active=bits; r.scale=scale; r.order=order;
             r.species_a=sa; r.species_b=sb; r.multiplicity=multiplicity;
             pair_failures.save(r);
