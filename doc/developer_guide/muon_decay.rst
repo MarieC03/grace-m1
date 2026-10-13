@@ -440,7 +440,7 @@ Take the minimum over constraints and one, with the existing small safety
 margin at crossed bounds. This replaces independent flavour acceptance ONLY
 in decay-enabled cells; it also includes tau species in the shared energy
 acceptance. ``muon_partial_at_bound`` does not override this connected
-limiter. ``m1_br_reject`` bit 16 marks connected limiting when diagnostics
+limiter. ``m1_br_reject`` bit 32 marks connected limiting when diagnostics
 are compiled. At theta<1 the accepted result is conservative but no longer
 the full unmodified implicit source solution; timestep convergence and
 monitoring bound contact remain necessary. The tau guard is not a full EOS

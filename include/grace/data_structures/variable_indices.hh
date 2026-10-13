@@ -464,7 +464,7 @@ enum aux_var_idx : int {
     //   dYmu the collision proposed, before the hard stop / partial acceptance.
     M1_MUON_SOURCE_RAW_,
     #endif
-    M1_BR_REJECT_, // additionally 16: connected decay-network limiting
+    M1_BR_REJECT_, // additionally 32: connected decay-network limiting (muon_decay)
     //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)
     //   and the largest estimated relative error |dU|/E of the accepted state.
     M1_IMPLICIT_ERR_,

@@ -826,7 +826,7 @@ struct m1_equations_system_t
         this->_aux(VEC(i,j,k),M1_LEPTON_SOURCE_,q)+=theta*dye;
         this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q)+=theta*dym;
         if(theta<1) this->_aux(VEC(i,j,k),M1_BR_REJECT_,q)=
-            double(int(this->_aux(VEC(i,j,k),M1_BR_REJECT_,q))|16);
+            double(int(this->_aux(VEC(i,j,k),M1_BR_REJECT_,q))|32);
         #endif
     }
     #endif

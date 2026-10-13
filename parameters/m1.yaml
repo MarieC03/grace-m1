@@ -671,7 +671,7 @@ m1:
         Partly accepted cells carry bit 8 in m1_br_reject.  false (default)
         reverts the pair as before. With muon_decay enabled, a shared connected
         limiter supersedes this option; all neutrino species then use one
-        acceptance fraction and bit 16 records limiting.
+        acceptance fraction and bit 32 records limiting.
 
     electron_partial_at_bound:
       type: bool
