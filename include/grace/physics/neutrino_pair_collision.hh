@@ -134,12 +134,14 @@ struct ee_cache {
     }
 };
 
-// Hannestad-Raffelt 1998 NN bremsstrahlung, all channels, cm^3/s (the library works in nm).
+// Hannestad-Raffelt 1998 NN bremsstrahlung, all channels, in the library's nm^3/s.  Callers
+// multiply by 1e-21 in the accumulation itself (result += r*1e-21): the compiler fuses that into one
+// multiply-add, and keeping it there keeps the kernel bitwise what it was before the hoisting.
 KOKKOS_INLINE_FUNCTION double nn_absorption(material const& m, double e, double ep) {
     MyEOSParams eos{};
     eos.temp=m.T; eos.nb=m.nb*1e-21; eos.yn=m.yn; eos.yp=m.yp;
     BremKernelParams p{e,ep,0,false};
-    return BremKernelsLegCoeff(&p,&eos).abs[id_nux]*1e-21;
+    return BremKernelsLegCoeff(&p,&eos).abs[id_nux];
 }
 
 // nn_absorption with everything that does not depend on the element hoisted: the y-only factors once
@@ -193,7 +195,7 @@ struct brem_cell {
             single[c]=k.gamma/(POW2(x)+k.hgb2)*sb/T;
         }
         double const tot=kBS_Brem_Const*(ch[0].n*single[0]+ch[1].n*single[1]+w_np*single[2]);
-        return 3.0*tot*1e-21;
+        return 3.0*tot;   // nm^3/s, like nn_absorption
     }
 };
 #endif
@@ -208,7 +210,7 @@ KOKKOS_INLINE_FUNCTION double absorption_kernel(material const& m, channels c,
         if(!Kokkos::isfinite(r)) return r; // do not hide NaNs with fmax
         result += Kokkos::fmax(0.0,r)*1e-21; // nm^3/s -> cm^3/s
     }
-    if (c.nn && m.nb>0 && (m.yn>0 || m.yp>0)) result += nn_absorption(m,e,ep);
+    if (c.nn && m.nb>0 && (m.yn>0 || m.yp>0)) result += nn_absorption(m,e,ep)*1e-21; // nm^3/s -> cm^3/s
 #endif
     if (c.plasmon) result += plasmon_abs(m,e,ep);
     return result;
@@ -249,7 +251,7 @@ struct kernel {
                 if(!Kokkos::isfinite(r)) return r;
                 result += Kokkos::fmax(0.0,r)*1e-21;
             }
-            if (nn_active) result += nn.element(g.e[i],g.e[j]);
+            if (nn_active) result += nn.element(g.e[i],g.e[j])*1e-21;
 #endif
             if (c.plasmon) result += plasmon_abs(m,g.e[i],g.e[j]);
             return result;
