@@ -102,7 +102,7 @@ KOKKOS_INLINE_FUNCTION bool leptonic_implicit_update(
     double r[20]; if(!fun(x,r)) return false;
     residual=0;
     for(int a=0;a<20;++a) residual=Kokkos::fmax(residual,Kokkos::fabs(r[a]));
-    return residual<2e-8;
+    return residual<newton_accept*residual_scale(x);
 }
 } // namespace grace::pairs
 #endif

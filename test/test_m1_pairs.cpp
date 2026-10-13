@@ -293,6 +293,32 @@ TEST_CASE("Evolved pairs conserve number difference in an implicit M1 stage", "[
     }
 }
 
+// Hunter/Mac HOT-TOV core (T = 20 MeV, rho = 1.04e-3) from floor radiation: h*kappa_a = 720, the scaled
+// unknown reaches 1e4, so the residual floor is roundoff (~1e-9) and an absolute 2e-10 target can never be met.
+TEST_CASE("Evolved pairs converge from floor radiation in a stiff hot core", "[pairs][stiff]") {
+    material const core{19.99999957, 167.6738138, 3.872150214e38, 0.9060033822, 0.09399661775};
+    kernel k; REQUIRE(k.init(core,{true,true,true},16,20));
+    metric_array_t metric({1.914363,0,0,1.914363,0,1.914363},{0,0,0},0.724636);
+    m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};
+    double old[10]={},out[10],res;
+    for(int s=0;s<2;++s) { old[5*s]=base[s][ERADL]=1e-16; old[5*s+4]=base[s][NRADL]=1e-14; }
+    eas[0][KAL]=2.614182e4; eas[0][KSL]=648.1693; eas[0][KANL]=1.491492e4; eas[0][ETAL]=4.522421e-4; eas[0][ETANL]=3.841020e-3;
+    eas[1][KAL]=1.961922;   eas[1][KSL]=317.0434; eas[1][KANL]=0.6802474;  eas[1][ETAL]=3.394129e-8; eas[1][ETANL]=1.751877e-7;
+    double const h=2.745874e-2;
+    REQUIRE(implicit_update(k,metric,base,eas,old,out,h,res));
+    // residual is scaled by max(old, 1e-4 LTE): the state sits at ~1e4 there and the 2e-11 moment
+    // reconstruction tolerance leaves noise of ~1e4 * 2e-11 = 2e-7, i.e. 2e-11 relative to the state
+    REQUIRE(res<newton_accept*1e4);
+    // one stiff step takes nu_mu from the floor to the order of its thermal LTE (eta/kappa); the pair
+    // production on the still-filling anti-nu_mu partner shifts the exact fixed point, so order of magnitude only
+    double const Jeq=eas[0][ETAL]/eas[0][KAL], neq=eas[0][ETANL]/eas[0][KANL];
+    REQUIRE(out[0]>0.5*Jeq); REQUIRE(out[0]<2*Jeq);
+    REQUIRE(out[4]>0.5*neq); REQUIRE(out[4]<2*neq);
+    REQUIRE(out[5]>0.1*Jeq); REQUIRE(out[5]<out[0]);   // the partner is fed by pairs only
+    REQUIRE(out[9]>0.1*neq); REQUIRE(out[9]<out[4]);
+    for(double v: out) REQUIRE(std::isfinite(v));
+}
+
 TEST_CASE("Transverse plasmon event rate agrees with thermal photon decay", "[pairs]") {
     kernel k; REQUIRE(k.init(matter,{false,false,true},32,10));
     double f[max_order]={}; auto const s=evaluate(k,f,f);

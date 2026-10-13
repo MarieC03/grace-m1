@@ -6,6 +6,15 @@
 
 namespace grace::pairs {
 
+// Residual tolerances are relative to max(1,|x|): floor radiation relaxing onto a hot LTE puts the
+// scaled unknowns at ~1e4, where roundoff in the stiff source (h*kappa ~ 1e3) floors the residual
+// near 1e-9 and an absolute 2e-10 target can never be met.
+constexpr double newton_target=2e-10, newton_accept=2e-8;
+template<int N>
+KOKKOS_INLINE_FUNCTION double residual_scale(double const (&x)[N]) {
+    double m=1; for(int i=0;i<N;++i) m=Kokkos::fmax(m,Kokkos::fabs(x[i])); return m;
+}
+
 // Small, scaled, damped Newton solve; no allocation, exceptions, or vendor API.
 template<int N, class Function>
 KOKKOS_INLINE_FUNCTION bool newton(Function const& fun, double (&x)[N], double& norm) {
@@ -14,7 +23,7 @@ KOKKOS_INLINE_FUNCTION bool newton(Function const& fun, double (&x)[N], double& 
         if(!fun(x,r)) return false;
         norm=0;
         for(int i=0;i<N;++i) norm=Kokkos::fmax(norm,Kokkos::fabs(r[i]));
-        if(norm<2e-10) return true;
+        if(norm<newton_target*residual_scale(x)) return true;
         for(int j=0;j<N;++j) {
             double h=1e-5*Kokkos::fmax(Kokkos::fabs(x[j]),1e-4), rp[N];
             bool ok=false;
@@ -55,7 +64,8 @@ KOKKOS_INLINE_FUNCTION bool newton(Function const& fun, double (&x)[N], double& 
             for(int i=0;i<N;++i) np=Kokkos::fmax(np,Kokkos::fabs(rp[i]));
             if(np<norm) { for(int i=0;i<N;++i) x[i]=xp[i]; ok=true; break; }
         }
-        if(!ok) return false;
+        // A stalled line search below the acceptance tolerance is convergence to the roundoff floor.
+        if(!ok) return norm<newton_accept*residual_scale(x);
     }
     return false;
 }
@@ -157,7 +167,7 @@ KOKKOS_INLINE_FUNCTION bool implicit_update(
     double r[10]; if(!fun(x,r)) return false;
     residual=0;
     for(int i=0;i<10;++i) residual=Kokkos::fmax(residual,Kokkos::fabs(r[i]));
-    return residual<2e-8;
+    return residual<newton_accept*residual_scale(x);
 }
 } // namespace grace::pairs
 #endif
