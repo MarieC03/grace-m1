@@ -450,8 +450,9 @@ TEST_CASE("GRACE pair source wiring preserves densitization and aggregate weight
     st(0,0,0,CHI_,0)=1;
     #endif
     st(0,0,0,ALP_,0)=0.7;
-    ax(0,0,0,PAIR_T_,0)=matter.T; ax(0,0,0,PAIR_MUE_,0)=matter.mu_e;
-    ax(0,0,0,PAIR_NB_,0)=matter.nb; ax(0,0,0,PAIR_YN_,0)=matter.yn;
+    ax(0,0,0,TEMP_,0)=matter.T; ax(0,0,0,PAIR_MUE_,0)=matter.mu_e;
+    ax(0,0,0,RHO_,0)=matter.nb/nu_constants::avogadro*nu_constants::RHOGF;   // the solve rebuilds n_b from rho
+    ax(0,0,0,PAIR_YN_,0)=matter.yn;
     ax(0,0,0,PAIR_YP_,0)=matter.yp; ax(0,0,0,PAIR_ACTIVE_,0)=3;
     kernel k; REQUIRE(k.init(matter,{true,true,false},16,10,true));
     double f[max_order],n,J; fd(k.g,7,0,f,n,J);

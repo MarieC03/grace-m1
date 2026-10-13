@@ -1005,20 +1005,16 @@ struct neutrinos_eas_op
     GRACE_HOST_DEVICE void prepare_pairs(fugacity_state const& F, nu_rates_all_out& all,
         VEC(const int i, const int j, const int k), int64_t q) const {
         #if GRACE_M1_NU_SPECIES >= 3
-        for(int a=PAIR_T_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
+        for(int a=PAIR_MUE_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
         if(pair_treatment==pair_treatment_t::standard) return;
-        pairs::material const m{F.temp_mev,F.mu_e,F.nb,F.Xn,F.Xp};
-        aux(VEC(i,j,k),PAIR_T_,q)=m.T;
+        pairs::material const m{F.temp_mev,F.mu_e,F.nb,F.Xn,F.Xp};   // T, n_b are TEMP_/RHO_ in aux
         aux(VEC(i,j,k),PAIR_MUE_,q)=m.mu_e;
-        aux(VEC(i,j,k),PAIR_NB_,q)=m.nb;
         aux(VEC(i,j,k),PAIR_YN_,q)=m.yn;
         aux(VEC(i,j,k),PAIR_YP_,q)=m.yp;
         aux(VEC(i,j,k),PAIR_MUMU_,q)=F.mu_mu;
-        aux(VEC(i,j,k),PAIR_DECAY_,q)=muon_decay;
-        aux(VEC(i,j,k),PAIR_DORDER_,q)=decay_order;
         int const active=int(pair_annihilation)+2*int(bremsstrahlung)+4*int(plasmon_decay);
         if(pair_treatment==pair_treatment_t::evolved) {
-            aux(VEC(i,j,k),PAIR_ACTIVE_,q)=active;
+            aux(VEC(i,j,k),PAIR_ACTIVE_,q)=active|(muon_decay?8:0);
             prepare_pair_transport(m,F.mu_mu,active,VEC(i,j,k),q);
             return;
         }
@@ -1107,7 +1103,7 @@ struct neutrinos_eas_op
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     void floor_rates(VEC(const int i, const int j, const int k), int64_t q) const {
         #if GRACE_M1_NU_SPECIES >= 3
-        for(int a=PAIR_T_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
+        for(int a=PAIR_MUE_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
         #endif
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS1_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN1_,q)=weakhub::kappa_floor_code;

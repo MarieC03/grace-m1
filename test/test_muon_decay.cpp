@@ -346,14 +346,15 @@ TEST_CASE("GRACE cross-flavour source wiring uses the correct species and densit
     st(0,0,0,GTXX_,0)=4; st(0,0,0,GTYY_,0)=st(0,0,0,GTZZ_,0)=1; st(0,0,0,CHI_,0)=1;
     #endif
     st(0,0,0,ALP_,0)=0.7;
-    ax(0,0,0,PAIR_T_,0)=20; ax(0,0,0,PAIR_MUE_,0)=30; ax(0,0,0,PAIR_MUMU_,0)=90;
-    ax(0,0,0,PAIR_NB_,0)=6e37; ax(0,0,0,PAIR_YN_,0)=0.8; ax(0,0,0,PAIR_YP_,0)=0.2;
-    ax(0,0,0,PAIR_DECAY_,0)=1; ax(0,0,0,PAIR_DORDER_,0)=24;
+    ax(0,0,0,TEMP_,0)=20; ax(0,0,0,PAIR_MUE_,0)=30; ax(0,0,0,PAIR_MUMU_,0)=90;
+    ax(0,0,0,RHO_,0)=6e37/nu_constants::avogadro*nu_constants::RHOGF;   // n_b = 6e37 cm^-3
+    ax(0,0,0,PAIR_YN_,0)=0.8; ax(0,0,0,PAIR_YP_,0)=0.2;
+    ax(0,0,0,PAIR_ACTIVE_,0)=8;   // decay only, no thermal channels
     Kokkos::deep_copy(state,st); Kokkos::deep_copy(next,state); Kokkos::deep_copy(aux,ax);
     m1_equations_system_t system(state,staggered_variable_arrays_t{},aux);
     scalar_array_t<GRACE_NSPACEDIM> idx;
     Kokkos::parallel_for("decay_wiring",1,KOKKOS_LAMBDA(int) {
-        system.compute_leptonic_implicit_update(0,VEC(0,0,0),idx,next,0.01,1,16);
+        system.compute_leptonic_implicit_update(0,VEC(0,0,0),idx,next,0.01,1,16,24);
     });
     auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),next);
     kernel thermal; REQUIRE(thermal.init({20,30,6e37,0.8,0.2},{false,false,false},16,muon_mass/3));

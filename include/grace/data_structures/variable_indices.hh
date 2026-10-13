@@ -384,9 +384,10 @@ enum aux_var_idx : int {
     // Bit indices are build-dependent -- decode against the enum ordinal.
     BETAEQ_ERR_,
     #if GRACE_M1_NU_SPECIES >= 3
-    // Pair material snapshot: physical units, no optical-depth fugacity factors.
-    PAIR_T_, PAIR_MUE_, PAIR_NB_, PAIR_YN_, PAIR_YP_, PAIR_ACTIVE_,
-    PAIR_MUMU_, PAIR_DECAY_, PAIR_DORDER_, PAIR_DECAY_QDEF_,
+    // Pair material snapshot (physical units, no optical-depth fugacity factors); T and n_b come
+    // from TEMP_/RHO_.  PAIR_ACTIVE_: thermal channels 1 e+e-, 2 NN brems, 4 plasmon; 8 = muon
+    // decay runs in this cell.  Keep PAIR_MUE_ first and PAIR_RES_ last (zeroing loops).
+    PAIR_MUE_, PAIR_YN_, PAIR_YP_, PAIR_ACTIVE_, PAIR_MUMU_, PAIR_DECAY_QDEF_,
     PAIR_KAPPA1_, PAIR_KAPPA2_, PAIR_KAPPA3_, PAIR_KAPPA4_, PAIR_KAPPA5_,
     PAIR_RES_,
     #endif

@@ -2043,6 +2043,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
     bool const coupled_leptons=evolved_pairs && get_muon_decay();
     int const pair_order=get_pair_quadrature_order();
+    int const decay_order=get_muon_decay_kernel_order();
     #if GRACE_M1_NU_SPECIES >= 3
     // Separate small-tile launch: do not impose the ordinary 256-thread
     // source kernel's GPU launch bounds on the spectral kernel scratch space.
@@ -2054,7 +2055,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q) {
                 #if GRACE_M1_NU_SPECIES >= 5
                 if(coupled_leptons)
-                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,decay_order);
                 else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 #else

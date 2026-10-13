@@ -48,6 +48,7 @@
 #include <grace/physics/m1_number_flux.hh>
 #include <grace/physics/neutrino_pair_update.hh>
 #include <grace/physics/neutrino_leptonic_update.hh>
+#include <grace/physics/eas_neutrino_rates_analytic.hh>   // rho/T conversions for pair_material
 #include "fd_subexpressions.hh"
 #include <Kokkos_Core.hpp>
 
@@ -85,6 +86,7 @@ struct m1_equations_system_t
                         , grace::staggered_variable_arrays_t stag_state_
                         , grace::var_array_t aux_ )
     : base_t(state_,stag_state_,aux_)
+    , mass_scale(grace::get_param<double>("coordinate_system","mass_scale"))
     {} ;
 
     m1_equations_system_t(grace::var_array_t state_
@@ -97,7 +99,10 @@ struct m1_equations_system_t
     , atmo_params(_atmo_pars)
     , excision_params(_excision_pars)
     , backreaction_params(_backreaction_pars)
+    , mass_scale(grace::get_param<double>("coordinate_system","mass_scale"))
     {} ;
+
+    double mass_scale ;   // coordinate_system.mass_scale, for the rho -> n_b conversion
 
     // FOFC runs after compute_fluxes has restored the conserved state.
     template<int idir, int ispec>
@@ -649,13 +654,22 @@ struct m1_equations_system_t
     }
 
     #if GRACE_M1_NU_SPECIES >= 3
+    // Matter state for the pair kernels: T and n_b derived from TEMP_/RHO_ exactly as
+    // make_fugacity_state does, the rest from the EAS pass's snapshot.
+    KOKKOS_INLINE_FUNCTION pairs::material pair_material(int q,VEC(int i,int j,int k)) const {
+        double const rho_cgs=rho_code_to_cgs(this->_aux(VEC(i,j,k),RHO_,q),mass_scale);
+        return {temp_code_to_mev(this->_aux(VEC(i,j,k),TEMP_,q)),this->_aux(VEC(i,j,k),PAIR_MUE_,q),
+                safe_pos(rho_cgs)*nu_constants::avogadro,
+                this->_aux(VEC(i,j,k),PAIR_YN_,q),this->_aux(VEC(i,j,k),PAIR_YP_,q)};
+    }
+
     // sa==sb describes a charge-symmetric aggregate; multiplicity counts
     // physical helicity species (2 for tau+antitau, 4 for the 3-species NUX).
     template<int sa, int sb, int multiplicity=1>
     KOKKOS_INLINE_FUNCTION void compute_pair_implicit_update(
         int q, VEC(int i,int j,int k), scalar_array_t<GRACE_NSPACEDIM> const idx,
         var_array_t state_new, double dt, double dtfact, int order) const {
-        int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q));
+        int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&7;   // thermal channels only
         if(bits==0) {
             compute_implicit_update<sa>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             if constexpr(sa!=sb) compute_implicit_update<sb>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
@@ -680,9 +694,7 @@ struct m1_equations_system_t
             eas[s][ETANL]=this->_aux(VEC(i,j,k),m1_etan_idx<sp>(),q)/multiplicity;
         };
         read(std::integral_constant<int,sa>{},0); read(std::integral_constant<int,sb>{},1);
-        pairs::material const mat{this->_aux(VEC(i,j,k),PAIR_T_,q),
-            this->_aux(VEC(i,j,k),PAIR_MUE_,q),this->_aux(VEC(i,j,k),PAIR_NB_,q),
-            this->_aux(VEC(i,j,k),PAIR_YN_,q),this->_aux(VEC(i,j,k),PAIR_YP_,q)};
+        pairs::material const mat=pair_material(q,VEC(i,j,k));
         double scale=mat.T;
         for(int s=0;s<2;++s) {
             m1_closure_t cl{p[s],metric}; cl.update_closure(0);
@@ -726,8 +738,8 @@ struct m1_equations_system_t
     #if GRACE_M1_NU_SPECIES >= 5
     KOKKOS_INLINE_FUNCTION void compute_leptonic_implicit_update(
         int q,VEC(int i,int j,int k),scalar_array_t<GRACE_NSPACEDIM> const idx,
-        var_array_t state_new,double dt,double dtfact,int order) const {
-        if(this->_aux(VEC(i,j,k),PAIR_DECAY_,q)==0) {
+        var_array_t state_new,double dt,double dtfact,int order,int decay_order) const {
+        if(!(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8)) {   // no decay in this cell
             compute_implicit_update<0>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             compute_implicit_update<1>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order);
@@ -748,20 +760,17 @@ struct m1_equations_system_t
         };
         read(std::integral_constant<int,0>{}); read(std::integral_constant<int,1>{});
         read(std::integral_constant<int,2>{}); read(std::integral_constant<int,3>{});
-        pairs::material const mat{this->_aux(VEC(i,j,k),PAIR_T_,q),
-            this->_aux(VEC(i,j,k),PAIR_MUE_,q),this->_aux(VEC(i,j,k),PAIR_NB_,q),
-            this->_aux(VEC(i,j,k),PAIR_YN_,q),this->_aux(VEC(i,j,k),PAIR_YP_,q)};
+        pairs::material const mat=pair_material(q,VEC(i,j,k));
         double scale=Kokkos::fmax(mat.T,pairs::muon_mass/3);
         for(int s=0;s<4;++s) if(old[5*s+4]>0) {
             m1_closure_t cl{p[s],metric}; cl.update_closure(0);
             double const mean=cl.J*cl.Gamma/old[5*s+4]*pairs::number_unit/pairs::energy_unit;
             scale=Kokkos::fmax(scale,Kokkos::sqrt(mat.T*mean/3));
         }
-        int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q));
+        int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&7;   // thermal channels only
         pairs::kernel thermal; pairs::decay_kernel decay;
         if(!thermal.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale)
-           || !decay.init(thermal.g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),
-                          int(this->_aux(VEC(i,j,k),PAIR_DORDER_,q))))
+           || !decay.init(thermal.g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order))
             Kokkos::abort("Invalid four-species leptonic kernel");
         double residual=0;
         if(!pairs::leptonic_implicit_update(thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual))
@@ -893,7 +902,7 @@ struct m1_equations_system_t
         (void)muon_partial ; (void)electron_partial ;   // hard-stop branch only
 
         #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 5
-        if(this->_aux(VEC(i,j,k),PAIR_DECAY_,q)>0) {
+        if(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8) {   // muon decay ran in this cell
             add_leptonic_backreaction(q,VEC(i,j,k),state_new,eos);
             return;
         }

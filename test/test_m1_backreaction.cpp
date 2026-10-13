@@ -2017,7 +2017,7 @@ TEST_CASE("Decay backreaction accepts connected daughter species with one factor
 {
     for(int limit: {0,1,2,3}) {
         cell_t c; mock_bounds_eos_t eos;
-        c.set_aux(PAIR_DECAY_,1);
+        c.set_aux(PAIR_ACTIVE_,8);   // muon decay active in this cell
         double const D=2,ye0=0.3,ym0=limit==1?eos.ymumin+0.002:0.02;
         double const tau0=limit==2?0.01:1;
         c.set_new(DENS_,D); c.set_new(YESTAR_,D*ye0); c.set_new(YMUSTAR_,D*ym0);
@@ -2049,7 +2049,7 @@ TEST_CASE("Decay backreaction respects the combined baryonic charge axis",
           "[m1][backreaction][decay]")
 {
     cell_t c; mock_bounds_eos_t eos;
-    c.set_aux(PAIR_DECAY_,1); c.set_new(TAU_,1);
+    c.set_aux(PAIR_ACTIVE_,8); c.set_new(TAU_,1);
     c.set_new(YESTAR_,0.48); c.set_new(YMUSTAR_,0.019);
     // An ordinary CC contribution is present in the same network step.
     c.set_old(NRAD1_,0.01); c.set_new(NRAD1_,0);
