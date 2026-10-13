@@ -960,6 +960,12 @@ struct neutrinos_eas_op
         double scale=muon_decay?Kokkos::fmax(m.T,pairs::muon_mass/3):m.T;
         for(int s=0;s<4;++s) if(n[s]>0)
             scale=Kokkos::fmax(scale,Kokkos::sqrt(m.T*J[s]/n[s]/3));
+        // the tau aggregate shares this build (symmetrized below), so its scale enters too
+        double n4=0,J4=0;
+        if(active!=0) {
+            pair_fluid_moments<4>(VEC(i,j,k),q,2,n4,J4);
+            if(n4>0) scale=Kokkos::fmax(scale,Kokkos::sqrt(m.T*J4/n4/3));
+        }
         pairs::kernel thermal; pairs::decay_kernel decay;
         pairs::diagnostic diag;
         bool ok=thermal.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag);
@@ -980,19 +986,24 @@ struct neutrinos_eas_op
         // The aggregate uses its symmetric kernel and per-physical-species
         // moments, exactly as in compute_pair_implicit_update.
         if(active!=0) {
+            double f[pairs::max_order];
+            pairs::diagnostic aggregate_diag;
             #if GRACE_M1_NU_SPECIES >= 5
             constexpr int sp=4,multiplicity=2;
+            double const n=n4,J=J4,kscale=scale;
+            thermal.symmetrize();                    // one build per cell: the pair's grid, symmetrized
+            pairs::kernel const& kpair=thermal;
+            if(!pairs::reconstruct(kpair.g,n,J,f,&aggregate_diag)) {
             #else
             constexpr int sp=2,multiplicity=4;
-            #endif
             double n,J; pair_fluid_moments<sp>(VEC(i,j,k),q,multiplicity,n,J);
-            double const scale=n>0?Kokkos::fmax(m.T,Kokkos::sqrt(m.T*J/n/3)):m.T;
-            pairs::kernel kpair; double f[pairs::max_order];
-            pairs::diagnostic aggregate_diag;
-            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,true,&aggregate_diag)
+            double const kscale=n>0?Kokkos::fmax(m.T,Kokkos::sqrt(m.T*J/n/3)):m.T;
+            pairs::kernel kpair;
+            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,kscale,true,&aggregate_diag)
                || !pairs::reconstruct(kpair.g,n,J,f,&aggregate_diag)) {
+            #endif
                 aggregate_diag.species=sp;
-                save_pair_transport_failure(m,mumu,aggregate_diag,active,scale,sp,sp,multiplicity,VEC(i,j,k),q);
+                save_pair_transport_failure(m,mumu,aggregate_diag,active,kscale,sp,sp,multiplicity,VEC(i,j,k),q);
                 return;
             }
             auto const src=pairs::evaluate(kpair,f,f);

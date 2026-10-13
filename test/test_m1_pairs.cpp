@@ -282,10 +282,10 @@ TEST_CASE("Kernel build equals the per-element reference bitwise", "[pairs][kern
     auto const logu=[&](double lo,double hi){ return lo*std::pow(hi/lo,rnd()); };
     long checked=0, built=0;
     for(int trial=0;trial<40;++trial) {
-        material m{logu(0.1,50),logu(0.5,300),logu(1e27,3e38),0,0};
+        material m{logu(0.1,50),logu(0.01,300),logu(1e27,3e38),0,0};
         m.yn=0.1+0.8*rnd(); m.yp=(1-m.yn)*rnd();
         int const order=8+8*(trial%4);
-        double const scale=m.T*logu(1,100);
+        double const scale=m.T*logu(1,400);
         for(int ch=1;ch<8;++ch) {
             channels const c{bool(ch&1),bool(ch&2),bool(ch&4)};
             kernel k,ks;
@@ -293,11 +293,13 @@ TEST_CASE("Kernel build equals the per-element reference bitwise", "[pairs][kern
             REQUIRE(ks.init(m,c,order,scale,true)==ok);
             if(!ok) continue;
             ++built;
+            kernel sym=k; sym.symmetrize();
             for(int i=0;i<k.g.n;++i) for(int j=0;j<k.g.n;++j) {
                 double const r=absorption_kernel(m,c,k.g.e[i],k.g.e[j]);
                 REQUIRE(k.a[i][j]==r);
                 if(i<=j) REQUIRE(ks.a[i][j]==0.5*(r+absorption_kernel(m,c,k.g.e[j],k.g.e[i])));
                 else REQUIRE(ks.a[i][j]==ks.a[j][i]);
+                REQUIRE(sym.a[i][j]==ks.a[i][j]);
                 ++checked;
             }
         }
@@ -507,6 +509,21 @@ TEST_CASE("GRACE pair source wiring preserves densitization and aggregate weight
         system.compute_pair_implicit_update<x,x,g>(0,VEC(0,0,0),idx,next,0.1,1,16);
     });
     auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),next);
+    // the launch-shared kernel (one build per cell, symmetrized for the aggregate) must reproduce
+    // the per-solve builds bit for bit when the scales coincide, as they do here
+    var_array_t next2("pair_next2",1,1,1,N_EVOL_VARS,1); Kokkos::deep_copy(next2,state);
+    Kokkos::parallel_for("pair_wiring_shared",1,KOKKOS_LAMBDA(int) {
+        auto const mat=system.pair_material(0,VEC(0,0,0));
+        pairs::kernel shared;
+        shared.init(mat,{true,true,false},16,system.pair_scale(0,VEC(0,0,0),mat.T,false));
+        #if GRACE_M1_NU_SPECIES >= 5
+        system.compute_pair_implicit_update<2,3>(0,VEC(0,0,0),idx,next2,0.1,1,16,&shared);
+        #endif
+        shared.symmetrize();
+        system.compute_pair_implicit_update<x,x,g>(0,VEC(0,0,0),idx,next2,0.1,1,16,&shared);
+    });
+    auto got2=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),next2);
+    for(int v=0;v<N_EVOL_VARS;++v) REQUIRE(got2(0,0,0,v,0)==got(0,0,0,v,0));
     metric_array_t metric({4,0,0,1,0,1},{0,0,0},0.7);
     REQUIRE(metric.sqrtg()==2);
     m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{};

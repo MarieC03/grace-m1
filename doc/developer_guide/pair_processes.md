@@ -219,7 +219,10 @@ Five species: indices 2/3 are separate `nu_mu/antinu_mu`; index 4 represents
 before reconstructing a one-helicity spectrum. For a charge-symmetric
 aggregate, use `(R(e,ep)+R(ep,e))/2`, evolve one representative spectrum and
 multiply the output by the multiplicity. Do **not** multiply its opacity by
-the multiplicity.
+the multiplicity. With five species one kernel per cell and launch serves both
+the `nu_mu` pair (or the four-species network) and the tau aggregate: its
+quadrature scale is the largest of their individual scales, and the aggregate
+uses the symmetrized matrix of that same build.
 
 Physical sources are converted using the same constants as existing EAS:
 

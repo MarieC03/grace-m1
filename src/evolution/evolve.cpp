@@ -2054,10 +2054,21 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 {VEC(0,0,0),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}, {VEC(4,2,2),1}),
             KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q) {
                 #if GRACE_M1_NU_SPECIES >= 5
+                // One kernel per cell and launch: the nu_mu pair (or the four-species network) and the
+                // tau aggregate share its quadrature grid; the aggregate takes the symmetrized matrix.
+                int const bits=m1_eq_system.pair_active(q,VEC(i,j,k));
+                pairs::kernel shared; bool have=false;
+                if(bits&7) {
+                    auto const mat=m1_eq_system.pair_material(q,VEC(i,j,k));
+                    double const scale=m1_eq_system.pair_scale(q,VEC(i,j,k),mat.T,coupled_leptons&&(bits&8));
+                    have=shared.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},pair_order,scale);
+                }
+                pairs::kernel const* kern=have?&shared:nullptr;
                 if(coupled_leptons)
-                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,decay_order);
-                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
-                m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,decay_order,kern);
+                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern);
+                if(have) shared.symmetrize();
+                m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern);
                 #else
                 m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
                 #endif

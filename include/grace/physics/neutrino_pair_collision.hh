@@ -46,9 +46,10 @@ KOKKOS_INLINE_FUNCTION double occupation(double x) {
 // Shared nodes are essential: a kernel element is one event for BOTH partners.
 struct grid {
     int n;
+    double scale;                      // energy scale of the rational map, for diagnostics
     double e[max_order], w[max_order]; // w includes the one-helicity phase space
     KOKKOS_INLINE_FUNCTION void init(int order, double scale) {
-        n = order;
+        n = order; this->scale = scale;
         for (int i=0; i<n; ++i) {
             double z = Kokkos::cos(pi*(i+0.75)/(n+0.5)), dp=0;
             for (int it=0; it<20; ++it) {
@@ -271,6 +272,13 @@ struct kernel {
             a[i][j]=r;
         }
         return true;
+    }
+    // In place: the charge-symmetric aggregate kernel 0.5(a_ij + a_ji), bitwise what init(symmetric)
+    // gives on the same grid, so one build serves the nu_mu pair and the tau/nu_x aggregate.
+    KOKKOS_INLINE_FUNCTION void symmetrize() {
+        for(int i=0;i<g.n;++i) for(int j=i+1;j<g.n;++j) {
+            double const r=0.5*(a[i][j]+a[j][i]); a[i][j]=a[j][i]=r;
+        }
     }
 };
 

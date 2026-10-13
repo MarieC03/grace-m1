@@ -663,12 +663,45 @@ struct m1_equations_system_t
                 this->_aux(VEC(i,j,k),PAIR_YN_,q),this->_aux(VEC(i,j,k),PAIR_YP_,q)};
     }
 
+    KOKKOS_INLINE_FUNCTION int pair_active(int q,VEC(int i,int j,int k)) const {
+        return int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q));
+    }
+
+    // Common quadrature scale of all pair species in a cell, so one kernel build serves every solve
+    // of a launch: T, the muon rest-mass floor with decay, and sqrt(T <eps>/3) of each species, the
+    // mean energy taken exactly as the solves take it.
+    KOKKOS_INLINE_FUNCTION double pair_scale(int q,VEC(int i,int j,int k),double T,bool decay) const {
+        metric_array_t metric; FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k));
+        double scale=decay?Kokkos::fmax(T,pairs::muon_mass/3):T;
+        auto const add=[&](auto species,int multiplicity) {
+            constexpr int sp=decltype(species)::value;
+            m1_prims_array_t p; FILL_M1_PRIMS_ARRAY(p,this->_state,this->_aux,q,sp,VEC(i,j,k));
+            constexpr int v[5]={ERADL,FXL,FYL,FZL,NRADL};
+            for(int a=0;a<5;++a) p[v[a]]/=metric.sqrtg()*multiplicity;
+            if(p[NRADL]>0) {
+                m1_closure_t cl{p,metric}; cl.update_closure(0);
+                double const mean=cl.J*cl.Gamma/p[NRADL]*pairs::number_unit/pairs::energy_unit;
+                scale=Kokkos::fmax(scale,Kokkos::sqrt(T*mean/3));
+            }
+        };
+        #if GRACE_M1_NU_SPECIES >= 5
+        if(decay) { add(std::integral_constant<int,0>{},1); add(std::integral_constant<int,1>{},1); }
+        add(std::integral_constant<int,2>{},1); add(std::integral_constant<int,3>{},1);
+        add(std::integral_constant<int,4>{},2);
+        #else
+        add(std::integral_constant<int,2>{},4);
+        #endif
+        return scale;
+    }
+
     // sa==sb describes a charge-symmetric aggregate; multiplicity counts
     // physical helicity species (2 for tau+antitau, 4 for the 3-species NUX).
+    // prebuilt: a kernel built once for the launch (see evolve.cpp); otherwise one is built here.
     template<int sa, int sb, int multiplicity=1>
     KOKKOS_INLINE_FUNCTION void compute_pair_implicit_update(
         int q, VEC(int i,int j,int k), scalar_array_t<GRACE_NSPACEDIM> const idx,
-        var_array_t state_new, double dt, double dtfact, int order) const {
+        var_array_t state_new, double dt, double dtfact, int order,
+        pairs::kernel const* prebuilt=nullptr) const {
         int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&7;   // thermal channels only
         if(bits==0) {
             compute_implicit_update<sa>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
@@ -703,21 +736,25 @@ struct m1_equations_system_t
                 scale=Kokkos::fmax(scale,Kokkos::sqrt(mat.T*mean/3));
             }
         }
-        pairs::kernel kernel;
+        pairs::kernel local;
+        pairs::kernel const* kernel=prebuilt;
         pairs::diagnostic diag;
         auto const fail=[&]() {
             auto r=pairs::make_failure_record(mat,diag,q,VEC(i,j,k));
             r.mu_mu=this->_aux(VEC(i,j,k),PAIR_MUMU_,q);
-            r.active=bits; r.scale=scale; r.order=order;
+            r.active=bits; r.scale=kernel?kernel->g.scale:scale; r.order=order;
             r.species_a=sa; r.species_b=sb; r.multiplicity=multiplicity;
             pair_failures.save(r);
         };
-        if(!kernel.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag)) {
-            fail();
-            return;
+        if(!kernel) {
+            if(!local.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag)) {
+                fail();
+                return;
+            }
+            kernel=&local;
         }
         double residual=0;
-        if(!pairs::implicit_update(kernel,metric,p,eas,old,out,dt*dtfact,residual)) {
+        if(!pairs::implicit_update(*kernel,metric,p,eas,old,out,dt*dtfact,residual)) {
             diag.code=pairs::failure_code::implicit_solve;
             diag.residual=residual;
             fail();
@@ -738,11 +775,12 @@ struct m1_equations_system_t
     #if GRACE_M1_NU_SPECIES >= 5
     KOKKOS_INLINE_FUNCTION void compute_leptonic_implicit_update(
         int q,VEC(int i,int j,int k),scalar_array_t<GRACE_NSPACEDIM> const idx,
-        var_array_t state_new,double dt,double dtfact,int order,int decay_order) const {
+        var_array_t state_new,double dt,double dtfact,int order,int decay_order,
+        pairs::kernel const* prebuilt=nullptr) const {
         if(!(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8)) {   // no decay in this cell
             compute_implicit_update<0>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             compute_implicit_update<1>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
-            compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order);
+            compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order,prebuilt);
             return;
         }
         metric_array_t metric; FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k));
@@ -768,12 +806,17 @@ struct m1_equations_system_t
             scale=Kokkos::fmax(scale,Kokkos::sqrt(mat.T*mean/3));
         }
         int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&7;   // thermal channels only
-        pairs::kernel thermal; pairs::decay_kernel decay;
-        if(!thermal.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale)
-           || !decay.init(thermal.g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order))
+        pairs::kernel local; pairs::decay_kernel decay;
+        pairs::kernel const* thermal=prebuilt;
+        if(!thermal) {
+            if(!local.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale))
+                Kokkos::abort("Invalid four-species leptonic kernel");
+            thermal=&local;
+        }
+        if(!decay.init(thermal->g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order))
             Kokkos::abort("Invalid four-species leptonic kernel");
         double residual=0;
-        if(!pairs::leptonic_implicit_update(thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual))
+        if(!pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual))
             Kokkos::abort("Coupled leptonic source solve failed: check timestep and quadrature");
         this->_aux(VEC(i,j,k),PAIR_RES_,q)=Kokkos::fmax(
             this->_aux(VEC(i,j,k),PAIR_RES_,q),residual);
