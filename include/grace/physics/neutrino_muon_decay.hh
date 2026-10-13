@@ -136,17 +136,13 @@ struct decay_lte_rates {
 };
 KOKKOS_INLINE_FUNCTION bool equilibrium_decay_rates(decay_kernel const& k,
     int charge,double eta0,double eta1,decay_lte_rates& out) {
-    double f[2][max_order],n[2]={},J[2]={};
-    double const eta[2]={eta0,eta1};
-    for(int s=0;s<2;++s) for(int i=0;i<k.g.n;++i) {
-        f[s][i]=occupation(k.g.e[i]/k.T-eta[s]);
-        n[s]+=k.g.w[i]*f[s][i]; J[s]+=k.g.w[i]*k.g.e[i]*f[s][i];
-    }
-    auto const ps=evaluate_decay(k,charge,f[0],f[1]);
+    // Shared with the thermal pairs: an underflowing orientation (|eta| > ~500) keeps a finite kappa.
+    lte_rates r;
+    if(!lte_pair_rates(k.g,k.T,eta0,eta1,
+        [&](double const* f,double const* fb){ return evaluate_decay(k,charge,f,fb); },r)) return false;
     for(int s=0;s<2;++s) {
-        if(!(n[s]>0 && J[s]>0)) return false;
-        out.eta_E[s]=ps.emission[s]; out.eta_N[s]=ps.emission_n[s];
-        out.kappa_E[s]=ps.loss[s]/J[s]; out.kappa_N[s]=ps.loss_n[s]/n[s];
+        out.eta_E[s]=r.emission[s]; out.eta_N[s]=r.emission_n[s];
+        out.kappa_E[s]=r.kappa_E[s]; out.kappa_N[s]=r.kappa_N[s];
     }
     return true;
 }

@@ -506,7 +506,7 @@ void set_m1_eas(
     case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
         neutrinos_eas_op<eos_t> op(state, aux) ;
-        if(pair_mode==pair_treatment_t::evolved) op.pair_failures.allocate();
+        if(pair_mode!=pair_treatment_t::legacy) op.pair_failures.allocate();
         auto const evaluate = KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
                 double xyz[3] ;
@@ -790,6 +790,7 @@ void set_m1_initial_data() {
             auto coords=coordinate_system::get().get_device_coord_system();
             neutrinos_eas_op<eos_t> op(state,aux);
             op.pair_treatment=pair_treatment_t::equilibrium;
+            op.pair_failures.allocate();
             Kokkos::parallel_for(GRACE_EXECUTION_TAG("ID","pair_equilibrium_rates"),
                 Kokkos::MDRangePolicy<Kokkos::Rank<GRACE_NSPACEDIM+1>>(
                     {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1}),
@@ -797,6 +798,7 @@ void set_m1_initial_data() {
                     double xyz[3]; coords.get_physical_coordinates(i,j,k,q,xyz);
                     op(VEC(i,j,k),q,xyz);
                 });
+            check_pair_failures(op.pair_failures,state,aux,"initial-data");
         }
         coord_array_t<GRACE_NSPACEDIM> sph_pcoords ;
         grace::fill_physical_coordinates(sph_pcoords,grace::STAG_CENTER,/*spherical coords*/ true) ;

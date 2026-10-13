@@ -1031,25 +1031,26 @@ struct neutrinos_eas_op
         if(!kernel.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale))
             Kokkos::abort("Invalid equilibrium pair kernel");
         auto const add=[&](int s, double multiplicity, double eta) {
-            double f[2][pairs::max_order], n[2]={0,0}, J[2]={0,0};
-            for(int a=0;a<2;++a) for(int l=0;l<kernel.g.n;++l) {
-                f[a][l]=pairs::occupation(kernel.g.e[l]/m.T-(a==0?eta:-eta));
-                n[a]+=kernel.g.w[l]*f[a][l];
-                J[a]+=kernel.g.w[l]*kernel.g.e[l]*f[a][l];
+            // Unclamped eta: cold dilute cells with a muon rest mass in mu_mu reach |eta| ~ 800, where one
+            // orientation's FD weights underflow; lte_pair_rates keeps its opacity finite.
+            pairs::lte_rates lte;
+            if(!pairs::lte_pair_rates(kernel.g,m.T,eta,-eta,
+                   [&](double const* f,double const* fb){ return pairs::evaluate(kernel,f,fb); },lte)) {
+                pairs::diagnostic diag; diag.code=pairs::failure_code::lte_rates; diag.species=s;
+                save_pair_transport_failure(m,F.mu_mu,diag,active,scale,s,s==NUX?s:s+1,int(multiplicity),
+                                            VEC(i,j,k),q);
+                return;
             }
-            auto const ps=pairs::evaluate(kernel,f[0],f[1]);
             for(int a=0;a<2;++a) {
-                if(!(n[a]>0 && J[a]>0))
-                    Kokkos::abort("Equilibrium pair FD moments underflow: state outside the supported numerical range");
                 // The aggregate receives both orientations, each with half
                 // its statistical weight. Muonic species stay separate.
                 int const dst=s==NUX?NUX:s+a;
                 double const g=s==NUX?multiplicity/2:1;
-                all.out[dst].eta_E+=g*ps.emission[a]*pairs::energy_unit/pairs::time_unit;
-                all.out[dst].eta_N+=g*ps.emission_n[a]*pairs::number_unit/pairs::time_unit;
+                all.out[dst].eta_E+=g*lte.emission[a]*pairs::energy_unit/pairs::time_unit;
+                all.out[dst].eta_N+=g*lte.emission_n[a]*pairs::number_unit/pairs::time_unit;
                 double const weight=s==NUX?0.5:1;
-                all.out[dst].kappa_a+=weight*ps.loss[a]/J[a]/pairs::time_unit;
-                all.out[dst].kappa_n+=weight*ps.loss_n[a]/n[a]/pairs::time_unit;
+                all.out[dst].kappa_a+=weight*lte.kappa_E[a]/pairs::time_unit;
+                all.out[dst].kappa_n+=weight*lte.kappa_N[a]/pairs::time_unit;
             }
         };
         #if GRACE_M1_NU_SPECIES >= 5
@@ -1064,8 +1065,11 @@ struct neutrinos_eas_op
             auto const add_decay=[&](auto sp0,auto sp1,int charge) {
                 constexpr int a=decltype(sp0)::value,b=decltype(sp1)::value;
                 pairs::decay_lte_rates rates;
-                if(!pairs::equilibrium_decay_rates(decay,charge,F.eta_nu[a],F.eta_nu[b],rates))
-                    Kokkos::abort("Muon decay LTE moments underflow");
+                if(!pairs::equilibrium_decay_rates(decay,charge,F.eta_nu[a],F.eta_nu[b],rates)) {
+                    pairs::diagnostic diag; diag.code=pairs::failure_code::lte_rates; diag.species=a;
+                    save_pair_transport_failure(m,F.mu_mu,diag,active,scale,a,b,1,VEC(i,j,k),q);
+                    return;
+                }
                 double source[2];
                 auto const put=[&](auto sp,int s) {
                     constexpr int dst=decltype(sp)::value;

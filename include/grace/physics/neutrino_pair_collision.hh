@@ -236,5 +236,43 @@ KOKKOS_INLINE_FUNCTION sources evaluate(kernel const& k, double const* f, double
     }
     return s;
 }
+
+struct lte_rates { double emission[2], emission_n[2], kappa_E[2], kappa_N[2]; };
+
+// LTE rates of a pair at fugacities eta0/eta1 from any pair evaluator eval(f,fb) -> sources.
+// Past occupation arguments of 500 an orientation's FD weights underflow, but kappa = loss/J is
+// a ratio: it is taken from Boltzmann weights shifted by the smallest argument (exact there), so
+// eta is never clamped and nothing aborts.  Emission keeps the true (possibly zero) weights.
+template<class Eval>
+KOKKOS_INLINE_FUNCTION bool lte_pair_rates(grid const& g, double T, double eta0, double eta1,
+                                           Eval const& eval, lte_rates& out) {
+    double f[2][max_order], n[2]={0,0}, J[2]={0,0}, amin[2]={1e300,1e300};
+    double const eta[2]={eta0,eta1};
+    for(int a=0;a<2;++a) for(int l=0;l<g.n;++l) {
+        double const arg=g.e[l]/T-eta[a];
+        f[a][l]=occupation(arg); n[a]+=g.w[l]*f[a][l]; J[a]+=g.w[l]*g.e[l]*f[a][l];
+        amin[a]=Kokkos::fmin(amin[a],arg);
+    }
+    if(!(Kokkos::isfinite(amin[0]) && Kokkos::isfinite(amin[1]))) return false;
+    sources const ps=eval(f[0],f[1]);
+    for(int a=0;a<2;++a) {
+        out.emission[a]=ps.emission[a]; out.emission_n[a]=ps.emission_n[a];
+        if(amin[a]>500) {
+            double ft[2][max_order], nt=0, Jt=0;
+            for(int l=0;l<g.n;++l) {
+                ft[0][l]=f[0][l]; ft[1][l]=f[1][l];
+                ft[a][l]=Kokkos::exp(-(g.e[l]/T-eta[a]-amin[a]));
+                nt+=g.w[l]*ft[a][l]; Jt+=g.w[l]*g.e[l]*ft[a][l];
+            }
+            sources const pt=eval(ft[0],ft[1]);   // only loss[a] is read: it is linear in ft[a]
+            out.kappa_E[a]=pt.loss[a]/Jt; out.kappa_N[a]=pt.loss_n[a]/nt;
+        } else {
+            if(!(n[a]>0 && J[a]>0)) return false;
+            out.kappa_E[a]=ps.loss[a]/J[a]; out.kappa_N[a]=ps.loss_n[a]/n[a];
+        }
+        if(!Kokkos::isfinite(out.kappa_E[a]+out.kappa_N[a]+out.emission[a]+out.emission_n[a])) return false;
+    }
+    return true;
+}
 } // namespace grace::pairs
 #endif

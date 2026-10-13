@@ -293,6 +293,45 @@ TEST_CASE("Evolved pairs conserve number difference in an implicit M1 stage", "[
     }
 }
 
+// Cold dilute surface cell of the Mac HOT-TOV (T = 0.114 MeV, rho = 9e3 g/cc, mu_mu = 103.6 MeV):
+// eta_numu = +782, so the anti-nu_mu LTE weights exp(-782 - e/T) underflow to 0.
+TEST_CASE("LTE pair rates stay finite when one orientation's occupation underflows", "[pairs][lte]") {
+    material const cold{0.1143, 0.0304, 5.6e27, 0.64, 0.36};
+    kernel k; REQUIRE(k.init(cold,{true,true,true},16,17.9));
+    auto const eval=[&](double const* f,double const* fb){ return evaluate(k,f,fb); };
+    // by hand, the direct FD sums: valid as long as nothing underflows (|eta| <= ~700 here)
+    auto const direct=[&](double eta,lte_rates& r) {
+        double f[2][max_order],n[2]={0,0},J[2]={0,0};
+        for(int a=0;a<2;++a) fd(k.g,cold.T,a==0?eta:-eta,f[a],n[a],J[a]);
+        auto const ps=evaluate(k,f[0],f[1]);
+        for(int a=0;a<2;++a) { r.emission[a]=ps.emission[a]; r.emission_n[a]=ps.emission_n[a];
+                               r.kappa_E[a]=ps.loss[a]/J[a]; r.kappa_N[a]=ps.loss_n[a]/n[a]; }
+    };
+    lte_rates r,d;
+    for(double eta: {-700.,-600.,-30.,-5.,0.3,5.,30.,600.,700.}) {   // both forms valid: must agree
+        INFO("eta = " << eta);
+        REQUIRE(lte_pair_rates(k.g,cold.T,eta,-eta,eval,r)); direct(eta,d);
+        for(int a=0;a<2;++a) {
+            REQUIRE_THAT(r.kappa_E[a],WithinRel(d.kappa_E[a],1e-10));
+            REQUIRE_THAT(r.kappa_N[a],WithinRel(d.kappa_N[a],1e-10));
+            REQUIRE(r.emission[a]==d.emission[a]); REQUIRE(r.emission_n[a]==d.emission_n[a]);
+        }
+    }
+    for(double eta: {-900.,-782.,782.,900.}) {   // the direct sums underflow: finite, non-negative
+        INFO("eta = " << eta);
+        REQUIRE(lte_pair_rates(k.g,cold.T,eta,-eta,eval,r));
+        for(int a=0;a<2;++a) {
+            REQUIRE(std::isfinite(r.kappa_E[a])); REQUIRE(r.kappa_E[a]>=0);
+            REQUIRE(std::isfinite(r.kappa_N[a])); REQUIRE(r.kappa_N[a]>=0);
+            REQUIRE(std::isfinite(r.emission[a])); REQUIRE(r.emission[a]>=0);
+        }
+    }
+    // the suppressed orientation's opacity is the annihilation rate on the partner's filled sea: it changes
+    // only through the partner's Fermi surface, smoothly, across the underflow
+    lte_rates a,b; REQUIRE(lte_pair_rates(k.g,cold.T,740,-740,eval,a)); REQUIRE(lte_pair_rates(k.g,cold.T,760,-760,eval,b));
+    REQUIRE_THAT(b.kappa_E[1],WithinRel(a.kappa_E[1],0.2)); REQUIRE_THAT(b.kappa_N[1],WithinRel(a.kappa_N[1],0.2));
+}
+
 // Hunter/Mac HOT-TOV core (T = 20 MeV, rho = 1.04e-3) from floor radiation: h*kappa_a = 720, the scaled
 // unknown reaches 1e4, so the residual floor is roundoff (~1e-9) and an absolute 2e-10 target can never be met.
 TEST_CASE("Evolved pairs converge from floor radiation in a stiff hot core", "[pairs][stiff]") {

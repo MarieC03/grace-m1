@@ -154,6 +154,40 @@ TEST_CASE("Equilibrium decay EAS uses j plus absorption and has the proper fixed
     }
 }
 
+// Cold dilute HOT-TOV surface cell: T = 0.114 MeV, mu_mu = 103.6 MeV, eta_numu = +782 -> the anti-nu_mu
+// orientation of the charge-1 decay channel underflows.
+TEST_CASE("Equilibrium decay rates stay finite when a partner occupation underflows", "[decay][lte]") {
+    grid g; g.init(16,35.2);
+    decay_kernel k; REQUIRE(k.init(g,0.1143,0.0304,103.6,24));
+    auto const direct=[&](int charge,double eta0,double eta1,decay_lte_rates& r) {
+        double f[2][max_order],n[2]={0,0},J[2]={0,0}; double const eta[2]={eta0,eta1};
+        for(int s=0;s<2;++s) for(int i=0;i<g.n;++i) {
+            f[s][i]=occupation(g.e[i]/k.T-eta[s]); n[s]+=g.w[i]*f[s][i]; J[s]+=g.w[i]*g.e[i]*f[s][i];
+        }
+        auto const ps=evaluate_decay(k,charge,f[0],f[1]);
+        for(int s=0;s<2;++s) { r.eta_E[s]=ps.emission[s]; r.eta_N[s]=ps.emission_n[s];
+                               r.kappa_E[s]=ps.loss[s]/J[s]; r.kappa_N[s]=ps.loss_n[s]/n[s]; }
+    };
+    decay_lte_rates r,d;
+    for(double eta: {600.,-600.}) {   // both forms valid
+        INFO("eta_numu = " << eta);
+        REQUIRE(equilibrium_decay_rates(k,0,eta,-50,r)); direct(0,eta,-50,d);
+        for(int s=0;s<2;++s) { REQUIRE_THAT(r.kappa_E[s],WithinRel(d.kappa_E[s],1e-10)); REQUIRE_THAT(r.kappa_N[s],WithinRel(d.kappa_N[s],1e-10)); }
+        REQUIRE(equilibrium_decay_rates(k,1,-eta,50,r)); direct(1,-eta,50,d);
+        for(int s=0;s<2;++s) { REQUIRE_THAT(r.kappa_E[s],WithinRel(d.kappa_E[s],1e-10)); REQUIRE_THAT(r.kappa_N[s],WithinRel(d.kappa_N[s],1e-10)); }
+    }
+    for(double eta: {782.,900.}) {    // the direct sums underflow
+        INFO("eta_numu = " << eta);
+        REQUIRE(equilibrium_decay_rates(k,0,eta,-50,r));
+        REQUIRE(equilibrium_decay_rates(k,1,-eta,50,r));
+        for(int s=0;s<2;++s) {
+            REQUIRE(std::isfinite(r.kappa_E[s])); REQUIRE(r.kappa_E[s]>=0);
+            REQUIRE(std::isfinite(r.kappa_N[s])); REQUIRE(r.kappa_N[s]>=0);
+            REQUIRE(std::isfinite(r.eta_E[s])); REQUIRE(r.eta_E[s]>=0);
+        }
+    }
+}
+
 TEST_CASE("Four-flavour source emits into vacuum with equal daughter counts", "[decay]") {
     kernel thermal; REQUIRE(thermal.init({20,30,6e37,0.8,0.2},{false,false,false},16,35));
     decay_kernel decay; REQUIRE(decay.init(thermal.g,20,30,90,24));

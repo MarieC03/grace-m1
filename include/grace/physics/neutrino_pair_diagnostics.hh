@@ -8,7 +8,7 @@ namespace grace::pairs {
 enum class failure_code {
     none, kernel_input, kernel_backend, kernel_element, decay_kernel,
     moment_input, reconstruction_jacobian, reconstruction_line_search,
-    reconstruction_iterations, implicit_solve, moment_grid_range
+    reconstruction_iterations, implicit_solve, moment_grid_range, lte_rates
 };
 
 // Optional diagnostics: no printing inside Newton or its rejected trial steps.
@@ -32,6 +32,7 @@ inline char const* failure_name(failure_code code) {
     case failure_code::reconstruction_line_search: return "reconstruction-line-search";
     case failure_code::reconstruction_iterations: return "reconstruction-iterations";
     case failure_code::implicit_solve: return "implicit-solve";
+    case failure_code::lte_rates: return "lte-rates-not-finite";
     }
     return "unknown";
 }
