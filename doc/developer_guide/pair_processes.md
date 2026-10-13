@@ -3,7 +3,7 @@
 ## Scope and status
 
 This implementation adds selectable `equilibrium` and `evolved` treatments;
-`legacy` remains the default. It treats **neutrino pairs**, not creation of
+`standard` (alias `legacy`) remains the default. It treats **neutrino pairs**, not creation of
 charged muons:
 
 * electron-positron annihilation, `e- + e+ <-> nu + antinu`;
@@ -36,7 +36,7 @@ Build with 3 or 5 neutrino species and initialize the repository's existing
 m1:
   eas:
     kind: neutrino_weakhub        # alternatively neutrino_analytic
-    pair_treatment: evolved      # legacy | equilibrium | evolved
+    pair_treatment: evolved      # standard | equilibrium | evolved
     pair_quadrature_order: 16     # 8..32; compare 16, 24, 32
     weakhub_pair_content: none    # ONLY after checking table provenance
     betaeq_policy: off
@@ -57,7 +57,7 @@ The new modes reject algebraic `betaeq_policy` replacements of the actual
 matter state. Ordinary temperature corrections remain confined to ordinary
 rates. Pair rates receive neither an extra temperature-square multiplier nor
 an optical-depth fugacity suppression. The historical muonic `eta=+/-5` clamp
-is retained in legacy mode only: using it in ordinary charged-current
+is retained in standard mode only: using it in ordinary charged-current
 Kirchhoff factors but not in the new pair calculation would introduce
 incompatible equilibrium targets. GRACE's existing EOS chemical-potential
 convention is retained:

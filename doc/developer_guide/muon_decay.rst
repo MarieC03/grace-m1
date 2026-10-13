@@ -96,9 +96,9 @@ heavy-flavour channels added explicitly by the pair framework.
 
 Required build: five neutrino species, ``GRACE_ENABLE_MUONS``, and the existing
 ``bns_nurates`` support used by the new pair framework. Other EAS providers,
-legacy pair treatment and beta-equilibrium remapping policies are rejected.
+standard pair treatment and beta-equilibrium remapping policies are rejected.
 ``muon_decay`` defaults to false; historical EOS suppression defaults to true.
-The default legacy/no-decay path retains its previous behaviour. Existing
+The default standard/no-decay path retains its previous behaviour. Existing
 ``evolved`` thermal-pair runs also receive the transport-opacity correction
 described below, even when muon decay is disabled.
 
@@ -389,7 +389,7 @@ The existing face correction becomes
 The same summed-opacity accessor serves the lagged local optical-depth
 estimate and the existing electron-flavour eikonal update. The latter keeps
 its pre-existing one-EAS-evaluation lag. Density-fit/spherical optical-depth
-prescriptions remain approximate. In equilibrium and legacy modes, the extra
+prescriptions remain approximate. In equilibrium and standard modes, the extra
 fields are zero because the corresponding damping is already in EAS.
 Ordinary collision reads NEVER use the transport-only additions.
 

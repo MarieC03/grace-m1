@@ -506,14 +506,14 @@ void set_m1_eas(
     case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
         neutrinos_eas_op<eos_t> op(state, aux) ;
-        if(pair_mode!=pair_treatment_t::legacy) op.pair_failures.allocate();
+        if(pair_mode!=pair_treatment_t::standard) op.pair_failures.allocate();
         auto const evaluate = KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
                 double xyz[3] ;
                 coords.get_physical_coordinates(i,j,k,q,xyz) ;
                 op(VEC(i,j,k),q,xyz) ;
             };
-        if(pair_mode!=pair_treatment_t::legacy) {
+        if(pair_mode!=pair_treatment_t::standard) {
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
                 {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
             parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);

@@ -215,7 +215,8 @@ inline tau_policy_kind_t get_tau_policy_kind()
              "local_kappa, eikonal") ;
 }
 
-enum class pair_treatment_t : int { legacy, equilibrium, evolved };
+// standard = the table/analytic grey rates GRACE always had; "legacy" is accepted as an alias.
+enum class pair_treatment_t : int { standard, equilibrium, evolved };
 
 inline bool get_muon_decay()
 {
@@ -232,13 +233,14 @@ inline int get_muon_decay_kernel_order()
 
 inline pair_treatment_t get_pair_treatment()
 {
-    auto const name=detail::get_eas_param_or("legacy", "pair_treatment");
+    auto name=detail::get_eas_param_or("standard", "pair_treatment");
+    if(name=="legacy") name="standard";
     bool const decay=get_muon_decay();
     if(decay) {
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
         ERROR("muon_decay requires five neutrino species and GRACE_ENABLE_MUONS");
 #endif
-        if(name=="legacy") ERROR("muon_decay requires pair_treatment: equilibrium or evolved");
+        if(name=="standard") ERROR("muon_decay requires pair_treatment: equilibrium or evolved");
         if(get_param<std::string>("eos","eos_type")!="leptonic")
             ERROR("muon_decay requires the leptonic EOS");
         if(get_param<bool>("eos","leptonic","dilute_muon_suppression")
@@ -249,9 +251,9 @@ inline pair_treatment_t get_pair_treatment()
             ERROR("Declare weakhub_muon_decay_content: none only after verifying table provenance");
         (void)get_muon_decay_kernel_order();
     }
-    if(name=="legacy") return pair_treatment_t::legacy;
+    if(name=="standard") return pair_treatment_t::standard;
     if(name!="equilibrium" && name!="evolved")
-        ERROR("m1.eas.pair_treatment must be legacy, equilibrium or evolved");
+        ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
 #if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
     ERROR("New pair treatments require 3/5 neutrino species and the pinned bns_nurates submodule");
 #endif

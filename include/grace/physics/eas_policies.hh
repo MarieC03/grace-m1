@@ -1006,7 +1006,7 @@ struct neutrinos_eas_op
         VEC(const int i, const int j, const int k), int64_t q) const {
         #if GRACE_M1_NU_SPECIES >= 3
         for(int a=PAIR_T_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
-        if(pair_treatment==pair_treatment_t::legacy) return;
+        if(pair_treatment==pair_treatment_t::standard) return;
         pairs::material const m{F.temp_mev,F.mu_e,F.nb,F.Xn,F.Xp};
         aux(VEC(i,j,k),PAIR_T_,q)=m.T;
         aux(VEC(i,j,k),PAIR_MUE_,q)=m.mu_e;
@@ -1181,7 +1181,7 @@ struct neutrinos_eas_op
         // and (for the two mu_delta) two subtractions, nothing else.
         //
         // Per-species equilibrium fugacity eta_nu = mu_nu / T. Historical
-        // suppression/clamping applies only to the legacy sectors; with
+        // suppression/clamping applies only to the standard rates; with
         // decay enabled all four lepton-carrying species use physical values.
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
@@ -1281,10 +1281,10 @@ struct neutrinos_eas_op
         auto const launch = [&](auto const& tau_policy) {
             F = make_fugacity_state(
                 eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy);
-            bool const legacy=pair_treatment==pair_treatment_t::legacy;
-            if(!legacy) {
+            bool const standard=pair_treatment==pair_treatment_t::standard;
+            if(!standard) {
                 // Both pair and charged-current fixed points must agree.
-                // Keep the historical +/-5 clamp only in legacy mode.
+                // Keep the historical +/-5 clamp only for the standard rates.
                 F.eta_nu[NUMU]=(F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
                 F.eta_nu[NUMUBAR]=-F.eta_nu[NUMU];
                 if(muon_decay) {
@@ -1293,8 +1293,8 @@ struct neutrinos_eas_op
                 }
             }
             return (use_weakhub && weakhub.valid)
-                ? compute_all_species_weakhub(weakhub, F, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay)
-                : compute_all_species(F, beta_decay, legacy && plasmon_decay, legacy && bremsstrahlung, legacy && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay);
+                ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay)
+                : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay);
         };
 
         auto const evaluate_rates = [&]() {

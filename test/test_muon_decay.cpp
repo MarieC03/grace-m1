@@ -322,7 +322,8 @@ TEST_CASE("Muon decay rejects incompatible setup", "[.][decay-invalid]") {
     auto& c=config_parser::get();
     char const* env=std::getenv("GRACE_DECAY_INVALID"); REQUIRE(env!=nullptr);
     std::string const mode=env;
-    if(mode=="legacy") c["m1"]["eas"]["pair_treatment"]="legacy";
+    if(mode=="standard") c["m1"]["eas"]["pair_treatment"]="standard";
+    else if(mode=="legacy") c["m1"]["eas"]["pair_treatment"]="legacy";   // accepted alias of standard
     else if(mode=="eos") c["eos"]["eos_type"]="ideal";
     else if(mode=="dilute") c["eos"]["leptonic"]["dilute_muon_suppression"]=true;
     else if(mode=="electrons") c["eos"]["leptonic"]["add_ele_contribution"]=false;

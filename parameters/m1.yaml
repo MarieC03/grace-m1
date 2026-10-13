@@ -193,13 +193,15 @@ m1:
 
     pair_treatment:
       type: keyword
-      allowed: ["legacy", "equilibrium", "evolved"]
-      default: "legacy"
+      allowed: ["standard", "legacy", "equilibrium", "evolved"]
+      default: "standard"
       description: >
-        Heavy-flavour thermal pairs. New modes use blocked isotropic spectral
-        kernels; equilibrium freezes the partner at matter LTE, evolved couples
-        the two M1 source updates. Require analytic/WeakHub EAS, 3/5 species,
-        bns_nurates and betaeq_policy=off. See developer_guide/pair_processes.md.
+        Heavy-flavour thermal pairs. standard = the table/analytic grey rates
+        ("legacy" is an accepted alias). The other modes use blocked isotropic
+        spectral kernels; equilibrium freezes the partner at matter LTE, evolved
+        couples the two M1 source updates. They require analytic/WeakHub EAS,
+        3/5 species, bns_nurates and betaeq_policy=off.
+        See developer_guide/pair_processes.md.
 
     pair_quadrature_order:
       type: int
@@ -226,7 +228,7 @@ m1:
       description: >
         Include mu- <-> e- + numu + anti-nue and the charge conjugate.
         Requires five species, leptonic EOS without dilute-muon suppression,
-        additive electron thermodynamics and non-legacy pair_treatment.
+        additive electron thermodynamics and pair_treatment equilibrium or evolved.
         Equilibrium partners are a non-stoichiometric comparison approximation
         away from LTE; evolved partners use a connected four-species solve.
 
