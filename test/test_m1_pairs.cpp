@@ -274,6 +274,38 @@ TEST_CASE("Blocked kernels obey detailed balance and kernel orientation", "[pair
     REQUIRE_THAT(absorption_kernel(matter,{true,false,false},27,12),WithinRel(ref.abs[id_anux]*1e-21,1e-12));
 }
 
+// Every element of a built kernel is the per-element reference bit for bit: the e+e- Fermi-Dirac
+// integrals are cached across the matrix and the bremsstrahlung factors hoisted, in the library's order.
+TEST_CASE("Kernel build equals the per-element reference bitwise", "[pairs][kernel]") {
+    unsigned long long s=0x9E3779B97F4A7C15ull;
+    auto const rnd=[&]{ s^=s<<13; s^=s>>7; s^=s<<17; return double(s>>11)/9007199254740992.0; };
+    auto const logu=[&](double lo,double hi){ return lo*std::pow(hi/lo,rnd()); };
+    long checked=0, built=0;
+    for(int trial=0;trial<40;++trial) {
+        material m{logu(0.1,50),logu(0.5,300),logu(1e27,3e38),0,0};
+        m.yn=0.1+0.8*rnd(); m.yp=(1-m.yn)*rnd();
+        int const order=8+8*(trial%4);
+        double const scale=m.T*logu(1,100);
+        for(int ch=1;ch<8;++ch) {
+            channels const c{bool(ch&1),bool(ch&2),bool(ch&4)};
+            kernel k,ks;
+            bool const ok=k.init(m,c,order,scale);
+            REQUIRE(ks.init(m,c,order,scale,true)==ok);
+            if(!ok) continue;
+            ++built;
+            for(int i=0;i<k.g.n;++i) for(int j=0;j<k.g.n;++j) {
+                double const r=absorption_kernel(m,c,k.g.e[i],k.g.e[j]);
+                REQUIRE(k.a[i][j]==r);
+                if(i<=j) REQUIRE(ks.a[i][j]==0.5*(r+absorption_kernel(m,c,k.g.e[j],k.g.e[i])));
+                else REQUIRE(ks.a[i][j]==ks.a[j][i]);
+                ++checked;
+            }
+        }
+    }
+    INFO("kernels built " << built << ", elements checked " << checked);
+    REQUIRE(built>200); REQUIRE(checked>100000);
+}
+
 TEST_CASE("Evolved pairs conserve number difference in an implicit M1 stage", "[pairs]") {
     kernel k; REQUIRE(k.init(matter,{true,true,false},16,10));
     metric_array_t metric({1,0,0,1,0,1},{0,0,0},1);

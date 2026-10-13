@@ -85,27 +85,130 @@ KOKKOS_INLINE_FUNCTION double plasmon_abs(material const& m, double e, double ep
     return joint/(phase*phase*e*e*ep*ep);
 }
 
+#ifdef GRACE_HAVE_BNS_NURATES
+// e+e- absorption kernel from the two Psi_0 orientations: algebraically PairKernels.abs[nux],
+// evaluated without exp(+s/T) times an underflowed production kernel.  The oriented Psi terms
+// must NOT be symmetrised for separately evolved nu and antinu.
+KOKKOS_INLINE_FUNCTION double ee_absorption(material const& m, double e, double ep, double const (&psi)[2]) {
+    double const a=kBS_Pair_Alpha1_1, b=kBS_Pair_Alpha2_1;
+    return -0.5*kBS_Pair_Phi*m.T*m.T*(a*a*psi[0]+b*b*psi[1])/(-Kokkos::expm1(-(e+ep)/m.T));
+}
+
+// PairPsi's 28 Fermi-Dirac integrals at eta +- y_i, eta and (eta +- y_i) +- y_j: the one-index ones are
+// shared by the whole matrix, so a build needs ~1700 FDI calls instead of 7168.  Same arguments and
+// polynomial in the library's floating-point order, so psi() is bitwise PairPsi(0,y_i,y_j,eta).
+struct ee_cache {
+    double eta, y[max_order], p3e, p4e;
+    double p1m[max_order], p1p[max_order], p2m[max_order], p2p[max_order], p3m[max_order],
+           p3p[max_order], p4m[max_order], p4p[max_order], p5m[max_order], p5p[max_order];
+    KOKKOS_INLINE_FUNCTION void init(material const& m, grid const& g) {
+        eta=m.mu_e/m.T;
+        for(int i=0;i<g.n;++i) {
+            y[i]=g.e[i]/m.T;
+            double const em=eta-y[i], ep=eta+y[i];
+            p1m[i]=FDI_p1(em); p1p[i]=FDI_p1(ep); p2m[i]=FDI_p2(em); p2p[i]=FDI_p2(ep);
+            p3m[i]=FDI_p3(em); p3p[i]=FDI_p3(ep); p4m[i]=FDI_p4(em); p4p[i]=FDI_p4(ep);
+            p5m[i]=FDI_p5(em); p5p[i]=FDI_p5(ep);
+        }
+        p3e=FDI_p3(eta); p4e=FDI_p4(eta);
+    }
+    KOKKOS_INLINE_FUNCTION void psi(int i, int j, double (&out)[2]) const {
+        double const yy=y[i], z=y[j];
+        if(eta-yy-z>200.0) { out[0]=out[1]=0; return; }   // full electron phase space (library guard)
+        double const emyz=eta-yy-z, epyz=eta+yy+z;
+        double const p3_emyz=FDI_p3(emyz), p3_epyz=FDI_p3(epyz), p4_emyz=FDI_p4(emyz),
+                     p4_epyz=FDI_p4(epyz), p5_emyz=FDI_p5(emyz), p5_epyz=FDI_p5(epyz);
+        double const x0=20.0*p4m[i], x1=20.0*p4p[j], x2=120.0*p2m[i]-120.0*p2p[j];
+        double const x3=-40.0*p3m[i]+40.0*p3p[j], x4=40.0*p3e, x5=40.0*p3_emyz-x4, x6=-20.0*p4e;
+        double const x7=20.0*p4_emyz+x6, x8=-40.0*p3_epyz+x4, x9=20.0*p4_epyz+x6;
+        double const x10=-4.0*p5m[i]+4.0*p5_emyz-4.0*p5m[j]+4.0*p5p[i]-4.0*p5_epyz+4.0*p5p[j];
+        double const x11=20.0*p4p[i], x12=20.0*p4m[j], x13=-40.0*p3m[j]+40.0*p3p[i];
+        double const x14=120.0*p2m[j]-120.0*p2p[i];
+        double const aux=15.0*((yy*z)*(yy*z));
+        out[0]=x10+yy*(-x0+x1+x7+yy*(x3+x5+z*(x2+z*(-120.0*p1m[i]+120.0*p1p[j])))
+                      +z*(80.0*p3m[i]-80.0*p3p[j]-x2*z))+z*(x0-x1+x9+z*(x3+x8));
+        out[1]=x10+yy*(-x11+x12+x9+yy*(x13+x8))
+              +z*(x11-x12+x7+yy*(80.0*p3m[j]-80.0*p3p[i]-x14*yy)
+                  +z*(x13+x5+yy*(x14+yy*(-120.0*p1m[j]+120.0*p1p[i]))));
+        out[0]/=aux; out[1]/=aux;
+    }
+};
+
+// Hannestad-Raffelt 1998 NN bremsstrahlung, all channels, cm^3/s (the library works in nm).
+KOKKOS_INLINE_FUNCTION double nn_absorption(material const& m, double e, double ep) {
+    MyEOSParams eos{};
+    eos.temp=m.T; eos.nb=m.nb*1e-21; eos.yn=m.yn; eos.yp=m.yp;
+    BremKernelParams p{e,ep,0,false};
+    return BremKernelsLegCoeff(&p,&eos).abs[id_nux]*1e-21;
+}
+
+// nn_absorption with everything that does not depend on the element hoisted: the y-only factors once
+// per build, the eta*-only ones once per channel (kernel_brem_HR98.hpp, l = 0, no medium correction).
+// Every remaining expression keeps the library's association order, so element() is bitwise the library.
+struct brem_cell {
+    struct channel { double n, eta, gamma, hgb2, pre_sd, f_u, one_eta2, sqrt_eta, eta_02, h; } ch[3];
+    double T, yc, exp_y12, y_den, p, mp, inv_p, one_y4, w_np;
+    KOKKOS_INLINE_FUNCTION void init(material const& m) {
+        T=m.T;
+        double const nb=m.nb*1e-21, xn=m.yn, xp=m.yp, x_mean=Kokkos::sqrt(xn*xp), T_10=T*0.1;
+        double const y=1.94/T_10;
+        yc=(y>kBS_Brem_Ymin)?y:kBS_Brem_Ymin;
+        exp_y12=SafeExp(-yc/12.0);
+        y_den=0.8+0.06*Kokkos::pow(yc,1.05);
+        p=0.67+0.18*Kokkos::pow(yc,0.4); mp=-p; inv_p=-1.0/p;
+        one_y4=1.0+POW4(yc);
+        double const n_nuc[3]={nb*xn,nb*xp,nb*x_mean}, mass[3]={kBS_MnGrams,kBS_MpGrams,kBS_MAvgGrams};
+        w_np=(28.0/3.0)*n_nuc[2];
+        for(int c=0;c<3;++c) {
+            channel& k=ch[c]; k.n=n_nuc[c];
+            double const eta_star=Kokkos::pow(3.0*kBS_PiSquared*n_nuc[c],2.0/3.0)*kBS_Brem_Aux1/(2.0*mass[c]*T);
+            k.gamma=1.63*Kokkos::pow(eta_star,1.5)*T_10;
+            k.hgb2=POW2(0.5*k.gamma*BremKernelG(y,eta_star));
+            k.eta=(eta_star>kBS_Brem_Etamin)?eta_star:kBS_Brem_Etamin;
+            double const u=Kokkos::sqrt(yc/(2.0*k.eta))+1e-10, u2=POW2(u), u_arg=u2/(2.0*Kokkos::sqrt(2.0*u2+4.0));
+            double const f_u=(1.0-5.0*u*Kokkos::atan(2.0/u)/6.0+u2/(3.0*(u2+4.0))+Kokkos::atan(1.0/u_arg)*u_arg/3.0);
+            k.f_u=(Kokkos::fabs(f_u)<1e-14)?1e-14:f_u;
+            k.pre_sd=3.0*kBS_PiHalfToFiveHalves*Kokkos::pow(k.eta,-2.5);
+            k.one_eta2=1.0+POW2(k.eta);
+            k.sqrt_eta=Kokkos::sqrt(k.eta); k.eta_02=k.eta+0.2;
+            k.h=0.1*k.eta/(2.39+0.1*Kokkos::pow(k.eta,1.1));
+        }
+    }
+    KOKKOS_INLINE_FUNCTION double element(double e, double ep) const {
+        double const x=(e+ep)/T, xc=(x>kBS_Brem_Xmin)?x:kBS_Brem_Xmin;
+        // BremKernelS: the x,y-only pieces, shared by the three channels
+        double const s_nd=2.0*kBS_SqrtPi*Kokkos::pow(xc+2.0-exp_y12,1.5)*(POW2(xc)+2.0*xc*yc+5.0*POW2(yc)/3.0+1.0)
+                          /(kBS_SqrtPi+POW4(kBS_Pi2OneEighth+xc+yc));
+        double const sd_x=POW2(xc)+kBS_FourPiSquared, sd_den=kBS_FourPiSquared*(1.0-SafeExp(-xc));
+        double const px11=Kokkos::pow(xc,1.1), px093=Kokkos::pow(xc,0.93), px12=Kokkos::pow(xc,1.2), px28=Kokkos::pow(xc,2.8);
+        double const f_x=3.0+POW2(xc-1.2)+Kokkos::pow(xc,-4.0), g_x=0.0044*px11*yc/y_den, pow_nd=Kokkos::pow(s_nd,mp);
+        double single[3];
+        for(int c=0;c<3;++c) {
+            channel const& k=ch[c];
+            double const s_d=k.pre_sd*sd_x*xc*k.f_u/sd_den;
+            double const f_brem=1.0+1.0/(f_x*k.one_eta2*one_y4);
+            double const g_brem=1.0-g_x*k.sqrt_eta/k.eta_02;
+            double const c_brem=1.1*px11*k.h/(2.3+k.h*px093+0.0001*px12)*30.0/(30.0+0.005*px28);
+            double const sb=Kokkos::pow(pow_nd+Kokkos::pow(s_d,mp),inv_p)*f_brem*(1.0+c_brem*g_brem);
+            single[c]=k.gamma/(POW2(x)+k.hgb2)*sb/T;
+        }
+        double const tot=kBS_Brem_Const*(ch[0].n*single[0]+ch[1].n*single[1]+w_np*single[2]);
+        return 3.0*tot*1e-21;
+    }
+};
+#endif
+
 KOKKOS_INLINE_FUNCTION double absorption_kernel(material const& m, channels c,
                                                  double e, double ep) {
     double result=0;
 #ifdef GRACE_HAVE_BNS_NURATES
     if (c.ee) {
-        // Algebraically PairKernels.abs[nux], evaluated without exp(+s/T)
-        // times an underflowed production kernel. The oriented Psi terms
-        // must NOT be symmetrised for separately evolved nu and antinu.
         double psi[2]; PairPsi(0,e/m.T,ep/m.T,m.mu_e/m.T,psi);
-        double const a=kBS_Pair_Alpha1_1, b=kBS_Pair_Alpha2_1;
-        double const r=-0.5*kBS_Pair_Phi*m.T*m.T*(a*a*psi[0]+b*b*psi[1])
-                      /(-Kokkos::expm1(-(e+ep)/m.T));
+        double const r=ee_absorption(m,e,ep,psi);
         if(!Kokkos::isfinite(r)) return r; // do not hide NaNs with fmax
         result += Kokkos::fmax(0.0,r)*1e-21; // nm^3/s -> cm^3/s
     }
-    if (c.nn && m.nb>0 && (m.yn>0 || m.yp>0)) {
-        MyEOSParams eos{};
-        eos.temp=m.T; eos.nb=m.nb*1e-21; eos.yn=m.yn; eos.yp=m.yp;
-        BremKernelParams p{e,ep,0,false};
-        result += BremKernelsLegCoeff(&p,&eos).abs[id_nux]*1e-21;
-    }
+    if (c.nn && m.nb>0 && (m.yn>0 || m.yp>0)) result += nn_absorption(m,e,ep);
 #endif
     if (c.plasmon) result += plasmon_abs(m,e,ep);
     return result;
@@ -131,10 +234,30 @@ struct kernel {
 #endif
         g.init(order,scale);
         for (int i=0; i<g.n; ++i) boltz[i]=Kokkos::exp(-g.e[i]/m.T);
+#ifdef GRACE_HAVE_BNS_NURATES
+        ee_cache ee; if(c.ee) ee.init(m,g);
+        bool const nn_active=c.nn && m.nb>0 && (m.yn>0 || m.yp>0);
+        brem_cell nn; if(nn_active) nn.init(m);
+#endif
+        // absorption_kernel(m,c,g.e[i],g.e[j]) term by term, from the per-build caches
+        auto const element=[&](int i, int j) {
+            double result=0;
+#ifdef GRACE_HAVE_BNS_NURATES
+            if (c.ee) {
+                double psi[2]; ee.psi(i,j,psi);
+                double const r=ee_absorption(m,g.e[i],g.e[j],psi);
+                if(!Kokkos::isfinite(r)) return r;
+                result += Kokkos::fmax(0.0,r)*1e-21;
+            }
+            if (nn_active) result += nn.element(g.e[i],g.e[j]);
+#endif
+            if (c.plasmon) result += plasmon_abs(m,g.e[i],g.e[j]);
+            return result;
+        };
         for (int i=0; i<g.n; ++i) for (int j=0; j<g.n; ++j) {
             if(symmetric && j<i) { a[i][j]=a[j][i]; continue; }
-            double r=absorption_kernel(m,c,g.e[i],g.e[j]);
-            if (symmetric) r=0.5*(r+absorption_kernel(m,c,g.e[j],g.e[i]));
+            double r=element(i,j);
+            if (symmetric) r=0.5*(r+element(j,i));
             if (!(r>=0) || !Kokkos::isfinite(r)) {
                 if(diag) {
                     diag->code = failure_code::kernel_element;
