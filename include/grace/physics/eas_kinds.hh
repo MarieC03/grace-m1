@@ -235,7 +235,19 @@ inline pair_treatment_t get_pair_treatment()
 {
     auto name=detail::get_eas_param_or("standard", "pair_treatment");
     if(name=="legacy") name="standard";
+    if(name!="standard" && name!="equilibrium" && name!="evolved")
+        ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
     bool const decay=get_muon_decay();
+#ifndef GRACE_M1_PAIR_KERNELS
+    // The spectral kernels are compiled out: this build has the standard grey rates only.
+    if(name!="standard")
+        ERROR("m1.eas.pair_treatment: " << name << " needs a build with -DGRACE_M1_PAIR_KERNELS=ON; "
+              "set pair_treatment: standard for this build");
+    if(decay)
+        ERROR("m1.eas.muon_decay: true needs a build with -DGRACE_M1_PAIR_KERNELS=ON; "
+              "set muon_decay: false for this build");
+    return pair_treatment_t::standard;
+#else
     if(decay) {
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
         ERROR("muon_decay requires five neutrino species and GRACE_ENABLE_MUONS");
@@ -252,8 +264,6 @@ inline pair_treatment_t get_pair_treatment()
         (void)get_muon_decay_kernel_order();
     }
     if(name=="standard") return pair_treatment_t::standard;
-    if(name!="equilibrium" && name!="evolved")
-        ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
 #if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
     ERROR("New pair treatments require 3/5 neutrino species and the pinned bns_nurates submodule");
 #endif
@@ -278,6 +288,7 @@ inline pair_treatment_t get_pair_treatment()
         }
     }
     return name=="equilibrium" ? pair_treatment_t::equilibrium : pair_treatment_t::evolved;
+#endif  // GRACE_M1_PAIR_KERNELS
 }
 
 inline int get_pair_quadrature_order()

@@ -140,7 +140,7 @@ KOKKOS_INLINE_FUNCTION double m1_transport_opacity(var_array_t const& aux,int64_
     VEC(int i,int j,int k)) {
     double kappa=aux(VEC(i,j,k),m1_kappaa_idx<ispec>(),q)
                 +aux(VEC(i,j,k),m1_kappas_idx<ispec>(),q);
-    #if GRACE_M1_NU_SPECIES >= 3
+    #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
     if constexpr(ispec<GRACE_M1_NU_SPECIES)
         kappa+=aux(VEC(i,j,k),PAIR_KAPPA1_+ispec,q);
     #endif

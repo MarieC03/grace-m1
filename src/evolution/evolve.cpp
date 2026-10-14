@@ -60,7 +60,9 @@
 #ifdef GRACE_ENABLE_M1
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
+#if defined(GRACE_M1_OPTICAL_DEPTH) || defined(GRACE_M1_PAIR_KERNELS)
 #include <grace/physics/eas_kinds.hh>
+#endif
 #ifdef GRACE_M1_OPTICAL_DEPTH
 #include <grace/physics/eas_optical_depth.hh>
 #endif
@@ -212,8 +214,10 @@ void evolve_impl() {
     // projections never leak into the stage derivatives), constraints, auxiliaries.
     int explicit_stage=0, implicit_stage=0;
     auto trace_stage = [&] (var_array_t st, char const* label, int stage, double factor) {
-        #ifdef GRACE_ENABLE_M1
+        #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_PAIR_KERNELS)
         trace_pair_moments(st,label,stage,factor);
+        #else
+        (void)st; (void)label; (void)stage; (void)factor;   // pair tracing compiled out
         #endif
     };
     auto imex_explicit = [&] ( double c
@@ -2040,6 +2044,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
         ) ;
 #endif
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
+    #ifdef GRACE_M1_PAIR_KERNELS
     bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
     bool const coupled_leptons=evolved_pairs && get_muon_decay();
     int const pair_order=get_pair_quadrature_order();
@@ -2076,6 +2081,10 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
         check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
         trace_pair_moments(new_state,"source-after-pairs",0,dtfact);
     }
+    #endif
+    #else
+    // No pair kernels: every species goes through the ordinary per-species solve.
+    constexpr bool evolved_pairs=false, coupled_leptons=false;
     #endif
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(

@@ -130,7 +130,7 @@ if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
     set_tests_properties(m1_transport_fixes_test PROPERTIES LABELS "fast;physics;m1"
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
-if(GRACE_HAVE_BNS_NURATES AND GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
+if(GRACE_M1_PAIR_KERNELS)   # implies >= 3 species and the bns_nurates submodule
     add_kokkos_test(muon_decay_test test_muon_decay.cpp)
     add_test(NAME muon_decay_test COMMAND mpirun -n 1 ./muon_decay_test)
     set_tests_properties(muon_decay_test PROPERTIES LABELS "physics;m1;decay"

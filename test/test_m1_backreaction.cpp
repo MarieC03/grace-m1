@@ -2011,7 +2011,7 @@ TEST_CASE("M1 implicit diagnostic: the record is per species and sticky over sta
 }
 #endif  // GRACE_M1_DIAGNOSTICS
 
-#if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_ENABLE_MUONS)
+#if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_ENABLE_MUONS) && defined(GRACE_M1_PAIR_KERNELS)
 TEST_CASE("Decay backreaction accepts connected daughter species with one factor",
           "[m1][backreaction][decay]")
 {

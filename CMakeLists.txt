@@ -73,7 +73,7 @@ message(STATUS "Z4c FD order              : ${GRACE_Z4C_DER_ORDER}")
 message(STATUS "Matter metric-deriv order : ${GRACE_MATTER_METRIC_DER_ORDER}")
 
 set(HEADER_DIR "${PROJECT_SOURCE_DIR}/include/")
-if(GRACE_HAVE_BNS_NURATES)
+if(GRACE_M1_PAIR_KERNELS)
     # The pair collision operator is consumed by EAS, evolution and tests.
     include_directories(SYSTEM "${PROJECT_SOURCE_DIR}/extern/bns_nurates/include")
 endif()
@@ -478,6 +478,7 @@ if(GRACE_ENABLE_M1)
     _grace_bool_label(GRACE_M1_PHOTONS _grace_m1_photons)
     _grace_bool_label(GRACE_M1_OPTICAL_DEPTH _grace_m1_optd)
     _grace_bool_label(GRACE_M1_DIAGNOSTICS _grace_m1_diag)
+    _grace_bool_label(GRACE_M1_PAIR_KERNELS _grace_m1_pairs)
     if(GRACE_HAVE_BNS_NURATES)
         set(_grace_m1_nurates "available")
     else()
@@ -488,6 +489,7 @@ if(GRACE_ENABLE_M1)
 "  M1 photon block     : ${_grace_m1_photons}\n"
 "  M1 optical depth    : ${_grace_m1_optd}\n"
 "  M1 diagnostics      : ${_grace_m1_diag}\n"
+"  M1 pair kernels     : ${_grace_m1_pairs}\n"
 "  M1 bns_nurates      : ${_grace_m1_nurates}\n")
 endif()
 

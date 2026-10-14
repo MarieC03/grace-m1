@@ -76,6 +76,7 @@
 
 namespace grace {
 
+#ifdef GRACE_M1_PAIR_KERNELS
 void trace_pair_moments(var_array_t state, char const* label, int stage, double factor) {
     int const steps=get_param<int>("m1","eas","pair_trace_iterations");
     if(steps==0 || get_iteration()-get_initial_iteration()>=static_cast<size_t>(steps)
@@ -188,6 +189,7 @@ void check_pair_failures(pairs::failure_buffer const& failures, var_array_t stat
     std::fflush(stderr);
     ERROR(message);
 }
+#endif  // GRACE_M1_PAIR_KERNELS
 //**************************************************************************************************
 /**
  * @brief Report how many cells failed the beta-equilibrium solve this step.
@@ -506,19 +508,26 @@ void set_m1_eas(
     case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
         neutrinos_eas_op<eos_t> op(state, aux) ;
-        if(pair_mode!=pair_treatment_t::standard) op.pair_failures.allocate();
         auto const evaluate = KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
                 double xyz[3] ;
                 coords.get_physical_coordinates(i,j,k,q,xyz) ;
                 op(VEC(i,j,k),q,xyz) ;
             };
+        #ifdef GRACE_M1_PAIR_KERNELS
         if(pair_mode!=pair_treatment_t::standard) {
+            // Small tiles: the spectral kernel scratch must not inherit the EAS launch bounds.
+            op.pair_failures.allocate();
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
                 {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
             parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);
-        } else parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"),policy,evaluate);
-        check_pair_failures(op.pair_failures,state,aux,"transport");
+            check_pair_failures(op.pair_failures,state,aux,"transport");
+            break ;
+        }
+        #else
+        (void)pair_mode ;   // validated above; only the standard rates exist here
+        #endif
+        parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_eas"),policy,evaluate);
         break ;
     }
 
@@ -783,6 +792,7 @@ void set_m1_initial_data() {
         // The evolved solver's ordinary EAS intentionally excludes pairs.
         // For LTE-blended initial data only, construct the equilibrium pair
         // coefficients; the final set_m1_eas below restores evolved-mode EAS.
+        #ifdef GRACE_M1_PAIR_KERNELS
         if(m1_is_active() && get_pair_treatment()==pair_treatment_t::evolved) {
             DECLARE_GRID_EXTENTS;
             auto state=variable_list::get().getstate();
@@ -800,6 +810,7 @@ void set_m1_initial_data() {
                 });
             check_pair_failures(op.pair_failures,state,aux,"initial-data");
         }
+        #endif
         coord_array_t<GRACE_NSPACEDIM> sph_pcoords ;
         grace::fill_physical_coordinates(sph_pcoords,grace::STAG_CENTER,/*spherical coords*/ true) ;
         equil_m1_id_t id(

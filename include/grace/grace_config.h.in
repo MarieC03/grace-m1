@@ -179,6 +179,11 @@ namespace grace {
 #error "GRACE_M1_NU_SPECIES=5 requires GRACE_ENABLE_MUONS; reconfigure with CMake (do not hand-edit this header)."
 #endif
 #cmakedefine GRACE_HAVE_BNS_NURATES
+// Spectral pair kernels + muon decay kernel (pair_treatment equilibrium/evolved).
+#cmakedefine GRACE_M1_PAIR_KERNELS
+#if defined(GRACE_M1_PAIR_KERNELS) && (GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES))
+#error "GRACE_M1_PAIR_KERNELS needs >= 3 neutrino species and the bns_nurates submodule; reconfigure with CMake."
+#endif
 #cmakedefine GRACE_ENABLE_PARTICLES
 
 #ifdef GRACE_ENABLE_M1

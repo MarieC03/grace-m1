@@ -132,7 +132,7 @@ TEST_CASE("eikonal tau is a fixed point: more sweeps do not inflate it", "[m1][o
     REQUIRE(blk.tau(4,4,4) == t10) ;
 }
 
-#if GRACE_M1_NU_SPECIES >= 3
+#if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
 TEST_CASE("eikonal opacity includes separately stored evolved pair damping", "[m1][optd][decay]") {
     block_t reference,split;
     reference.set_tau(SEED,SEED); split.set_tau(SEED,SEED);

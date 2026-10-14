@@ -7,6 +7,9 @@
 #define GRACE_NEUTRINO_PAIR_COLLISION_HH
 
 #include <grace_config.h>
+#ifndef GRACE_M1_PAIR_KERNELS
+#error "neutrino_pair_collision.hh needs a build with -DGRACE_M1_PAIR_KERNELS=ON"
+#endif
 #include <Kokkos_Core.hpp>
 #include <grace/physics/neutrino_pair_diagnostics.hh>
 #ifdef GRACE_HAVE_BNS_NURATES

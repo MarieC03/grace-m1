@@ -485,7 +485,7 @@ void register_variables() {
     register_aux_scalar(ETAN5_,"eta_n5") ;
     #endif
     register_aux_scalar(BETAEQ_ERR_,"betaeq_err") ;
-    #if GRACE_M1_NU_SPECIES >= 3
+    #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
     register_aux_scalar(PAIR_MUE_,"pair_mu_e") ;
     register_aux_scalar(PAIR_YN_,"pair_yn") ;
     register_aux_scalar(PAIR_YP_,"pair_yp") ;

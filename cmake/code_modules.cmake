@@ -85,6 +85,15 @@ if(GRACE_M1_DIAGNOSTICS)
     message(STATUS "M1 diagnostics enabled.")
 endif()
 
+# Spectral heavy-flavour pair kernels and the muon decay kernel (research modes
+# m1.eas.pair_treatment equilibrium/evolved).  Off by default: the standard grey
+# rates do not need them, and they add 12 aux slots per cell plus the pinned
+# bns_nurates submodule.  Checked against the species count below.
+option(GRACE_M1_PAIR_KERNELS "Spectral pair kernels and muon decay kernel (pair_treatment equilibrium/evolved)" OFF)
+if(GRACE_M1_PAIR_KERNELS)
+    message(STATUS "M1 spectral pair kernels enabled.")
+endif()
+
 # GRACE_ENABLE_M1 is fully DERIVED from the flags above -- any neutrino
 # species, the photon block, the optical-depth solver or the diagnostics all
 # require the shared M1 infrastructure.  Published as CACHE INTERNAL so it is
@@ -117,6 +126,18 @@ if(GRACE_ENABLE_M1)
         message(STATUS "bns_nurates submodule NOT found — building M1 without "
                        "the bns_nurates EAS provider.  To enable it: "
                        "git submodule update --init extern/bns_nurates")
+    endif()
+endif()
+if(GRACE_M1_PAIR_KERNELS)
+    if(GRACE_M1_NU_SPECIES LESS 3)
+        message(FATAL_ERROR
+            "GRACE_M1_PAIR_KERNELS=ON needs GRACE_M1_NU_SPECIES=3 or 5 "
+            "(got ${GRACE_M1_NU_SPECIES}): the pair kernels couple heavy-flavour species.")
+    endif()
+    if(NOT GRACE_HAVE_BNS_NURATES)
+        message(FATAL_ERROR
+            "GRACE_M1_PAIR_KERNELS=ON needs the bns_nurates submodule: "
+            "git submodule update --init extern/bns_nurates")
     endif()
 endif()
 option(GRACE_FREEZE_HYDRO "Freeze hydrodynamics evolution" OFF)

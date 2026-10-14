@@ -46,9 +46,11 @@
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1_number_flux.hh>
+#ifdef GRACE_M1_PAIR_KERNELS
 #include <grace/physics/neutrino_pair_update.hh>
 #include <grace/physics/neutrino_leptonic_update.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>   // rho/T conversions for pair_material
+#endif
 #include "fd_subexpressions.hh"
 #include <Kokkos_Core.hpp>
 
@@ -56,10 +58,12 @@
 
 namespace grace {
 
+#ifdef GRACE_M1_PAIR_KERNELS
 // Host-side fatal report, after the producing device launch has completed.
 void check_pair_failures(pairs::failure_buffer const& failures, var_array_t state,
                          var_array_t aux, char const* phase, double stage_h=0);
 void trace_pair_moments(var_array_t state, char const* label, int stage=0, double factor=0);
+#endif
 //**************************************************************************************************/
 //**************************************************************************************************
 /**
@@ -80,13 +84,17 @@ struct m1_equations_system_t
     #endif
     public:
 
+    #ifdef GRACE_M1_PAIR_KERNELS
     pairs::failure_buffer pair_failures;
+    #endif
 
     m1_equations_system_t(grace::var_array_t state_
                         , grace::staggered_variable_arrays_t stag_state_
                         , grace::var_array_t aux_ )
     : base_t(state_,stag_state_,aux_)
+    #ifdef GRACE_M1_PAIR_KERNELS
     , mass_scale(grace::get_param<double>("coordinate_system","mass_scale"))
+    #endif
     {} ;
 
     m1_equations_system_t(grace::var_array_t state_
@@ -99,10 +107,14 @@ struct m1_equations_system_t
     , atmo_params(_atmo_pars)
     , excision_params(_excision_pars)
     , backreaction_params(_backreaction_pars)
+    #ifdef GRACE_M1_PAIR_KERNELS
     , mass_scale(grace::get_param<double>("coordinate_system","mass_scale"))
+    #endif
     {} ;
 
+    #ifdef GRACE_M1_PAIR_KERNELS
     double mass_scale ;   // coordinate_system.mass_scale, for the rho -> n_b conversion
+    #endif
 
     // FOFC runs after compute_fluxes has restored the conserved state.
     template<int idir, int ispec>
@@ -653,7 +665,7 @@ struct m1_equations_system_t
 #endif
     }
 
-    #if GRACE_M1_NU_SPECIES >= 3
+    #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
     // Matter state for the pair kernels: T and n_b derived from TEMP_/RHO_ exactly as
     // make_fugacity_state does, the rest from the EAS pass's snapshot.
     KOKKOS_INLINE_FUNCTION pairs::material pair_material(int q,VEC(int i,int j,int k)) const {
@@ -772,7 +784,7 @@ struct m1_equations_system_t
     }
     #endif
 
-    #if GRACE_M1_NU_SPECIES >= 5
+    #if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_M1_PAIR_KERNELS)
     KOKKOS_INLINE_FUNCTION void compute_leptonic_implicit_update(
         int q,VEC(int i,int j,int k),scalar_array_t<GRACE_NSPACEDIM> const idx,
         var_array_t state_new,double dt,double dtfact,int order,int decay_order,
@@ -944,7 +956,7 @@ struct m1_equations_system_t
         if ( rho_min > 0.0 && this->_aux(VEC(i,j,k),RHO_,q) < rho_min ) return ;
         (void)muon_partial ; (void)electron_partial ;   // hard-stop branch only
 
-        #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 5
+        #if !defined(GRACE_FREEZE_HYDRO) && GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_M1_PAIR_KERNELS)
         if(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8) {   // muon decay ran in this cell
             add_leptonic_backreaction(q,VEC(i,j,k),state_new,eos);
             return;

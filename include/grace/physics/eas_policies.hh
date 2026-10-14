@@ -46,8 +46,10 @@
 
 #include <grace/config/config_parser.hh>
 #include <grace/physics/eas_kinds.hh>
+#ifdef GRACE_M1_PAIR_KERNELS
 #include <grace/physics/neutrino_pair_collision.hh>
 #include <grace/physics/neutrino_muon_decay.hh>
+#endif
 #include <grace/system/runtime_functions.hh>
 
 #include <string>
@@ -390,9 +392,11 @@ struct neutrinos_eas_op
         use_weakhub(grace::weakhub::weakhub_enabled_from_params()),
         betaeq_mode(get_betaeq_mode()),
         pair_treatment(get_pair_treatment()),
-        pair_order(get_pair_quadrature_order()),
         muon_decay(get_muon_decay()),
+        #ifdef GRACE_M1_PAIR_KERNELS
+        pair_order(get_pair_quadrature_order()),
         decay_order(get_muon_decay_kernel_order()),
+        #endif
         betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
         betaeq_ymu_floor(grace::get_param<bool>("m1", "eas", "betaeq_fallback_ymu_floor")),
         tau_kind(get_tau_policy_kind()),
@@ -920,6 +924,7 @@ struct neutrinos_eas_op
         return true;
     }
 
+    #ifdef GRACE_M1_PAIR_KERNELS
     // Read physical, individual-species moments for current-state transport
     // damping. This is separate from the ordinary-only collision coefficients.
     template<int sp>
@@ -1104,6 +1109,7 @@ struct neutrinos_eas_op
         #endif
         #endif
     }
+    #endif  // GRACE_M1_PAIR_KERNELS
 
     // Transparent low-density cell: floor every EAS rate output without touching
     // the EOS.  1e-60 not 0 so log-scale plots of kappa work; this path returns
@@ -1113,7 +1119,7 @@ struct neutrinos_eas_op
     // diagnostics from F, instead of the transparent-cell placeholders.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     void floor_rates(VEC(const int i, const int j, const int k), int64_t q) const {
-        #if GRACE_M1_NU_SPECIES >= 3
+        #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
         for(int a=PAIR_MUE_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
         #endif
         #if (GRACE_M1_NU_SPECIES >= 1)
@@ -1187,9 +1193,9 @@ struct neutrinos_eas_op
         // fugacity_state F that was already built above, so this costs stores
         // and (for the two mu_delta) two subtractions, nothing else.
         //
-        // Per-species equilibrium fugacity eta_nu = mu_nu / T. Historical
-        // suppression/clamping applies only to the standard rates; with
-        // decay enabled all four lepton-carrying species use physical values.
+        // Per-species equilibrium fugacity eta_nu = mu_nu / T, as the rates used it
+        // (tau-interpolated electron flavours, clamped muon flavours; the kernel
+        // modes of GRACE_M1_PAIR_KERNELS builds override both in launch()).
         #if (GRACE_M1_NU_SPECIES >= 1)
         aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
         #endif
@@ -1288,7 +1294,9 @@ struct neutrinos_eas_op
         auto const launch = [&](auto const& tau_policy) {
             F = make_fugacity_state(
                 eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy);
+            // standard is always true without the pair kernels: plain flags, gate on.
             bool const standard=pair_treatment==pair_treatment_t::standard;
+            #ifdef GRACE_M1_PAIR_KERNELS
             if(!standard) {
                 // Both pair and charged-current fixed points must agree.
                 // Keep the historical +/-5 clamp only for the standard rates.
@@ -1299,9 +1307,11 @@ struct neutrinos_eas_op
                     F.eta_nu[NUEBAR]=-F.eta_nu[NUE];
                 }
             }
+            #endif
+            bool const apply_muon_gate=standard || !muon_decay;
             return (use_weakhub && weakhub.valid)
-                ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay)
-                : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, !muon_decay);
+                ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate)
+                : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate);
         };
 
         auto const evaluate_rates = [&]() {
@@ -1359,7 +1369,9 @@ struct neutrinos_eas_op
         #endif
 
         nu_rates_all_out all = evaluate_rates();
+        #ifdef GRACE_M1_PAIR_KERNELS
         prepare_pairs(F,all,VEC(i,j,k),q);
+        #endif
 
         #ifdef GRACE_M1_DIAGNOSTICS
         // Carrier for the beta_eq_tscale diagnostic.  Large sentinel = "never
@@ -1608,10 +1620,12 @@ struct neutrinos_eas_op
   m1_atmo_params_t atmo;           // M1 floors, to recognise floor-reset cells in fluid_frame_eps_mev
   bool use_weakhub;
   betaeq_mode_t betaeq_mode;
-  pair_treatment_t pair_treatment;
-  int pair_order;
+  pair_treatment_t pair_treatment;   // standard in every build without GRACE_M1_PAIR_KERNELS
   bool muon_decay;
+  #ifdef GRACE_M1_PAIR_KERNELS
+  int pair_order;
   int decay_order;
+  #endif
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
   bool betaeq_ymu_floor;    // ... held at the table floor when the muon equilibrium is below it
   tau_policy_kind_t tau_kind;

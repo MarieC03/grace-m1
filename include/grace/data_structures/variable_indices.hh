@@ -383,7 +383,7 @@ enum aux_var_idx : int {
     // which is exactly where a silently non-converging solver must not hide.
     // Bit indices are build-dependent -- decode against the enum ordinal.
     BETAEQ_ERR_,
-    #if GRACE_M1_NU_SPECIES >= 3
+    #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
     // Pair material snapshot (physical units, no optical-depth fugacity factors); T and n_b come
     // from TEMP_/RHO_.  PAIR_ACTIVE_: thermal channels 1 e+e-, 2 NN brems, 4 plasmon; 8 = muon
     // decay runs in this cell.  Keep PAIR_MUE_ first and PAIR_RES_ last (zeroing loops).
@@ -465,7 +465,7 @@ enum aux_var_idx : int {
     //   dYmu the collision proposed, before the hard stop / partial acceptance.
     M1_MUON_SOURCE_RAW_,
     #endif
-    M1_BR_REJECT_, // additionally 32: connected decay-network limiting (muon_decay)
+    M1_BR_REJECT_, // additionally 32: connected decay-network limiting (GRACE_M1_PAIR_KERNELS builds)
     //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)
     //   and the largest estimated relative error |dU|/E of the accepted state.
     M1_IMPLICIT_ERR_,
