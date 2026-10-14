@@ -833,13 +833,14 @@ void flag_fofc_cells(
         /************************************************************************************/
 
         /************************************************************************************/
-        #ifdef GRACE_ENABLE_M1
+        #if defined(GRACE_ENABLE_M1) && GRACE_M1_NU_SPECIES >= 1
         // Radiation positivity (M1-aware FOFC): per species, predict the
         // tentative cell-centre E,N after the full flux divergence (same dt and
         // divF as add_fluxes_and_source_terms) and tag the 6 touching faces with
         // a per-species bit when either would fall below the densitized floor.
         // bit 0 = hydro (set above); bit (s+1) = M1 species s.  No edge tags --
-        // M1 has no constrained transport.
+        // M1 has no constrained transport.  Neutrino species only (photon-only builds
+        // have no ERAD1_).
         {
             // Match compute_auxiliaries' reset thresholds exactly: it fires at
             // (1+atmo_tol)*floor, so tagging at the bare floor leaves a blind

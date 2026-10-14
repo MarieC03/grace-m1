@@ -405,12 +405,14 @@ void reset_m1_radiation_to_floor() {
         FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k)) ;
         double const E = metric.sqrtg() * atmo.E_floor(rtp[0]) ;
         double const N = metric.sqrtg() * atmo.N_floor(rtp[0]) ;
+        #if GRACE_M1_NU_SPECIES >= 1   // photon-only builds have no ERAD1_
         for ( int s = 0 ; s < GRACE_M1_NU_SPECIES ; ++s ) {
             int const o = s*GRACE_N_M1_VARS ;
             state(VEC(i,j,k),ERAD1_+o,q)  = E ;   state(VEC(i,j,k),NRAD1_+o,q)  = N ;
             state(VEC(i,j,k),FRADX1_+o,q) = 0.0 ; state(VEC(i,j,k),FRADY1_+o,q) = 0.0 ;
             state(VEC(i,j,k),FRADZ1_+o,q) = 0.0 ;
         }
+        #endif
         #ifdef GRACE_M1_PHOTONS
         state(VEC(i,j,k),ERADPH_,q)  = E ;   state(VEC(i,j,k),NRADPH_,q)  = N ;
         state(VEC(i,j,k),FRADXPH_,q) = 0.0 ; state(VEC(i,j,k),FRADYPH_,q) = 0.0 ;
