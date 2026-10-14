@@ -468,6 +468,55 @@ TEST_CASE("Kernel-integrated thermal emissivities against GRACE's analytic fits"
     REQUIRE(fill_time>1e12);
 }
 
+// Her e+e- kernel integrated to grey production rates (unblocked, f_nu = 0) at the states listed in the file
+// named by GRACE_PAIR_STATES ("T eta_e" per line), with the heavy-flavour couplings the kernel uses and, for
+// the electron flavour, Pons' alpha_0 couplings on the same Psi functions.  For the comparison with Harry's
+// spectral Weakhub pair table (harry_pp_grid.py on iota).  Without the file the test does nothing.
+TEST_CASE("Kernel pair production at listed states for the spectral-table comparison", "[pairs][harry]") {
+    char const* path=std::getenv("GRACE_PAIR_STATES");
+    if(!path) { SUCCEED("GRACE_PAIR_STATES not set"); return; }
+    std::ifstream in(path); REQUIRE(in.good());
+    std::printf("# T eta_e | heavy R Q | electron R Q   (per helicity species; R cm^-3 s^-1, Q MeV cm^-3 s^-1)\n");
+    double T,eta; double zero[max_order]={};
+    while(in>>T>>eta) {
+        material const m{T,eta*T,1e30,0.5,0.5};
+        kernel k; REQUIRE(k.init(m,{true,false,false},32,T));
+        auto const sh=evaluate(k,zero,zero);
+        kernel ke=k;   // electron-flavour couplings on the same grid
+        for(int i=0;i<k.g.n;++i) for(int j=0;j<k.g.n;++j) {
+            double psi[2]; PairPsi(0,k.g.e[i]/T,k.g.e[j]/T,eta,psi);
+            double const a=kBS_Pair_Alpha1_0, b=kBS_Pair_Alpha2_0;
+            double const r=-0.5*kBS_Pair_Phi*T*T*(a*a*psi[0]+b*b*psi[1])/(-std::expm1(-(k.g.e[i]+k.g.e[j])/T));
+            ke.a[i][j]=std::max(0.0,r)*1e-21;
+        }
+        auto const se=evaluate(ke,zero,zero);
+        kernel kp; REQUIRE(kp.init(m,{false,false,true},32,T));   // her transverse plasmon model, heavy coupling
+        auto const sp=evaluate(kp,zero,zero);
+        std::printf("%.6f %.6f %.6e %.6e %.6e %.6e %.6e %.6e\n",T,eta,sh.emission_n[0],sh.emission[0],
+                    se.emission_n[0],se.emission[0],sp.emission_n[0],sp.emission[0]);
+    }
+}
+
+// Her muon-decay kernel integrated to unblocked grey production rates at the states listed in the file named
+// by GRACE_DECAY_STATES ("T eta_e eta_mu" per line; chemical potentials with rest masses): mu- decay
+// (charge 0: nu_mu, anu_e) and mu+ decay (charge 1: anu_mu, nu_e).  For the comparison with Harry's ILD
+// kernels (harry_ild_grid.py on iota).  Without the file the test does nothing.
+TEST_CASE("Kernel muon-decay production at listed states for the spectral-table comparison", "[pairs][harry_ild]") {
+    char const* path=std::getenv("GRACE_DECAY_STATES");
+    if(!path) { SUCCEED("GRACE_DECAY_STATES not set"); return; }
+    std::ifstream in(path); REQUIRE(in.good());
+    std::printf("# T eta_e eta_mu | mu- decay: R_numu Q_numu R_anue Q_anue | mu+ decay: R_anumu Q_anumu R_nue Q_nue\n");
+    double T,eta_e,eta_mu; double zero[max_order]={};
+    while(in>>T>>eta_e>>eta_mu) {
+        grid g; g.init(32,T);
+        decay_kernel k; REQUIRE(k.init(g,T,eta_e*T,eta_mu*T,24));
+        auto const s0=evaluate_decay(k,0,zero,zero), s1=evaluate_decay(k,1,zero,zero);
+        std::printf("%.6f %.6f %.6f %.6e %.6e %.6e %.6e %.6e %.6e %.6e %.6e\n",T,eta_e,eta_mu,
+                    s0.emission_n[0],s0.emission[0],s0.emission_n[1],s0.emission[1],
+                    s1.emission_n[0],s1.emission[0],s1.emission_n[1],s1.emission[1]);
+    }
+}
+
 // PHYSICS CHECK 2: the two-moment (max-entropy FD) closure against a spectral reference built from the SAME
 // kernel: df_i/dt = sum_j w_j [R_p (1-f_i)(1-fb_j) - R_a f_i fb_j] on the 32-node grid, integrated explicitly
 // with small steps.  Pair-only relaxation of a hot box from vacuum to LTE, and from a hot non-thermal spectrum.
