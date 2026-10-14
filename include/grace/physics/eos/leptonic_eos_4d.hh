@@ -850,6 +850,8 @@ class leptonic_eos_4d_t
     // DD2, etc.).  Mirrors Margherita's add_ele_contribution flag.
     bool add_ele_contribution = false ;
     bool dilute_muon_suppression = true ;
+    // The dilute-Ymu band (see dilute_ymu0_): muon-free for the EOS, kept by the vacuum decay sink.
+    static constexpr double dilute_ymu0() { return dilute_ymu0_ ; }
     // Baryon pressure storage.  false (linear_pressure=true): TABPRESS is the
     // signed P_b.  true: TABPRESS = ln(P_b + P_e(Y_e=Y_q)), see total_press.
     bool log_baryon_press = false ;

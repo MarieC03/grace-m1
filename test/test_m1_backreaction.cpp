@@ -32,6 +32,7 @@
 #include <grace_config.h>
 #include <grace/data_structures/grace_data_structures.hh>
 #include <grace/physics/m1.hh>
+#include <grace/physics/eas_neutrino_rates_analytic.hh>   // vacuum decay sink, unit conversions
 
 #include <array>
 #include <cmath>
@@ -162,6 +163,23 @@ struct cell_t {
         });
         Kokkos::fence();
     }
+
+    /// Two species in one implicit stage (old -> new copied once), for cross-flavour sources.
+    template <int sa, int sb>
+    void run_implicit_two(double dt, double dtfact)
+    {
+        Kokkos::deep_copy(new_state, old_state);
+        m1_equations_system_t sys(old_state, staggered_variable_arrays_t{}, aux);
+        auto ns = new_state;
+        scalar_array_t<GRACE_NSPACEDIM> idx;
+        Kokkos::parallel_for("m1_implicit_two", 1, KOKKOS_LAMBDA(int) {
+            sys.template compute_implicit_update<sa>(0, VEC(0, 0, 0), idx, ns, dt, dtfact);
+            sys.template compute_implicit_update<sb>(0, VEC(0, 0, 0), idx, ns, dt, dtfact);
+        });
+        Kokkos::fence();
+    }
+    /// The next stage starts from this one's result.
+    void advance() { Kokkos::deep_copy(old_state, new_state); }
 
     #ifdef GRACE_M1_PHOTONS
     void run_photons()
@@ -2102,4 +2120,57 @@ TEST_CASE("M1 implicit: floor-scale E at floor opacity is exact for any metric "
     REQUIRE_THAT(c.get_new(FRADX1_), WithinRel(ff * E0, 1e-10));
     REQUIRE_THAT(c.get_new(NRAD1_),  WithinRel(3.0 * E0, 1e-10));
 }
+
+#if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_ENABLE_MUONS)
+// The vacuum muon decay sink through the ordinary per-species solve and the hard stop: Ymu
+// relaxes onto the EOS's dilute band with the free lifetime, Ye + Ymu and tau + E_rad are
+// conserved, and a stage much longer than the lifetime lands on the band without a revert.
+TEST_CASE("Vacuum muon decay: Ymu -> dilute band through the solve and the hard stop",
+          "[m1][backreaction][decay]")
+{
+    using namespace nu_constants;
+    double const D = 1.0e-10, T = 0.5, ymu0 = 0.05, ye0 = 0.30, ymu_dilute = 6.0e-4, tau0 = 1.0e-12;
+    double const rho_cgs = D / RHOGF;
+    auto rates_at = [&](double ymu, double dt_code) {
+        fugacity_state F;
+        F.rho_cgs = rho_cgs; F.temp_mev = T; F.nb = rho_cgs * avogadro;
+        F.ymu = ymu; F.ymu_dilute = ymu_dilute; F.mu_mu = 100.0;
+        F.eta_e = -60.0; F.eta_nu = {{-50.0, -50.0, -50.0, -50.0, 0.0}};
+        rates_accum r{}; add_muon_decay_emission(F, r, dt_code);
+        return r;
+    };
+    cell_t c; mock_bounds_eos_t eos;   // ymumin 5e-4 < the dilute band
+    c.set_both(DENS_, D); c.set_both(YESTAR_, D * ye0); c.set_both(YMUSTAR_, D * ymu0);
+    c.set_both(TAU_, tau0);
+    auto e_rad = [&]() { return c.get_new(ERAD2_) + c.get_new(ERAD3_); };
+    auto stage = [&](double dt_s) {
+        double const dt_code = dt_s * TIMEGF;
+        auto const r = rates_at(c.get_old(YMUSTAR_) / c.get_old(DENS_), dt_code);
+        c.set_aux(ETA3_, Q_mev_to_code(r.Q[NUMU], 1));   c.set_aux(ETAN3_, R_to_code(r.R[NUMU], 1));
+        c.set_aux(ETA2_, Q_mev_to_code(r.Q[NUEBAR], 1)); c.set_aux(ETAN2_, R_to_code(r.R[NUEBAR], 1));
+        c.run_implicit_two<1, 2>(dt_code, 1.0);
+        c.run(eos);
+        c.advance();
+    };
+    double const dt_s = 0.2 * tau_mu_s;
+    for (int n = 1; n <= 20; ++n) {
+        stage(dt_s);
+        double const ymu = c.get_new(YMUSTAR_) / D;
+        REQUIRE_THAT(ymu - ymu_dilute, WithinRel((ymu0 - ymu_dilute) * std::exp(-n * dt_s / tau_mu_s), 1e-9));
+        REQUIRE_THAT(c.get_new(YESTAR_) / D, WithinRel(ye0 + ymu0 - ymu, 1e-9));
+        REQUIRE_THAT(c.get_new(TAU_) + e_rad(), WithinRel(tau0, 1e-12));
+        REQUIRE(c.get_new(NRAD2_) == c.get_new(NRAD3_));
+        #ifdef GRACE_M1_DIAGNOSTICS
+        REQUIRE(c.get_aux(M1_BR_REJECT_) == 0.0);
+        #endif
+    }
+    // A stage of 50 lifetimes: the remaining excess decays, the band is not crossed.
+    stage(50.0 * tau_mu_s);
+    REQUIRE_THAT(c.get_new(YMUSTAR_) / D, WithinRel(ymu_dilute, 1e-9));
+    REQUIRE(c.get_new(YMUSTAR_) / D >= eos.ymumin);
+    REQUIRE_THAT(c.get_new(YESTAR_) / D, WithinRel(ye0 + ymu0 - ymu_dilute, 1e-9));
+    REQUIRE_THAT(c.get_new(TAU_) + e_rad(), WithinRel(tau0, 1e-12));
+    REQUIRE(c.get_new(TAU_) > 0.0);
+}
+#endif
 #endif

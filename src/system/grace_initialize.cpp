@@ -57,6 +57,9 @@
 #endif
 #include <grace/IO/diagnostics/co_tracker.hh>
 #include <grace/physics/m1_trigger.hh>
+#ifdef GRACE_ENABLE_M1
+#include <grace/physics/eas_kinds.hh>   // check_m1_setup()
+#endif
 #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_Z4
 #endif
 
@@ -262,6 +265,10 @@ void initialize(int& argc, char* argv[])
     // with the trigger disabled would inherit an idle M1 from a checkpoint
     // written by a triggered run.
     grace::m1_trigger_startup_check() ;
+    #ifdef GRACE_ENABLE_M1
+    // Parfile vs build/EOS consistency of the M1 rates (both start paths, like the trigger).
+    grace::check_m1_setup() ;
+    #endif
 
     GRACE_INFO("Filling coordinate arrays...") ;
     grace::fill_cell_spacings(

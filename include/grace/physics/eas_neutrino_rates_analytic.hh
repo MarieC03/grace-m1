@@ -42,6 +42,7 @@
 #include <grace/physics/grace_weakhub_table.hh>
 
 #include <array>
+#include <type_traits>
 #include <cmath>
 #include <cstdint>
 
@@ -118,6 +119,10 @@ constexpr double EPSGF    = 1.11265005605362e-21;  // erg/g to CU
 
 // Neutron-proton mass difference (MeV)
 constexpr double Qnp = 1.29333236;
+
+// Muon mass (MeV) and free lifetime (s), PDG; vacuum decay sink.
+constexpr double mmu_mev  = 105.6583755;
+constexpr double tau_mu_s = 2.1969811e-6;
 
 // Weak couplings in Ruffert+
 // Cv = 1/2 + 2 sin^2(theta_W) ~ 0.96 ; Ca = 1/2.
@@ -391,6 +396,7 @@ struct fugacity_state {
     double temp_code{0.0};
     double ye{0.0};
     double ymu{0.0};
+    double ymu_dilute{0.0};   // the leptonic EOS's muon-free band (0 for other EOS): vacuum decay floor
     double mass_scale{1.0};
 
     double rho_cgs{0.0};
@@ -477,6 +483,10 @@ fugacity_state make_fugacity_state(
     F.temp_code = temp_code;
     F.ye = ye;
     F.ymu = ymu;
+    // Below the leptonic EOS's dilute band the muons are treated as absent (mu_mu ramped to 0,
+    // muon P/eps/s zeroed), so the vacuum decay sink keeps that residual.
+    if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) F.ymu_dilute = leptonic_eos_4d_t::dilute_ymu0();
+    else F.ymu_dilute = 0.0;
     F.mass_scale = mass_scale;
 
     F.rho_cgs  = rho_code_to_cgs(rho_code, mass_scale);
@@ -790,9 +800,8 @@ void add_pair_process_emission(const fugacity_state& F, rates_accum& out) {
 //     pair additions overproduce nue/nuebar even with blocking factors;
 //     electron-flavour emission comes solely from Kirchhoff inversion of
 //     the beta absorption opacity, see compute_all_species Step 4).
-//   - the WEAKHUB pipeline passes true, preserving GRACE's long-standing
-//     weakhub behaviour where the analytic thermal extras layered on the
-//     table include the electron-flavour plasmon channel.
+//   - the WEAKHUB pipeline passes false as well: the electron flavours come
+//     from the table's charged-current opacities alone (compute_all_species_weakhub).
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void add_plasmon_decay_emission(const fugacity_state& F, rates_accum& out,
                                 bool include_electron_flavour) {
@@ -876,6 +885,72 @@ void add_brems_emission(const fugacity_state& F, rates_accum& out) {
         #endif
   }
 }
+
+#if GRACE_M1_NU_SPECIES >= 5
+// Michel-spectrum average of the charged-lepton unblocking 1 - f(E) for a muon decaying at
+// rest: E = x m_mu/2, p(x) = 2x^2(3-2x) on [0,1], f the FD occupation at degeneracy eta
+// (eta_e for mu-, -eta_e for mu+).  16-point Gauss-Legendre: exact to 1e-6 for T >= 10 MeV,
+// ~1e-3 at a few MeV with partial blocking; exponentially small once the Fermi sea covers the
+// 52.8 MeV endpoint (cold dense matter), 1 in dilute matter.
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+double muon_decay_lepton_unblocking(double eta, double T) {
+    using namespace nu_constants;
+    constexpr double t[8] = {0.0950125098376374, 0.2816035507792589, 0.4580167776572274, 0.6178762444026438,
+                             0.7554044083550030, 0.8656312023878318, 0.9445750230732326, 0.9894009349916499};
+    constexpr double w[8] = {0.1894506104550685, 0.1826034150449236, 0.1691565193950025, 0.1495959888165767,
+                             0.1246289712555339, 0.0951585116824928, 0.0622535239386479, 0.0271524594117541};
+    double sum = 0.0;
+    for (int i = 0; i < 8; ++i) for (int sgn = -1; sgn <= 1; sgn += 2) {
+        double const x = 0.5 * (1.0 + sgn * t[i]);
+        double const z = eta - 0.5 * mmu_mev * x / T;   // 1 - f = 1/(1 + e^z), overflow-safe
+        double const unblocked = z > 0.0 ? Kokkos::exp(-z) / (1.0 + Kokkos::exp(-z)) : 1.0 / (1.0 + Kokkos::exp(z));
+        sum += 0.5 * w[i] * 2.0 * x * x * (3.0 - 2.0 * x) * unblocked;
+    }
+    return sum;
+}
+
+// Vacuum muon decay mu- -> e- + anue + numu and mu+ -> e+ + nue + anumu as grey EMISSION only:
+// no inverse opacity (3-body, negligible where the decay is open) and no Kirchhoff inversion
+// (it would invent absorption on the fictitious eta sea of a cold floor cell).  Muons at rest,
+// Michel means 7/20 m_mu (the neutrino with the electron's spectrum) and 3/10 m_mu; the
+// electron's 7/20 m_mu stays in the fluid through the composition change.  The mu- population
+// is the excess over the EOS's dilute band, so the backreaction never meets the table floor;
+// the mu+ density is the Boltzmann estimate (hot matter only).  The baryon number is rho/m_p,
+// the normalisation of the evolved N that the backreaction converts to dYe/dYmu, so one emitted
+// pair is exactly one decayed muon.  Gamma_eff = (1-exp(-Gamma dt))/dt on the FULL step: with
+// ARS(2,3,2) the first implicit increment enters the final state with weight (1-g)/g ~ 2.4,
+// and a stage-length rate would overshoot the excess for Gamma dt >> 1.
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+void add_muon_decay_emission(const fugacity_state& F, rates_accum& out, double dt_code) {
+    using namespace nu_constants;
+    constexpr double e_same  = 0.35 * mmu_mev;   // numu of mu- / anumu of mu+
+    constexpr double e_other = 0.30 * mmu_mev;   // anue of mu- / nue of mu+
+    double const T = safe_pos(F.temp_mev);
+    double const dt_s = dt_code / TIMEGF;        // 0 in the initial-data / diagnostics pass
+    double const n_b = F.rho_cgs / mnuc_cgs;
+    double const hbarc = hc_mevcm / (2.0 * pi);
+    double const n_q = 2.0 * Kokkos::pow(mmu_mev * T / (2.0 * pi), 1.5) / (hbarc * hbarc * hbarc);
+    double const n_minus = Kokkos::fmax(0.0, F.ymu - F.ymu_dilute) * n_b;
+    double const n_plus  = n_q * Kokkos::exp(-(mmu_mev + F.mu_mu) / T);
+    auto const emit = [&](double n_mu, double eta_lepton, int s_same, int s_other) {
+        if (!(n_mu > 0.0)) return;
+        // Final-state blocking: the charged lepton (Michel average) and both neutrinos jointly --
+        // one event makes one of each -- in the Ruffert form with F's eta (tau-interpolated
+        // electron flavours, clamped muon flavours).
+        double const gamma = muon_decay_lepton_unblocking(eta_lepton, T) / tau_mu_s;
+        double block = (1.0 + Kokkos::exp(F.eta_nu[s_same] - e_same / T))
+                     * (1.0 + Kokkos::exp(F.eta_nu[s_other] - e_other / T));
+        if (!(block > 0.0) || !Kokkos::isfinite(block)) block = 1.0;
+        double const gamma_eff = dt_s > 0.0 ? -Kokkos::expm1(-gamma * dt_s) / dt_s : gamma;
+        double const R = n_mu * gamma_eff / block;
+        if (!(Kokkos::isfinite(R) && R > 0.0)) return;
+        out.R[s_same]  += R; out.Q[s_same]  += e_same * R;
+        out.R[s_other] += R; out.Q[s_other] += e_other * R;
+    };
+    emit(n_minus,  F.eta_e, NUMU,    NUEBAR);
+    emit(n_plus,  -F.eta_e, NUMUBAR, NUE);
+}
+#endif
 
 GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
 void apply_kirchhoff(const fugacity_state& F,
@@ -964,7 +1039,9 @@ nu_rates_all_out compute_all_species_weakhub(
     bool apply_temp_correction,
     const double* eps_rad,
     bool temp_correction_emission = false,
-    bool apply_muon_gate = true)
+    bool apply_muon_gate = true,
+    bool muon_decay_sink = false,
+    double dt = 0.0)
 {
     //const auto tbl = weakhub.lookup(F.rho_cgs, F.temp_mev, F.ye, F.ymu);
     const auto tbl = weakhub.lookup(F.rho_code, F.temp_mev, F.ye, F.ymu);
@@ -1069,6 +1146,13 @@ nu_rates_all_out compute_all_species_weakhub(
         }
     }
 
+    #if GRACE_M1_NU_SPECIES >= 5
+    // Vacuum muon decay: emission only, after the gate and the spectral correction (neither applies).
+    if (muon_decay_sink) add_muon_decay_emission(F, rates, dt);
+    #else
+    (void)muon_decay_sink; (void)dt;
+    #endif
+
     // Positivity + NaN clamp on the finished rates, as in FIL's calc_eas tail
     // (std::max(., 1e-60) on kappa_a/n/s and Q/R, plus x != x NaN catches).
     // All five share kappa_floor_code: eta and kappa must be floored with the
@@ -1112,7 +1196,9 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
     bool apply_temp_correction,
     const double* eps_rad = nullptr,
     bool temp_correction_emission = false,
-    bool apply_muon_gate = true)
+    bool apply_muon_gate = true,
+    bool muon_decay_sink = false,
+    double dt = 0.0)
 {
     std::array<double, NUMSPECIES> g_nu{{1,1,0,0,4}};
 #if GRACE_M1_NU_SPECIES >= 5
@@ -1240,6 +1326,13 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE nu_rates_all_out compute_all_species(
             }
         }
     }
+
+    #if GRACE_M1_NU_SPECIES >= 5
+    // Vacuum muon decay: emission only, after the gate and the spectral correction (neither applies).
+    if (muon_decay_sink) add_muon_decay_emission(F, rates, dt);
+    #else
+    (void)muon_decay_sink; (void)dt;
+    #endif
 
     // -------------------------------------------------------------------------
     // Step 9: Tau post-estimate (side-effect only, result discarded for now).

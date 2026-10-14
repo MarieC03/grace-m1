@@ -1309,9 +1309,11 @@ struct neutrinos_eas_op
             }
             #endif
             bool const apply_muon_gate=standard || !muon_decay;
+            // muon_decay in the standard rates = the vacuum sink; the kernel modes carry their own decay.
+            bool const muon_decay_sink=standard && muon_decay;
             return (use_weakhub && weakhub.valid)
-                ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate)
-                : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate);
+                ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt)
+                : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt);
         };
 
         auto const evaluate_rates = [&]() {

@@ -228,12 +228,22 @@ m1:
       type: bool
       default: false
       description: >
-        Include mu- <-> e- + numu + anti-nue and the charge conjugate through the
-        spectral decay kernel (GRACE_M1_PAIR_KERNELS builds).  Requires five
-        species, leptonic EOS without dilute-muon suppression, additive electron
-        thermodynamics and pair_treatment equilibrium or evolved.  Equilibrium
-        partners are a non-stoichiometric comparison approximation away from LTE;
-        evolved partners use a connected four-species solve.
+        Include muon decay, mu- -> e- + anti-nue + numu and the charge conjugate.
+        With pair_treatment: standard this is the vacuum decay in the standard
+        rates: the muon excess over the EOS's dilute band (Y_mu <= 6e-4 is
+        muon-free for the leptonic EOS, so that residual stays) decays with the
+        free lifetime 2.197 us, blocked by the electron Fermi sea (eta_e, strong in
+        cold dense matter, absent in ejecta) and by the emitted neutrinos (each
+        species' own eta); emission only, no inverse opacity; Michel mean energies
+        7/20 m_mu (numu) and 3/10 m_mu (anti-nue), the electron's 7/20 m_mu stays
+        in the fluid through the composition change.  The per-step rate
+        (1-exp(-Gamma dt))/dt cannot overshoot the excess with imex232; with
+        imex333/343 the backreaction hard stop is the backstop.  Needs 5 species,
+        the leptonic EOS with dilute_muon_suppression: true, and a Weakhub table
+        without decay.  In GRACE_M1_PAIR_KERNELS builds with pair_treatment
+        equilibrium or evolved it is the spectral decay kernel instead (see
+        muon_decay.rst; needs dilute_muon_suppression: false and
+        add_ele_contribution: true).
 
     muon_decay_kernel_order:
       type: int

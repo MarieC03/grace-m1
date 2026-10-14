@@ -454,6 +454,15 @@ void set_m1_eas(
 
     auto const eas = get_eas_selection() ;
     auto const pair_mode = get_pair_treatment(); // validate before any device launch
+    #if GRACE_M1_NU_SPECIES >= 5
+    // The vacuum decay sink stops at the EOS's dilute band, which must lie above the table floor.
+    if constexpr ( std::is_same_v<eos_t, leptonic_eos_4d_t> ) {
+        if ( get_muon_decay() && pair_mode == pair_treatment_t::standard
+             && !(eos.get_c2p_ymu_min() < leptonic_eos_4d_t::dilute_ymu0()) )
+            ERROR("m1.eas.muon_decay: the lepton table's Ymu floor " << eos.get_c2p_ymu_min()
+                  << " is not below the EOS dilute band " << leptonic_eos_4d_t::dilute_ymu0()) ;
+    }
+    #endif
 
     // Launch-bounds switch: undefined leaves the policy and tile as-is.
     // The tile product must equal MaxThreadsPerBlock or HIP rejects the launch.

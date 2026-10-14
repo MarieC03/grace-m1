@@ -237,22 +237,21 @@ inline pair_treatment_t get_pair_treatment()
     if(name=="legacy") name="standard";
     if(name!="standard" && name!="equilibrium" && name!="evolved")
         ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
-    bool const decay=get_muon_decay();
+    // With pair_treatment: standard, muon_decay selects the vacuum decay sink of the standard
+    // rates (checked in check_m1_setup); the kernel decay below belongs to the kernel modes.
 #ifndef GRACE_M1_PAIR_KERNELS
     // The spectral kernels are compiled out: this build has the standard grey rates only.
     if(name!="standard")
         ERROR("m1.eas.pair_treatment: " << name << " needs a build with -DGRACE_M1_PAIR_KERNELS=ON; "
               "set pair_treatment: standard for this build");
-    if(decay)
-        ERROR("m1.eas.muon_decay: true needs a build with -DGRACE_M1_PAIR_KERNELS=ON; "
-              "set muon_decay: false for this build");
     return pair_treatment_t::standard;
 #else
+    if(name=="standard") return pair_treatment_t::standard;
+    bool const decay=get_muon_decay();
     if(decay) {
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
         ERROR("muon_decay requires five neutrino species and GRACE_ENABLE_MUONS");
 #endif
-        if(name=="standard") ERROR("muon_decay requires pair_treatment: equilibrium or evolved");
         if(get_param<std::string>("eos","eos_type")!="leptonic")
             ERROR("muon_decay requires the leptonic EOS");
         if(get_param<bool>("eos","leptonic","dilute_muon_suppression")
@@ -263,7 +262,6 @@ inline pair_treatment_t get_pair_treatment()
             ERROR("Declare weakhub_muon_decay_content: none only after verifying table provenance");
         (void)get_muon_decay_kernel_order();
     }
-    if(name=="standard") return pair_treatment_t::standard;
 #if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
     ERROR("New pair treatments require 3/5 neutrino species and the pinned bns_nurates submodule");
 #endif
@@ -297,6 +295,24 @@ inline int get_pair_quadrature_order()
     try { n=get_param<int>("m1","eas","pair_quadrature_order"); } catch(...) {}
     if(n<8 || n>32) ERROR("pair_quadrature_order must be between 8 and 32");
     return n;
+}
+
+// Standard-path muon decay (the vacuum sink): the parfile against the build and the EOS,
+// once on both start paths (grace_initialize).  The kernel decay checks itself above.
+inline void check_m1_setup()
+{
+    if(!get_muon_decay() || get_pair_treatment()!=pair_treatment_t::standard) return;
+#if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
+    ERROR("m1.eas.muon_decay needs five neutrino species with GRACE_ENABLE_MUONS (set muon_decay: false)");
+#endif
+#ifdef GRACE_FREEZE_HYDRO
+    ERROR("m1.eas.muon_decay with GRACE_FREEZE_HYDRO would emit from a frozen Ymu forever (set muon_decay: false)");
+#endif
+    if(get_param<std::string>("eos","eos_type")!="leptonic")
+        ERROR("m1.eas.muon_decay needs eos.eos_type: leptonic (the muon fraction and its chemical potential)");
+    if(!get_param<bool>("eos","leptonic","dilute_muon_suppression"))
+        ERROR("m1.eas.muon_decay with pair_treatment: standard needs eos.leptonic.dilute_muon_suppression: true "
+              "(the decaying population is the muon excess over the EOS's dilute band)");
 }
 
 } // namespace grace

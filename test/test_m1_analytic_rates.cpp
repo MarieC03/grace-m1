@@ -971,3 +971,111 @@ TEST_CASE("betaeq_tau_min: only lepton-carrying species open the timescale gate"
     REQUIRE(trapped(NUMU) > 1.0e20);  // not evolved at 3 species
 #endif
 }
+
+#if GRACE_M1_NU_SPECIES >= 5
+// ===========================================================================
+// Vacuum muon decay in the standard path (emission only).
+// ===========================================================================
+namespace {
+// Michel-averaged unblocking by a 4000-point midpoint rule, the reference for the Gauss nodes.
+double unblocking_reference(double eta, double T) {
+    double sum = 0.0; int const n = 4000;
+    for (int i = 0; i < n; ++i) {
+        double const x = (i + 0.5) / n, E = 0.5 * nu_constants::mmu_mev * x;
+        sum += 2.0 * x * x * (3.0 - 2.0 * x) / (1.0 + std::exp(eta - E / T)) / n;
+    }
+    return sum;
+}
+// Hot matter with an open decay: non-degenerate electrons, no neutrino sea.
+fugacity_state make_decay_state() {
+    fugacity_state F = make_hot_state();          // rho 1e13, T 10
+    F.ymu = 0.05; F.ymu_dilute = 6.0e-4; F.mu_mu = 100.0;
+    F.eta_e = -60.0;
+    F.eta_nu = {{-50.0, -50.0, -50.0, -50.0, 0.0}};
+    return F;
+}
+}  // namespace
+
+TEST_CASE("Vacuum muon decay: free rate, Michel energies, dilute-band floor",
+          "[m1rates][decay]") {
+    using namespace nu_constants;
+    fugacity_state F = make_decay_state();
+    rates_accum out{};
+    add_muon_decay_emission(F, out, 0.0);
+    double const R_expected = (F.ymu - F.ymu_dilute) * (F.rho_cgs / mnuc_cgs) / tau_mu_s;
+    REQUIRE_THAT(out.R[NUMU],   WithinRel(R_expected, 1e-10));
+    REQUIRE_THAT(out.R[NUEBAR], WithinRel(R_expected, 1e-10));
+    REQUIRE_THAT(out.Q[NUMU] / out.R[NUMU],     WithinRel(0.35 * mmu_mev, 1e-12));
+    REQUIRE_THAT(out.Q[NUEBAR] / out.R[NUEBAR], WithinRel(0.30 * mmu_mev, 1e-12));
+    // mu+: the Boltzmann density at mu_mu = 100 MeV, T = 10 is ~1e-9 of the mu- excess.
+    REQUIRE(out.R[NUMUBAR] > 0.0);
+    REQUIRE(out.R[NUMUBAR] < 1e-6 * R_expected);
+    REQUIRE(out.R[NUE] == out.R[NUMUBAR]);
+    for (int s = 0; s < NUMSPECIES; ++s) { REQUIRE(out.kappa_a[s] == 0.0); REQUIRE(out.kappa_n[s] == 0.0); }
+    REQUIRE(out.R[NUX] == 0.0);
+    SECTION("nothing below the dilute band") {
+        F.ymu = 5.0e-4; rates_accum z{}; add_muon_decay_emission(F, z, 0.0);
+        REQUIRE(z.R[NUMU] == 0.0); REQUIRE(z.Q[NUEBAR] == 0.0);
+    }
+}
+
+TEST_CASE("Vacuum muon decay: electron blocking and the Michel quadrature", "[m1rates][decay]") {
+    // Degenerate electrons at low T: the Fermi sea covers the 52.8 MeV endpoint.
+    REQUIRE(muon_decay_lepton_unblocking(100.0, 1.0) < 1e-10);
+    REQUIRE_THAT(muon_decay_lepton_unblocking(-60.0, 10.0), WithinRel(1.0, 1e-12));
+    for (double eta : {-2.0, 1.0, 3.0, 6.0}) {
+        for (double T : {10.0, 30.0})
+            REQUIRE_THAT(muon_decay_lepton_unblocking(eta, T), WithinRel(unblocking_reference(eta, T), 1e-6));
+        REQUIRE_THAT(muon_decay_lepton_unblocking(eta, 3.0), WithinRel(unblocking_reference(eta, 3.0), 2e-3));
+    }
+}
+
+TEST_CASE("Vacuum muon decay: joint neutrino blocking and the stage-safe rate", "[m1rates][decay]") {
+    using namespace nu_constants;
+    fugacity_state F = make_decay_state();
+    rates_accum ref{}; add_muon_decay_emission(F, ref, 0.0);
+    SECTION("one event makes one numu and one anti-nue: a common blocking factor") {
+        F.eta_nu[NUMU] = 5.0; F.eta_nu[NUEBAR] = 2.0;
+        rates_accum out{}; add_muon_decay_emission(F, out, 0.0);
+        double const block = (1.0 + std::exp(5.0 - 0.35 * mmu_mev / F.temp_mev))
+                           * (1.0 + std::exp(2.0 - 0.30 * mmu_mev / F.temp_mev));
+        REQUIRE(out.R[NUMU] == out.R[NUEBAR]);
+        REQUIRE_THAT(out.R[NUMU], WithinRel(ref.R[NUMU] / block, 1e-12));
+    }
+    SECTION("the emitted number over the full step never exceeds the excess") {
+        double const gamma = 1.0 / tau_mu_s;   // open decay
+        for (double dt_s : {1e-8, 1e-6, 1e-5}) {
+            rates_accum out{}; add_muon_decay_emission(F, out, dt_s * TIMEGF);
+            double const expected = ref.R[NUMU] * (-std::expm1(-gamma * dt_s)) / (gamma * dt_s);
+            REQUIRE_THAT(out.R[NUMU], WithinRel(expected, 1e-12));
+            REQUIRE(out.R[NUMU] * dt_s <= (F.ymu - F.ymu_dilute) * (F.rho_cgs / mnuc_cgs));
+        }
+    }
+}
+
+TEST_CASE("compute_all_species: the decay sink enters after the muon gate and the spectral correction",
+          "[m1rates][decay][integration]") {
+    using namespace nu_constants;
+    mock_eos_t eos; eos.mu_mu = 100.0; eos.mu_e = 5.0;   // mock EOS: no dilute band, whole Y_mu decays
+    tau_policy_analytic_density tau;
+    auto const F = make_fugacity_state(eos, 1.0e13 * RHOGF, 1.0, 0.1, 0.05, 1.0, kXyzOrigin, tau);   // T = 1
+    REQUIRE(F.ymu_dilute == 0.0);
+    REQUIRE(muon_rate_gate(F.rho_cgs, F.temp_mev) < 0.01);
+    rates_accum raw{}; add_muon_decay_emission(F, raw, 0.0);
+    REQUIRE(raw.R[NUMU] > 0.0);
+    double eps_rad[NUMSPECIES] = {30.0, 30.0, 30.0, 30.0, 30.0};   // hot radiation: the correction is active
+    for (bool corr : {false, true}) {
+        auto const off = compute_all_species(F, true, true, true, true, kXyzOrigin, tau, corr, eps_rad, corr, true, false, 0.0);
+        auto const on  = compute_all_species(F, true, true, true, true, kXyzOrigin, tau, corr, eps_rad, corr, true, true,  0.0);
+        for (int s : {static_cast<int>(NUMU), static_cast<int>(NUEBAR)}) {
+            REQUIRE_THAT(on.out[s].eta_N - off.out[s].eta_N, WithinRel(R_to_code(raw.R[s], 1), 1e-9));
+            REQUIRE_THAT(on.out[s].eta_E - off.out[s].eta_E, WithinRel(Q_mev_to_code(raw.Q[s], 1), 1e-9));
+        }
+        for (int s = 0; s < NUMSPECIES; ++s) {
+            REQUIRE(on.out[s].kappa_a == off.out[s].kappa_a);
+            REQUIRE(on.out[s].kappa_n == off.out[s].kappa_n);
+            REQUIRE(on.out[s].eta_N >= off.out[s].eta_N);
+        }
+    }
+}
+#endif  // GRACE_M1_NU_SPECIES >= 5
