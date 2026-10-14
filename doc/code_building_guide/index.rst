@@ -306,6 +306,14 @@ Optional physics modules
      - Write M1 diagnostics (eta_nu, chemical potentials, composition) to aux,
        dumped via the ``diagnostics`` output group.  Enables the M1
        infrastructure.
+   * - GRACE_M1_PAIR_KERNELS
+     - Boolean
+     - Compile the spectral heavy-flavour pair kernels and the muon decay
+       kernel (``m1.eas.pair_treatment: equilibrium`` / ``evolved``, research
+       modes).  Needs ``GRACE_M1_NU_SPECIES`` 3 or 5 and the ``extern/bns_nurates``
+       submodule; adds 12 aux slots per cell.  OFF by default: the standard
+       grey rates do not use them, and a parfile asking for them in a build
+       without the option stops at startup with a message saying so.
    * - GRACE_ENABLE_M1
      - *derived*
      - **Not user-settable.**  Derived from the options above and stored as an

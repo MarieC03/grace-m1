@@ -4,6 +4,8 @@ Muon decay and inverse decay in grey M1
 Scope and recommended mode
 --------------------------
 
+This document describes the spectral decay kernel of builds configured with
+``-DGRACE_M1_PAIR_KERNELS=ON`` (``pair_treatment: equilibrium`` or ``evolved``).
 ``m1.eas.muon_decay: true`` adds both charge-conjugate reactions:
 
 .. math::

@@ -28,7 +28,10 @@ resolution, timestep and target-GPU validation.
 
 ## Configuration
 
-Build with 3 or 5 neutrino species and initialize the repository's existing
+Configure with `-DGRACE_M1_PAIR_KERNELS=ON` (default OFF: production builds
+carry neither the kernels nor the 12 `pair_*` aux slots, and a parfile asking
+for `equilibrium`/`evolved` in such a build stops at startup with a message
+saying so). Build with 3 or 5 neutrino species and initialize the repository's existing
 `extern/bns_nurates` submodule. Its pinned revision is
 `efbabe0d4dfa6935c9ecbbd59a30c69b7cd1b91e`; no new revision is selected here.
 

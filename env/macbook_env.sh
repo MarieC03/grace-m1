@@ -56,7 +56,9 @@ cat <<'EOF'
     -Dp4est_LIBRARY=$P4EST_ROOT/lib/libp4est.a \
     -Dsc_LIBRARY=$P4EST_ROOT/lib/libsc.a
   # add for M1 neutrino transport:
-  #   -DGRACE_ENABLE_M1=ON -DGRACE_M1_NU_SPECIES=5 -DGRACE_M1_PHOTONS=ON
+  #   -DGRACE_M1_NU_SPECIES=5 -DGRACE_M1_PHOTONS=ON   (GRACE_ENABLE_M1 is derived)
+  # add for the spectral pair/decay research modes (pair_treatment equilibrium/evolved):
+  #   -DGRACE_M1_PAIR_KERNELS=ON
   # add for the ML inference module (needs KokkosKernels_ROOT above):
   #   -DGRACE_ENABLE_ML=ON
 

@@ -56,6 +56,10 @@ cmake -B build-m1 -S . -G Ninja \
 cmake --build build-m1 -j
 ```
 
+Add `-DGRACE_M1_PAIR_KERNELS=ON` only for the spectral pair-kernel research
+modes (`m1.eas.pair_treatment: equilibrium` / `evolved`); the standard grey
+rates do not need it.
+
 For GPU builds, see the
 [building guide](https://grace-astro.github.io/grace/code_building_guide/).
 
