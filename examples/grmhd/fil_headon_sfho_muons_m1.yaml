@@ -167,6 +167,7 @@ m1: {
   eas: {
     kinds: ["neutrino_weakhub"],       # FIL: m1_which_eas = "Weakhub"
     weakhub_table: "/mnt/rafast/mcassing/EoS/weakhub/SFHocompose_grey_npemu_Bollig_suppress_noPP_advopac_20240818_Weakhub_grey.h5",
+    weakhub_table_content: none,    # noPP table: charged current + scattering only
 
     beta_decay:        true,
     plasmon_decay:     true,           # FIL: plasmon_decay  = yes

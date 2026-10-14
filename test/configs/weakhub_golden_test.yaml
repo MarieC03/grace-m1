@@ -50,7 +50,8 @@ m1: {
   eas: {
     kinds: ["neutrino_weakhub"],
     # Machine-local 3-species (nue, anue, nux) DD2 grey table.
-    weakhub_table: "/Users/miler/Codes/Weakhub/dURCA_convenforbetaproc_DD2_grey_npe_20240723_Weakhub_grey.h5"
+    weakhub_table: "/Users/miler/Codes/Weakhub/dURCA_convenforbetaproc_DD2_grey_npe_20240723_Weakhub_grey.h5",
+    weakhub_table_content: none,    # Mac copy of a noPP table, no companion log
   }
 }
 checkpoints: {

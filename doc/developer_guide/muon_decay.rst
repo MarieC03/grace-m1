@@ -81,19 +81,19 @@ Example additions to a physically compatible simulation parfile:
        pair_treatment: evolved  # equilibrium only for comparison
        pair_quadrature_order: 16
        muon_decay_kernel_order: 24
-       weakhub_pair_content: none
-       weakhub_muon_decay_content: none
+       weakhub_table_content: none   # or auto: read from the table's companion _tableinfo.log
        plasmon_decay: false     # or explicitly select transverse_mass model
 
-The table-content declarations are assertions of provenance, NOT filters.
-Only use ``none`` after verifying the supplied tables exclude those reactions.
-Inclusive grey opacities cannot be decomposed by this interface. The analytic
+``weakhub_table_content`` is read from the table's companion log (``auto``) or
+declared; it is a statement of what the table carries, NOT a filter.  The
+kernel modes need ``none``: inclusive grey opacities cannot be decomposed by
+this interface. The analytic
 ordinary-rate provider does not acquire muonic nucleon charged-current rates
 from this change; those still require the appropriate WeakHub input.
 The explicit thermal-pair framework remains heavy-flavour only: this change
 does not add the electron-flavour thermal pairs missing from the analytic
 baseline. Electron pair channels supplied inside an ordinary WeakHub table
-retain that table's grey treatment. ``weakhub_pair_content`` concerns the
+retain that table's grey treatment. The content check concerns the
 heavy-flavour channels added explicitly by the pair framework.
 
 Required build: five neutrino species, ``GRACE_ENABLE_MUONS``, and the existing

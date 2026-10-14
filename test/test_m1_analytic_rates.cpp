@@ -1079,3 +1079,103 @@ TEST_CASE("compute_all_species: the decay sink enters after the muon gate and th
     }
 }
 #endif  // GRACE_M1_NU_SPECIES >= 5
+
+#if GRACE_M1_NU_SPECIES >= 5 && defined(GRACE_ENABLE_MUONS)
+// ===========================================================================
+// Startup consistency: Weakhub table content and the vacuum muon decay sink.
+// ===========================================================================
+#include <grace/physics/eas_kinds.hh>
+#include <grace/parallel/mpi_wrappers.hh>
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/sinks/null_sink.h>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+
+namespace {
+struct setup_config_guard {
+    YAML::Node eas = YAML::Clone(config_parser::get()["m1"]["eas"]);
+    YAML::Node eos = YAML::Clone(config_parser::get()["eos"]);
+    ~setup_config_guard() {
+        config_parser::get()["m1"]["eas"] = eas;
+        config_parser::get()["eos"] = eos;
+    }
+    // A Weakhub run with the vacuum decay switched on; the lightweight Kokkos main has no GRACE
+    // loggers, and the ERROR/INFO paths need them (no files are written by these sinks).
+    void enable(std::string const& table) {
+        if (!spdlog::get("output_console")) spdlog::stdout_logger_mt("output_console");
+        if (!spdlog::get("error_console")) spdlog::stderr_logger_mt("error_console");
+        for (auto const* prefix : {"file_logger_", "error_file_logger_", "backtrace_logger_"}) {
+            std::string const name = std::string(prefix) + std::to_string(parallel::mpi_comm_rank());
+            if (!spdlog::get(name)) spdlog::register_logger(std::make_shared<spdlog::logger>(
+                name, std::make_shared<spdlog::sinks::null_sink_mt>()));
+        }
+        auto& c = config_parser::get();
+        c["m1"]["eas"]["kind"] = "neutrino_weakhub";
+        c["m1"]["eas"]["kinds"] = std::vector<std::string>{};
+        c["m1"]["eas"]["weakhub_table"] = table;
+        c["m1"]["eas"]["weakhub_table_content"] = "auto";
+        c["m1"]["eas"]["pair_treatment"] = "standard";
+        c["m1"]["eas"]["muon_decay"] = true;
+        c["m1"]["eas"]["pair_annihilation"] = true;
+        c["m1"]["eas"]["bremsstrahlung"] = true;
+        c["eos"]["eos_type"] = "leptonic";
+        c["eos"]["leptonic"]["dilute_muon_suppression"] = true;
+    }
+};
+// A Weakhub tableinfo log next to a (non-existent) table in a scratch directory.
+std::string write_tableinfo(char const* stem, bool pair, bool brems, bool decay) {
+    std::string const dir = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp");
+    std::string const table = dir + "/" + stem + "_Weakhub_grey.h5";
+    std::ofstream log(dir + "/" + stem + "_Weakhub_grey_tableinfo.log");
+    log << " Interactions included in 4D table:----------------------------\n"
+        << " Nucleon beta processes     : T\n"
+        << " Electron-positron pair (Emiss) :" << (pair ? 'T' : 'F') << "\n"
+        << " Nucleon Nucleon Brems  (Emiss) :" << (brems ? 'T' : 'F') << "\n"
+        << " Nucleon Nucleon Brems (Kernel) :F\n"
+        << " Electron-positron pair (Kernel) :F\n";
+    if (decay) log << " Inverse lepton decay               : T\n";
+    return table;
+}
+}  // namespace
+
+TEST_CASE("Weakhub table content is read from the companion log and switches the extras off",
+          "[m1rates][setup]") {
+    setup_config_guard guard;
+    guard.enable(write_tableinfo("grace_setup_nopp", false, false, false));
+    REQUIRE(get_weakhub_table_content(true) == weakhub_content_t::none);
+    check_m1_setup();
+    REQUIRE(get_param<bool>("m1", "eas", "pair_annihilation"));
+    REQUIRE(get_param<bool>("m1", "eas", "bremsstrahlung"));
+
+    config_parser::get()["m1"]["eas"]["weakhub_table"] = write_tableinfo("grace_setup_pp", true, true, false);
+    REQUIRE(get_weakhub_table_content(true) == weakhub_content_t::thermal);
+    check_m1_setup();
+    REQUIRE_FALSE(get_param<bool>("m1", "eas", "pair_annihilation"));
+    REQUIRE_FALSE(get_param<bool>("m1", "eas", "bremsstrahlung"));
+
+    config_parser::get()["m1"]["eas"]["weakhub_table"] = write_tableinfo("grace_setup_ild", true, true, true);
+    REQUIRE(get_weakhub_table_content(true) == weakhub_content_t::thermal_decay);
+
+    config_parser::get()["m1"]["eas"]["weakhub_table_content"] = "thermal";
+    REQUIRE(get_weakhub_table_content(true) == weakhub_content_t::thermal);   // an explicit value wins
+}
+
+// Run in a subprocess by check_m1_setup.cmake: each setup terminates via ERROR.
+TEST_CASE("M1 setup rejects incompatible table content and decay settings", "[.][m1-setup-invalid]") {
+    setup_config_guard guard;
+    guard.enable(write_tableinfo("grace_setup_invalid", false, false, false));
+    auto& c = config_parser::get();
+    char const* env = std::getenv("GRACE_M1_SETUP_INVALID"); REQUIRE(env != nullptr);
+    std::string const mode = env;
+    if (mode == "log-missing") c["m1"]["eas"]["weakhub_table"] = "/nonexistent/table_Weakhub_grey.h5";
+    else if (mode == "bad-keyword") c["m1"]["eas"]["weakhub_table_content"] = "maybe";
+    else if (mode == "decay-table") c["m1"]["eas"]["weakhub_table_content"] = "thermal+decay";
+    else if (mode == "sink-eos") c["eos"]["eos_type"] = "ideal";
+    else if (mode == "sink-suppression") c["eos"]["leptonic"]["dilute_muon_suppression"] = false;
+    else FAIL("Unknown invalid setup case");
+    (void)get_weakhub_table_content(true);
+    check_m1_setup();
+    FAIL("Incompatible M1 setup was accepted");
+}
+#endif  // GRACE_M1_NU_SPECIES >= 5 && GRACE_ENABLE_MUONS

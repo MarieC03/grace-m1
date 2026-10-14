@@ -5,7 +5,7 @@ set(cases eos dilute electrons table betaeq order)
 set(reasons "muon_decay requires the leptonic EOS"
             "muon_decay requires dilute_muon_suppression=false"
             "muon_decay requires dilute_muon_suppression=false"
-            "Declare weakhub_muon_decay_content"
+            "weakhub_table_content"
             "New pair treatments currently require betaeq_policy: off"
             "muon_decay_kernel_order must be between")
 foreach(i RANGE 0 5)

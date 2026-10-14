@@ -171,7 +171,7 @@ m1: {
     # pair process for muonic
     pair_treatment: evolved,
     pair_quadrature_order: 16,
-    weakhub_pair_content: none,
+    weakhub_table_content: none,    # noPP table: charged current + scattering only
     pair_plasmon_model: transverse_mass,
 
     # (T_nu/T)^2 on the opacities only: hot neutrinos absorbed more by colder matter.

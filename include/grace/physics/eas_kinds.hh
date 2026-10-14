@@ -41,6 +41,8 @@
 #include <grace/errors/error.hh>
 
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -215,6 +217,70 @@ inline tau_policy_kind_t get_tau_policy_kind()
              "local_kappa, eikonal") ;
 }
 
+// What the Weakhub grey table already carries, so that nothing is counted twice: charged current
+// and scattering only (none), e+e- pairs and NN bremsstrahlung folded into kappa_a (thermal), and
+// inverse lepton decay on top (thermal_decay).
+enum class weakhub_content_t : int { none, thermal, thermal_decay };
+
+inline char const* weakhub_content_name(weakhub_content_t c)
+{
+    return c==weakhub_content_t::none ? "none" : c==weakhub_content_t::thermal ? "thermal" : "thermal+decay";
+}
+
+namespace detail {
+// One "<label> ... : T/F" flag of a Weakhub tableinfo log; false when no line carries both words.
+inline bool tableinfo_flag(std::string const& text, char const* word_a, char const* word_b, bool& value)
+{
+    std::istringstream lines(text);
+    for(std::string line; std::getline(lines,line);) {
+        if(line.find(word_a)==std::string::npos || line.find(word_b)==std::string::npos) continue;
+        auto const colon=line.find(':');
+        if(colon==std::string::npos) continue;
+        auto const v=line.find_first_not_of(" \t",colon+1);
+        if(v==std::string::npos) continue;
+        value=(line[v]=='T' || line[v]=='t');
+        return true;
+    }
+    return false;
+}
+}
+
+// Resolved once from m1.eas.weakhub_table_content; "auto" reads Weakhub's companion file
+// <weakhub_table minus .h5>_tableinfo.log, which is shipped next to every table.  Only meaningful
+// with a Weakhub table selected.  refresh re-reads the parfile (tests).
+inline weakhub_content_t get_weakhub_table_content(bool refresh=false)
+{
+    static bool resolved=false;
+    static weakhub_content_t cached=weakhub_content_t::none;
+    if(resolved && !refresh) return cached;
+    std::string const mode=detail::get_eas_param_or("auto","weakhub_table_content");
+    std::string source;
+    if(mode=="none") cached=weakhub_content_t::none;
+    else if(mode=="thermal") cached=weakhub_content_t::thermal;
+    else if(mode=="thermal+decay") cached=weakhub_content_t::thermal_decay;
+    else if(mode=="auto") {
+        std::string log=detail::get_eas_param_or("","weakhub_table");
+        if(log.size()>3 && log.compare(log.size()-3,3,".h5")==0) log.erase(log.size()-3);
+        log+="_tableinfo.log";
+        std::ifstream in(log);
+        std::string const text((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+        bool pair=false,brems=false,decay=false;
+        if(!in.is_open() || !detail::tableinfo_flag(text,"pair","(Emiss)",pair)
+           || !detail::tableinfo_flag(text,"Brems","(Emiss)",brems))
+            ERROR("m1.eas.weakhub_table_content: auto needs Weakhub's companion log " << log
+                  << " next to the table (copy it from where the table came from), or set "
+                     "m1.eas.weakhub_table_content: none | thermal | thermal+decay by hand");
+        detail::tableinfo_flag(text,"Inverse lepton decay","",decay);   // absent in grey logs
+        cached=decay ? weakhub_content_t::thermal_decay
+             : (pair || brems) ? weakhub_content_t::thermal : weakhub_content_t::none;
+        source=" (from "+log+")";
+    }
+    else ERROR("m1.eas.weakhub_table_content must be auto, none, thermal or thermal+decay (got " << mode << ")");
+    resolved=true;
+    GRACE_INFO("Weakhub table content: {}{}", weakhub_content_name(cached), source);
+    return cached;
+}
+
 // standard = the table/analytic grey rates GRACE always had; "legacy" is accepted as an alias.
 enum class pair_treatment_t : int { standard, equilibrium, evolved };
 
@@ -258,8 +324,8 @@ inline pair_treatment_t get_pair_treatment()
            || !get_param<bool>("eos","leptonic","add_ele_contribution"))
             ERROR("muon_decay requires dilute_muon_suppression=false and add_ele_contribution=true with an electron-free baryonic EOS");
         if(get_eas_selection().contains(eas_kind_t::neutrino_weakhub)
-           && detail::get_eas_param_or("unknown","weakhub_muon_decay_content")!="none")
-            ERROR("Declare weakhub_muon_decay_content: none only after verifying table provenance");
+           && get_weakhub_table_content()==weakhub_content_t::thermal_decay)
+            ERROR("The kernel muon decay needs a Weakhub table without inverse lepton decay (weakhub_table_content thermal+decay)");
         (void)get_muon_decay_kernel_order();
     }
 #if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
@@ -268,9 +334,8 @@ inline pair_treatment_t get_pair_treatment()
     auto const sel=get_eas_selection();
     if(!sel.contains(eas_kind_t::neutrino_analytic) && !sel.contains(eas_kind_t::neutrino_weakhub))
         ERROR("New pair treatments require neutrino_analytic or neutrino_weakhub EAS");
-    if(sel.contains(eas_kind_t::neutrino_weakhub)
-       && detail::get_eas_param_or("unknown","weakhub_pair_content")!="none")
-        ERROR("New pair treatments require a pair-free WeakHub table; explicitly set weakhub_pair_content: none after checking its provenance");
+    if(sel.contains(eas_kind_t::neutrino_weakhub) && get_weakhub_table_content()!=weakhub_content_t::none)
+        ERROR("The kernel pair treatments need a Weakhub table without pairs and bremsstrahlung (weakhub_table_content none)");
     if(get_betaeq_mode()!=betaeq_mode_t::off)
         ERROR("New pair treatments currently require betaeq_policy: off");
     if(get_param<bool>("m1","eas","plasmon_decay")
@@ -297,11 +362,28 @@ inline int get_pair_quadrature_order()
     return n;
 }
 
-// Standard-path muon decay (the vacuum sink): the parfile against the build and the EOS,
-// once on both start paths (grace_initialize).  The kernel decay checks itself above.
+// Parfile against build, EOS and table, once on both start paths (grace_initialize): what the
+// Weakhub table already carries switches the analytic extras off and forbids a second decay; the
+// standard-path muon decay (the vacuum sink) needs the muonic leptonic EOS.  The kernel modes
+// check themselves in get_pair_treatment().
 inline void check_m1_setup()
 {
-    if(!get_muon_decay() || get_pair_treatment()!=pair_treatment_t::standard) return;
+    bool const decay=get_muon_decay();
+    bool const standard=get_pair_treatment()==pair_treatment_t::standard;
+    if(get_eas_selection().contains(eas_kind_t::neutrino_weakhub)) {
+        auto const content=get_weakhub_table_content();
+        if(content!=weakhub_content_t::none
+           && (get_param<bool>("m1","eas","pair_annihilation") || get_param<bool>("m1","eas","bremsstrahlung"))) {
+            GRACE_INFO("Weakhub table carries pairs and bremsstrahlung: the analytic pair_annihilation "
+                       "and bremsstrahlung extras are switched off");
+            config_parser::get()["m1"]["eas"]["pair_annihilation"]=false;
+            config_parser::get()["m1"]["eas"]["bremsstrahlung"]=false;
+        }
+        if(content==weakhub_content_t::thermal_decay && decay)
+            ERROR("m1.eas.muon_decay: the Weakhub table already carries inverse lepton decay "
+                  "(weakhub_table_content thermal+decay); set muon_decay: false");
+    }
+    if(!decay || !standard) return;
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
     ERROR("m1.eas.muon_decay needs five neutrino species with GRACE_ENABLE_MUONS (set muon_decay: false)");
 #endif

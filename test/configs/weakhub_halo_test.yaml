@@ -54,6 +54,7 @@ m1: {
     # 6-species SFHo npemu grey table (2 GB).  Its rho axis starts at 1e-9
     # code units -- three decades ABOVE grmhd.atmosphere.rho_fl above.
     weakhub_table: "/Users/miler/Codes/Weakhub/SFHocompose_grey_npemu_Bollig_suppress_noPP_advopac_20240818_Weakhub_grey.h5",
+    weakhub_table_content: none,    # Mac copy of a noPP table, no companion log
     beta_decay: true,
     plasmon_decay: true,
     bremsstrahlung: true,

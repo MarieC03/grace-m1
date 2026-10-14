@@ -41,7 +41,7 @@ m1:
     kind: neutrino_weakhub        # alternatively neutrino_analytic
     pair_treatment: evolved      # standard | equilibrium | evolved
     pair_quadrature_order: 16     # 8..32; compare 16, 24, 32
-    weakhub_pair_content: none    # ONLY after checking table provenance
+    weakhub_table_content: none    # or auto: read from the table's companion _tableinfo.log
     betaeq_policy: off
     pair_annihilation: true
     bremsstrahlung: true
@@ -51,7 +51,7 @@ m1:
 
 No spectral WeakHub tables are needed: the new pair kernels are evaluated
 locally. The ordinary grey WeakHub table **must exclude these heavy-flavour
-thermal pair channels**. `weakhub_pair_content: none` is a declaration, not a
+thermal pair channels**. `weakhub_table_content` is read from the table's companion log (auto) or declared; it is not a
 filter: the code cannot subtract unknown pair contributions from an inclusive
 grey table. `unknown` and `included` are rejected in the new modes. The old
 standalone `bns_nurates` EAS adapter is not used by these modes.

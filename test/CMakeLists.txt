@@ -154,6 +154,14 @@ add_test(NAME m1_analytic_rates_test COMMAND mpirun -n 1 ./m1_analytic_rates_tes
 set_tests_properties(m1_analytic_rates_test PROPERTIES
     LABELS "fast;physics;m1"
     ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+# Startup rejections of the standard path (table content, vacuum muon decay): the hidden
+# [m1-setup-invalid] cases of the same binary, one child process each.
+if(GRACE_M1_NU_SPECIES GREATER_EQUAL 5 AND GRACE_ENABLE_MUONS)
+    add_test(NAME m1_setup_rejection COMMAND ${CMAKE_COMMAND}
+        -DTEST_PROGRAM=$<TARGET_FILE:m1_analytic_rates_test>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check_m1_setup.cmake)
+    set_tests_properties(m1_setup_rejection PROPERTIES LABELS "fast;physics;m1")
+endif()
 
 # Weakhub opacity-table lookup on synthetic in-memory tables: species-slot
 # mapping per GRACE_M1_NU_SPECIES (regression for the 6-species-table /

@@ -311,9 +311,34 @@ TEST_CASE("Muon decay setup is opt-in and accepts both explicit partner modes", 
     config_parser::get()["m1"]["eas"]["pair_treatment"]="equilibrium";
     REQUIRE(get_pair_treatment()==pair_treatment_t::equilibrium);
     config_parser::get()["m1"]["eas"]["kind"]="neutrino_weakhub";
-    config_parser::get()["m1"]["eas"]["weakhub_pair_content"]="none";
-    config_parser::get()["m1"]["eas"]["weakhub_muon_decay_content"]="none";
+    config_parser::get()["m1"]["eas"]["weakhub_table_content"]="none";
+    (void)get_weakhub_table_content(true);
     REQUIRE(get_pair_treatment()==pair_treatment_t::equilibrium);
+}
+
+// The standard path's vacuum decay sink against the spectral decay kernel at a dilute,
+// non-degenerate state: muons at rest with Michel energies vs the finite-mass thermal kernel
+// (time dilation ~3T/2m and the thermal boost of the energies are the expected differences).
+TEST_CASE("Vacuum decay sink agrees with the spectral decay kernel in dilute matter", "[decay][vacuum]") {
+    double const T=5.0, mu_e=1.0, mu_mu=90.0;
+    grid g; g.init(32,40.0);
+    decay_kernel k; REQUIRE(k.init(g,T,mu_e,mu_mu,32));
+    decay_lte_rates kr; REQUIRE(equilibrium_decay_rates(k,0,-50.0,-50.0,kr));   // no partner sea
+    // The kernel's mu- density: FD integral with the finite mass, g = 2.
+    double n_mu=0; { int const N=40000; double const emax=muon_mass+60*T;
+        double const pmax=std::sqrt(emax*emax-muon_mass*muon_mass), dp=pmax/N;
+        for(int i=0;i<N;++i) { double const p=(i+0.5)*dp, E=std::sqrt(p*p+muon_mass*muon_mass);
+            n_mu+=p*p/(std::exp((E-mu_mu)/T)+1)*dp; }
+        n_mu/=M_PI*M_PI*hbarc_mev_cm*hbarc_mev_cm*hbarc_mev_cm; }
+    fugacity_state F;
+    F.rho_cgs=n_mu*nu_constants::mnuc_cgs; F.ymu=1.0; F.ymu_dilute=0.0;   // rho/m_p = n_mu
+    F.temp_mev=T; F.mu_e=mu_e; F.mu_mu=mu_mu; F.eta_e=mu_e/T;
+    F.eta_nu={{-50.0,-50.0,-50.0,-50.0,0.0}};
+    rates_accum out{}; add_muon_decay_emission(F,out,0.0);
+    REQUIRE_THAT(out.R[NUMU],WithinRel(kr.eta_N[0],0.15));
+    REQUIRE_THAT(out.R[NUEBAR],WithinRel(kr.eta_N[1],0.15));
+    REQUIRE_THAT(out.Q[NUMU]/out.R[NUMU],WithinRel(kr.eta_E[0]/kr.eta_N[0],0.10));
+    REQUIRE_THAT(out.Q[NUEBAR]/out.R[NUEBAR],WithinRel(kr.eta_E[1]/kr.eta_N[1],0.10));
 }
 
 // Run in a subprocess: invalid setup intentionally terminates via ERROR.

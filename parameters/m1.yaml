@@ -189,7 +189,8 @@ m1:
         Include nucleon-nucleon bremsstrahlung (NN -> NN + nu + anti-nu)
         emission.  Dominant nux emission channel at low temperatures.  Applied
         in both the analytic and weakhub paths (added on top of the table
-        opacities in the latter).
+        opacities in the latter), unless the table already carries it
+        (weakhub_table_content thermal): then it is switched off at startup.
 
     pair_treatment:
       type: keyword
@@ -254,22 +255,6 @@ m1:
         lepton energy; GRACE_M1_PAIR_KERNELS builds). Independent of
         pair_quadrature_order. Check convergence.
 
-    weakhub_muon_decay_content:
-      type: keyword
-      allowed: ["unknown", "none", "included"]
-      default: "unknown"
-      description: >
-        Table provenance declaration, not a filter. Explicit muon decay requires
-        none so that inclusive grey tables cannot silently double count decay.
-
-    weakhub_pair_content:
-      type: keyword
-      allowed: ["unknown", "none", "included"]
-      default: "unknown"
-      description: >
-        User declaration of table provenance. New pair treatments require none;
-        this setting does not subtract channels from an inclusive table.
-
     pair_plasmon_model:
       type: keyword
       allowed: ["none", "transverse_mass"]
@@ -287,7 +272,8 @@ m1:
         Include electron-positron pair annihilation (e+ + e- -> nu + anti-nu)
         emission.  Contributes to all species at high temperatures.  Applied in
         both the analytic and weakhub paths (added on top of the table opacities
-        in the latter).
+        in the latter), unless the table already carries it
+        (weakhub_table_content thermal): then it is switched off at startup.
 
     betaeq_policy:
       type: keyword
@@ -421,6 +407,25 @@ m1:
         kind/kinds includes 'neutrino_weakhub'.  The table provides grey
         absorption and scattering opacities as functions of density, temperature,
         Ye, and Ymu for up to 6 neutrino species.
+
+    weakhub_table_content:
+      type: keyword
+      allowed: ["auto", "none", "thermal", "thermal+decay"]
+      default: "auto"
+      description: >
+        What the grey table already carries, so that nothing is counted twice.
+        auto (default) reads it from the companion file <weakhub_table minus
+        .h5>_tableinfo.log that Weakhub writes next to every table (the lines
+        "Electron-positron pair (Emiss)", "Nucleon Nucleon Brems (Emiss)" and
+        "Inverse lepton decay"); the run stops at startup if that file is
+        missing or unreadable and says what to copy or what to set.  none:
+        charged current and scattering only (the noPP tables).  thermal: e+e-
+        pairs and NN bremsstrahlung folded into kappa_a (the fixedBBforPP
+        tables); the analytic pair_annihilation and bremsstrahlung extras are
+        then switched off, with one startup line.  thermal+decay: additionally
+        inverse lepton decay; muon_decay must then be false.  The kernel modes
+        of GRACE_M1_PAIR_KERNELS builds need none.  Ignored without a Weakhub
+        table.
 
 
 
