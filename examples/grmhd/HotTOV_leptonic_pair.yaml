@@ -225,7 +225,7 @@ eos: {
   },
 
   leptonic: {
-    table_filename: "/zhome/projects/groups/xfp44203/common/EOS/4D/sfho_leptons_noele_0-5ye_ken_v2.h5",
+    table_filename: "/zhome/projects/groups/xfp44203/common/EOS/4D/sfho_leptons_noele_0-5ye_ken_v3.h5",
     add_ele_contribution: true,
     dilute_muon_suppression: true,
     # cold_table_temperature unset: temperature floor = table minimum 0.1 MeV (FIL parity);

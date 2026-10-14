@@ -495,7 +495,7 @@ amplifier accepted by the user); the default build is not bitwise mirror-symmetr
 | 1 | Performance: M1 = 64 % of a step (implicit 31 %); five EAS passes per step; dead ζ seed in `update_closure`; designed fixes 2a/2b/4/1 not implemented; evolved-mode FD Jacobian, cold-start reconstructions | roadmap exists (`m1-perf-roadmap`) |
 | 2 | FOFC: emf out-of-range read in the ghost layer; ~35-cell 5-ULP residual (left on purpose) | open / accepted |
 | 3 | Hunter GPU: 3 GPU-only test failures the Mac cannot reproduce; ROCm 7.0.2 miscompile (runs at −O1, ticket filed) | external |
-| 4 | Parfiles on lepton table v2 (cold-dilute μ defect); switch to v3 and quantify | to do |
+| 4 | Lepton table v2 (cold-dilute μ defect) → v3 | DONE on the Mac 14 Oct (configs, parfiles, measured: cold dilute muon sector only); Hunter needs the v3 file copied |
 | 5 | NaN termination checkpoint trap (restart loads the NaN checkpoint) | known procedure |
 | 6 | c2p error bitmask documentation off by one at 5 species | doc fix |
 | 7 | 16 local commits on `fix/leptonic-fil-parity` unpushed (pair fixes, speed-ups, physics tests, dumps, fence, sink, table content) | push when asked |
@@ -509,9 +509,12 @@ amplifier accepted by the user); the default build is not bitwise mirror-symmetr
 
 Each item names its verification. Nothing here is started without a go.
 
-**Phase 0 — housekeeping (days).** Push the commits (16 local as of 14 Oct). Switch the HOT-TOV and
-head-on parfiles to the v3 lepton table and quantify the change (Mac HOT-TOV 32 its vs v2; expect
-differences only in cold dilute cells). Fix the c2p bitmask doc. Keep this guide current.
+**Phase 0 — housekeeping (days).** Push the commits (20 local as of 14 Oct). v3 lepton table: DONE on
+the Mac (test configs, `HotTOV_leptonic*.yaml`, mac_verify parfiles; Mac HOT-TOV 32 its v3 vs v2: core
+unchanged to 6e-7, shell max ΔY_μ 2.2e-4 / ΔT 0.4 %, floor ΔY_μ 1.9e-4, the cold-dilute muon rates
+(κ_a, η of νμ) up to 31× — the v2 defect; same beta-eq fallback counts; the sink's effect identical on
+v3). Still to do: copy `sfho_leptons_noele_0-5ye_ken_v3.h5` to Hunter's `EOS/4D/` (the parfiles already
+name it). Fix the c2p bitmask doc. Keep this guide current.
 
 **Phase 1 — the muon-sector science gap. DONE in code 14 Oct** (fence C, vacuum decay sink D, table
 content E, this guide). What remains is the measurement: one head-on on Hunter with `muon_decay: true`
