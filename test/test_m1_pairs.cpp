@@ -4,7 +4,9 @@
 #include <grace/physics/m1.hh>
 #include <grace/physics/id/m1_initial_data.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <grace/physics/eas_optical_depth.hh>
 #include <cmath>
+#include <cstdio>
 using namespace grace;
 using namespace grace::pairs;
 using Catch::Matchers::WithinRel;
@@ -390,6 +392,130 @@ TEST_CASE("Evolved pairs converge from floor radiation in a stiff hot core", "[p
     REQUIRE(out[5]>0.1*Jeq); REQUIRE(out[5]<out[0]);   // the partner is fed by pairs only
     REQUIRE(out[9]>0.1*neq); REQUIRE(out[9]<out[4]);
     for(double v: out) REQUIRE(std::isfinite(v));
+}
+
+namespace {
+// Minimal EOS stand-in for make_fugacity_state (as in test_m1_analytic_rates.cpp).
+struct mock_eos_t {
+    double mu_e{10.0}, mu_mu{0.0}, mu_p{5.0}, mu_n{20.0};
+    double Xa{0.05}, Xh{0.05}, Xn{0.6}, Xp{0.3};
+    double Abar{20.0}, Zbar{8.0};
+    double mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
+        double& mumu, double& mup, double& mun, double& Xa_o, double& Xh_o, double& Xn_o, double& Xp_o,
+        double& Abar_o, double& Zbar_o, double&, double&, double&, double&, eos_err_t&) const {
+        mumu=mu_mu; mup=mu_p; mun=mu_n; Xa_o=Xa; Xh_o=Xh; Xn_o=Xn; Xp_o=Xp; Abar_o=Abar; Zbar_o=Zbar;
+        return mu_e;
+    }
+};
+constexpr double kXyzOrigin[3]={0,0,0};
+// Electron fugacity for n_e = rho Ye / m_u at temperature T: invert n_e = 8 pi T^3/(hc)^3 [F2(eta) - F2(-eta)].
+double electron_eta(double rho_cgs, double ye, double T) {
+    double const ne=rho_cgs*ye/nu_constants::mnuc_cgs, c=8*pairs::pi/std::pow(nu_constants::hc_mevcm,3)*T*T*T;
+    double lo=-50, hi=3000;
+    for(int it=0;it<200;++it) {
+        double const mid=0.5*(lo+hi), n=c*(fermi::FD<2>::get(mid)-fermi::FD<2>::get(-mid));
+        (n<ne?lo:hi)=mid;
+    }
+    return 0.5*(lo+hi);
+}
+}
+
+// PHYSICS CHECK 1: her kernel-integrated thermal emissivities at eta_nu = 0 against the analytic fits GRACE's
+// standard path adds for the heavy flavours (Ruffert-type pair, Burrows-type brems, Ruffert plasmon), per
+// helicity species.  These fits are themselves approximate (tens of per cent), so only the order of magnitude
+// is asserted; the table is printed for inspection.
+TEST_CASE("Kernel-integrated thermal emissivities against GRACE's analytic fits", "[pairs][physics]") {
+    mock_eos_t eos; tau_policy_analytic_density tau;
+    double const mass_scale=1.0;
+    std::printf("\n  per-species emissivity Q [MeV cm^-3 s^-1] at eta_nu=0: kernel / GRACE fit (ratio)\n");
+    std::printf("  %7s %8s %6s %6s | %22s | %22s | %22s\n","rho","T","Ye","eta_e","e+e- pairs","NN brems","plasmon");
+    for(double T: {5.0,10.0,20.0}) for(double rho: {1e12,1e13,1e14}) {
+        double const ye=0.1, eta_e=electron_eta(rho,ye,T), mu_e=eta_e*T;
+        eos.mu_e=mu_e; eos.mu_mu=0; eos.mu_p=0; eos.mu_n=0; eos.Xn=1-ye; eos.Xp=ye; eos.Xa=0; eos.Xh=0;
+        auto F=make_fugacity_state(eos,rho*nu_constants::RHOGF,T,ye,0.0,mass_scale,kXyzOrigin,tau);
+        for(int s=0;s<NUMSPECIES;++s) F.eta_nu[s]=0;   // thermal pairs: compare at zero fugacity
+        rates_accum fit_ee{}, fit_nn{}, fit_pl{};
+        add_pair_process_emission(F,fit_ee); add_brems_emission(F,fit_nn); add_plasmon_decay_emission(F,fit_pl,false);
+        #if GRACE_M1_NU_SPECIES >= 5
+        double const per_species=2.0;      // NUX = tau + anti-tau
+        #else
+        double const per_species=4.0;      // NUX = all four heavy species
+        #endif
+        material const m{T,mu_e,rho/nu_constants::mnuc_cgs,1-ye,ye};
+        double q[3], ratio[3];
+        channels const ch[3]={{true,false,false},{false,true,false},{false,false,true}};
+        double const fitq[3]={fit_ee.Q[NUX]/per_species,fit_nn.Q[NUX]/per_species,fit_pl.Q[NUX]/per_species};
+        for(int c=0;c<3;++c) {
+            kernel k; REQUIRE(k.init(m,ch[c],32,T));
+            lte_rates r; REQUIRE(lte_pair_rates(k.g,T,0,0,[&](double const* f,double const* fb){ return evaluate(k,f,fb); },r));
+            q[c]=0.5*(r.emission[0]+r.emission[1]); ratio[c]=q[c]/fitq[c];
+        }
+        std::printf("  %7.0e %8.1f %6.2f %6.2f | %9.2e %9.2e %5.2f | %9.2e %9.2e %5.2f | %9.2e %9.2e %5.2f\n",
+                    rho,T,ye,eta_e,q[0],fitq[0],ratio[0],q[1],fitq[1],ratio[1],q[2],fitq[2],ratio[2]);
+        REQUIRE(ratio[0]>0.2); REQUIRE(ratio[0]<5);
+        REQUIRE(ratio[1]>0.2); REQUIRE(ratio[1]<5);
+    }
+    // cold dilute surface cell (T 0.114 MeV, mu_mu 103.6 -> eta_numu +782): the LTE target is a filled 89 MeV
+    // nu_mu sea.  The massless-electron kernel still emits there (T < m_e, where it overestimates pairs), so the
+    // physical criterion is the time to fill that target: it must be astronomically long.
+    material const cold{0.1143,0.0304,5.6e27,0.64,0.36};
+    kernel k; REQUIRE(k.init(cold,{true,true,true},16,17.9));
+    lte_rates r; REQUIRE(lte_pair_rates(k.g,cold.T,782,-782,[&](double const* f,double const* fb){ return evaluate(k,f,fb); },r));
+    double f[max_order],n_sea,J_sea; fd(k.g,cold.T,782,f,n_sea,J_sea);
+    double const fill_time=J_sea/r.emission[0];   // seconds
+    std::printf("  cold dilute cell, eta=+782: nu_mu emission %.2e MeV cm^-3 s^-1 vs LTE J %.2e -> filling time %.1e s;"
+                " kappa_E nu_mu %.2e s^-1, anu_mu %.2e s^-1\n",r.emission[0],J_sea,fill_time,r.kappa_E[0],r.kappa_E[1]);
+    REQUIRE(fill_time>1e12);
+}
+
+// PHYSICS CHECK 2: the two-moment (max-entropy FD) closure against a spectral reference built from the SAME
+// kernel: df_i/dt = sum_j w_j [R_p (1-f_i)(1-fb_j) - R_a f_i fb_j] on the 32-node grid, integrated explicitly
+// with small steps.  Pair-only relaxation of a hot box from vacuum to LTE, and from a hot non-thermal spectrum.
+TEST_CASE("Two-moment pair relaxation against the spectral reference", "[pairs][physics][closure]") {
+    material const m{10,20,6e37,0.8,0.2};
+    kernel k; REQUIRE(k.init(m,{true,true,false},32,10));
+    metric_array_t metric({1,0,0,1,0,1},{0,0,0},1);
+    int const n=k.g.n;
+    auto const moments=[&](double const* f,double& nn,double& J) { nn=J=0; for(int i=0;i<n;++i) { nn+=k.g.w[i]*f[i]; J+=k.g.w[i]*k.g.e[i]*f[i]; } };
+    double f_lte[max_order],n_lte,J_lte; fd(k.g,10,0,f_lte,n_lte,J_lte);
+    for(int scenario=0;scenario<2;++scenario) {
+        double f[max_order],fb[max_order];
+        for(int i=0;i<n;++i) f[i]=fb[i]=scenario==0?0.0:0.3*std::exp(-k.g.e[i]/25.0);   // vacuum | hot, dilute, non-thermal
+        // spectral reference time scale from the vacuum production rate
+        double rate=0; for(int i=0;i<n;++i) { double s=0; for(int j=0;j<n;++j) s+=k.g.w[j]*k.a[i][j]*k.boltz[i]*k.boltz[j]; rate=std::max(rate,s/std::max(f_lte[i],1e-300)); }
+        double const dt=0.02/rate;                      // seconds; ~50 steps per LTE e-folding of the slowest node
+        // grey state: one representative species pair, undensitised code units
+        m1_prims_array_t base[2]{}; m1_eas_array_t eas[2]{}; double old[10]={},out[10],res;
+        { double n0,J0; moments(f,n0,J0); for(int s=0;s<2;++s) { old[5*s]=base[s][ERADL]=J0*energy_unit; old[5*s+4]=base[s][NRADL]=n0*number_unit; } }
+        std::printf("\n  %s: step  t[ms]  | spectral n/n_lte  J/J_lte  <e>[MeV] | grey n/n_lte  J/J_lte  <e>[MeV] | rel err n  J\n",
+                    scenario==0?"from vacuum":"from a hot non-thermal spectrum");
+        double worst_n=0, worst_J=0;
+        for(int step=1;step<=400;++step) {
+            // spectral: 10 explicit substeps per grey step
+            for(int sub=0;sub<10;++sub) {
+                double df[max_order],dfb[max_order];
+                for(int i=0;i<n;++i) { df[i]=dfb[i]=0; }
+                for(int i=0;i<n;++i) for(int j=0;j<n;++j) {
+                    double const net=k.a[i][j]*(k.boltz[i]*k.boltz[j]*(1-f[i])*(1-fb[j])-f[i]*fb[j]);
+                    df[i]+=k.g.w[j]*net; dfb[j]+=k.g.w[i]*net;
+                }
+                for(int i=0;i<n;++i) { f[i]+=0.1*dt*df[i]; fb[i]+=0.1*dt*dfb[i]; }
+            }
+            // grey: one implicit two-moment step of the same length
+            REQUIRE(implicit_update(k,metric,base,eas,old,out,dt*time_unit,res));
+            for(int a=0;a<10;++a) old[a]=out[a];
+            for(int s=0;s<2;++s) { base[s][ERADL]=out[5*s]; base[s][NRADL]=out[5*s+4]; }
+            double ns,Js; moments(f,ns,Js);
+            double const ng=out[4]/number_unit, Jg=out[0]/energy_unit;
+            double const en=std::abs(ng/ns-1), eJ=std::abs(Jg/Js-1);
+            if(step>5) { worst_n=std::max(worst_n,en); worst_J=std::max(worst_J,eJ); }
+            if(step%40==0 || step<=5)
+                std::printf("  %4d %7.3f | %8.4f %8.4f %7.2f | %8.4f %8.4f %7.2f | %.1e %.1e\n",
+                            step,1e3*step*dt,ns/n_lte,Js/J_lte,Js/ns,ng/n_lte,Jg/J_lte,Jg/ng,en,eJ);
+        }
+        std::printf("  worst relative error after the first 5 steps: n %.2e, J %.2e\n",worst_n,worst_J);
+        REQUIRE(worst_n<0.05); REQUIRE(worst_J<0.05);
+    }
 }
 
 TEST_CASE("Transverse plasmon event rate agrees with thermal photon decay", "[pairs]") {
