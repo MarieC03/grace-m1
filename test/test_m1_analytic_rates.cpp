@@ -986,9 +986,10 @@ double unblocking_reference(double eta, double T) {
     }
     return sum;
 }
-// Hot matter with an open decay: non-degenerate electrons, no neutrino sea.
+// Dilute hot matter with an open decay: outside the muon gate, non-degenerate electrons, no neutrino sea.
 fugacity_state make_decay_state() {
-    fugacity_state F = make_hot_state();          // rho 1e13, T 10
+    fugacity_state F = make_hot_state();          // T 10
+    F.rho_cgs = 1.0e8; F.nb = F.rho_cgs * nu_constants::avogadro;   // gate factor 1 - 1e-15
     F.ymu = 0.05; F.ymu_dilute = 6.0e-4; F.mu_mu = 100.0;
     F.eta_e = -60.0;
     F.eta_nu = {{-50.0, -50.0, -50.0, -50.0, 0.0}};
@@ -1016,6 +1017,13 @@ TEST_CASE("Vacuum muon decay: free rate, Michel energies, dilute-band floor",
     SECTION("nothing below the dilute band") {
         F.ymu = 5.0e-4; rates_accum z{}; add_muon_decay_emission(F, z, 0.0);
         REQUIRE(z.R[NUMU] == 0.0); REQUIRE(z.Q[NUEBAR] == 0.0);
+    }
+    SECTION("inside the muon gate (dense and hot) the sink carries the factor 1 - S") {
+        F.rho_cgs = 1.0e13; F.nb = F.rho_cgs * avogadro;
+        rates_accum z{}; add_muon_decay_emission(F, z, 0.0);
+        double const open = 1.0 - muon_rate_gate(F.rho_cgs, F.temp_mev);
+        REQUIRE(open < 1e-3);
+        REQUIRE_THAT(z.R[NUMU], WithinRel(open * (F.ymu - F.ymu_dilute) * (F.rho_cgs / mnuc_cgs) / tau_mu_s, 1e-10));
     }
 }
 

@@ -188,7 +188,12 @@ in both rate paths: the muon excess over the leptonic EOS's dilute band (Y_μ �
 so that residual stays and the backreaction never meets the table floor) decays with the free lifetime
 2.197 μs, blocked by the electron Fermi sea (Michel average on 16 Gauss nodes: exponentially strong in
 cold dense matter, 1 in ejecta) and by the emitted neutrinos jointly in the Ruffert form with F's η
-(τ-interpolated electron flavours, clamped muon flavours); Michel means 7/20 and 3/10 m_μ; no inverse
+(τ-interpolated electron flavours, clamped muon flavours), and only where the muonic charged-current
+reactions are gated off — the factor 1 − S of the muon rate gate: inside the gate the standard path
+treats the muon sector as a trapped equilibrium, in which the decay is balanced by its inverse (an
+emission-only sink there would drain the core on ~100 μs; the semi-transparent shell, where the seas are
+only partly depleted, is approximated as balanced — the honest treatment needs the actual partner
+populations, Marie's direction); Michel means 7/20 and 3/10 m_μ; no inverse
 opacity, no Kirchhoff inversion; the baryon number is ρ/m_p so one emitted pair is exactly one decayed
 muon; the rate (1−e^{−Γdt})/dt on the full step cannot overshoot the excess with imex232. The electron's
 7/20 m_μ stays in the fluid through the composition change (the lepton table's muon energy includes the

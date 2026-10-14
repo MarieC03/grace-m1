@@ -915,7 +915,12 @@ double muon_decay_lepton_unblocking(double eta, double T) {
 // Michel means 7/20 m_mu (the neutrino with the electron's spectrum) and 3/10 m_mu; the
 // electron's 7/20 m_mu stays in the fluid through the composition change.  The mu- population
 // is the excess over the EOS's dilute band, so the backreaction never meets the table floor;
-// the mu+ density is the Boltzmann estimate (hot matter only).  The baryon number is rho/m_p,
+// the mu+ density is the Boltzmann estimate (hot matter only).  Emission only is right where
+// nothing holds the muons: where the muonic charged-current reactions are gated off.  Inside the
+// gate (dense and hot) the standard path treats the muon sector as a trapped equilibrium, in
+// which the decay is balanced by its inverse, so the sink carries the factor 1 - S of the gate
+// (the semi-transparent shell, where the seas are only partly depleted, is approximated as
+// balanced).  The baryon number is rho/m_p,
 // the normalisation of the evolved N that the backreaction converts to dYe/dYmu, so one emitted
 // pair is exactly one decayed muon.  Gamma_eff = (1-exp(-Gamma dt))/dt on the FULL step: with
 // ARS(2,3,2) the first implicit increment enters the final state with weight (1-g)/g ~ 2.4,
@@ -930,8 +935,9 @@ void add_muon_decay_emission(const fugacity_state& F, rates_accum& out, double d
     double const n_b = F.rho_cgs / mnuc_cgs;
     double const hbarc = hc_mevcm / (2.0 * pi);
     double const n_q = 2.0 * Kokkos::pow(mmu_mev * T / (2.0 * pi), 1.5) / (hbarc * hbarc * hbarc);
-    double const n_minus = Kokkos::fmax(0.0, F.ymu - F.ymu_dilute) * n_b;
-    double const n_plus  = n_q * Kokkos::exp(-(mmu_mev + F.mu_mu) / T);
+    double const open = 1.0 - muon_rate_gate(F.rho_cgs, F.temp_mev);   // 1 in ejecta, 0 in the core
+    double const n_minus = open * Kokkos::fmax(0.0, F.ymu - F.ymu_dilute) * n_b;
+    double const n_plus  = open * n_q * Kokkos::exp(-(mmu_mev + F.mu_mu) / T);
     auto const emit = [&](double n_mu, double eta_lepton, int s_same, int s_other) {
         if (!(n_mu > 0.0)) return;
         // Final-state blocking: the charged lepton (Michel average) and both neutrinos jointly --

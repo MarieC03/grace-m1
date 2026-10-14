@@ -235,7 +235,10 @@ m1:
         muon-free for the leptonic EOS, so that residual stays) decays with the
         free lifetime 2.197 us, blocked by the electron Fermi sea (eta_e, strong in
         cold dense matter, absent in ejecta) and by the emitted neutrinos (each
-        species' own eta); emission only, no inverse opacity; Michel mean energies
+        species' own eta), and only where the muonic charged-current reactions are
+        gated off (factor 1 - S of the muon rate gate: inside it the trapped
+        equilibrium balances the decay with its inverse); emission only, no
+        inverse opacity; Michel mean energies
         7/20 m_mu (numu) and 3/10 m_mu (anti-nue), the electron's 7/20 m_mu stays
         in the fluid through the composition change.  The per-step rate
         (1-exp(-Gamma dt))/dt cannot overshoot the excess with imex232; with
