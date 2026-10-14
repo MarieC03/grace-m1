@@ -122,6 +122,14 @@ if( GRACE_ENABLE_M1 )
 add_standalone_test(m1_number_flux_test test_m1_number_flux.cpp)
 add_test(NAME m1_number_flux_test COMMAND ./m1_number_flux_test)
 set_tests_properties(m1_number_flux_test PROPERTIES LABELS "fast;physics;m1")
+# M1 transport fixes: zero-radiation ID floors, curved number flux, FOFC conserved input
+# (no pair kernels, so they run in every >= 3-species M1 build).
+if(GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
+    add_kokkos_test(m1_transport_fixes_test test_m1_transport_fixes.cpp)
+    add_test(NAME m1_transport_fixes_test COMMAND mpirun -n 1 ./m1_transport_fixes_test)
+    set_tests_properties(m1_transport_fixes_test PROPERTIES LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
 if(GRACE_HAVE_BNS_NURATES AND GRACE_M1_NU_SPECIES GREATER_EQUAL 3)
     add_kokkos_test(muon_decay_test test_muon_decay.cpp)
     add_test(NAME muon_decay_test COMMAND mpirun -n 1 ./muon_decay_test)
