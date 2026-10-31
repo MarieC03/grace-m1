@@ -4,8 +4,10 @@
 #include <grace/physics/m1.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
 #include <grace/physics/eas_optical_depth.hh>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 using namespace grace;
 using namespace grace::pairs;
 using Catch::Matchers::WithinRel;
@@ -320,6 +322,125 @@ TEST_CASE("Kernel-integrated thermal emissivities against GRACE's analytic fits"
     std::printf("  cold dilute cell, eta=+782: nu_mu emission %.2e MeV cm^-3 s^-1 vs LTE J %.2e -> filling time %.1e s;"
                 " kappa_E nu_mu %.2e s^-1, anu_mu %.2e s^-1\n",r.emission[0],J_sea,fill_time,r.kappa_E[0],r.kappa_E[1]);
     REQUIRE(fill_time>1e12);
+}
+
+namespace {
+// B1: one head-on state (rho, T, Ye) with eta_e from charge neutrality; kernel / fit of the per-species emissivity
+// (q) and of the LTE opacity (k: Q/B for the fit, loss/J over c for the kernel) for the three thermal channels.
+struct fit_record { double rho, T, ye, eta_e, q[3], k[3]; };
+std::vector<fit_record> fits_vs_kernel_grid() {
+    mock_eos_t eos; tau_policy_analytic_density tau;
+    channels const ch[3]={{true,false,false},{false,true,false},{false,false,true}};
+    std::vector<fit_record> out;
+    for(double ye: {0.1,0.3}) for(double T: {5.0,10.0,20.0,40.0}) for(double rho: {1e11,1e12,1e13,1e14}) {
+        double const eta_e=electron_eta(rho,ye,T), mu_e=eta_e*T;
+        eos.mu_e=mu_e; eos.mu_mu=0; eos.mu_p=0; eos.mu_n=0; eos.Xn=1-ye; eos.Xp=ye; eos.Xa=0; eos.Xh=0;
+        auto F=make_fugacity_state(eos,rho*nu_constants::RHOGF,T,ye,0.0,1.0,kXyzOrigin,tau);
+        for(int s=0;s<NUMSPECIES;++s) F.eta_nu[s]=0;
+        material const m{T,mu_e,rho/nu_constants::mnuc_cgs,1-ye,ye};
+        fit_record rec{rho,T,ye,eta_e,{0,0,0},{0,0,0}};
+        for(int c=0;c<3;++c) {
+            rates_accum fit{};
+            if(c==0) add_pair_process_emission(F,fit);
+            if(c==1) add_brems_emission(F,fit);
+            if(c==2) add_plasmon_decay_emission(F,fit,false);
+            #if GRACE_M1_NU_SPECIES >= 5
+            double const q_fit=fit.Q[NUMU];                 // one heavy species
+            #else
+            double const q_fit=fit.Q[NUX]/4.0;
+            #endif
+            double const k_fit=q_fit/black_body_energy(1.0,T,0.0);
+            kernel k; REQUIRE(k.init(m,ch[c],32,T));
+            lte_rates r; REQUIRE(lte_pair_rates(k.g,T,0,0,[&](double const* f,double const* fb){ return evaluate(k,f,fb); },r));
+            rec.q[c]=0.5*(r.emission[0]+r.emission[1])/q_fit;
+            rec.k[c]=0.5*(r.kappa_E[0]+r.kappa_E[1])/nu_constants::clight/k_fit;
+        }
+        out.push_back(rec);
+    }
+    return out;
+}
+}  // namespace
+
+// B1 (31 Oct 2026): the grey fits of the standard path against the kernel LTE rates over the head-on conditions.
+// Pairs are a fit of the same Bruenn-type rate and agree; the brems fit sits above HR98 and the plasmon model below
+// the transverse constant-mass kernel, by the documented factors.  Kirchhoff and the kernel agree on what kappa
+// means at LTE, so the opacity ratio equals the emissivity ratio.  The 20 % band is the hidden case below.
+TEST_CASE("Grey thermal fits against the kernel LTE rates over the head-on grid", "[pairs][physics][fits]") {
+    auto const recs=fits_vs_kernel_grid();
+    double lo[3]={1e300,1e300,1e300}, hi[3]={0,0,0};
+    std::printf("\n  B1 kernel/fit at eta_nu = 0: emissivity (opacity)\n  %7s %5s %5s %6s | %-16s | %-16s | %-16s\n",
+                "rho","T","Ye","eta_e","e+e- pairs","NN brems","plasmon");
+    for(auto const& r: recs) {
+        std::printf("  %7.0e %5.1f %5.2f %6.2f | %6.3f (%6.3f)  | %6.3f (%6.3f)  | %6.3f (%6.3f)\n",
+                    r.rho,r.T,r.ye,r.eta_e,r.q[0],r.k[0],r.q[1],r.k[1],r.q[2],r.k[2]);
+        for(int c=0;c<3;++c) {
+            INFO("rho " << r.rho << " T " << r.T << " Ye " << r.ye << " channel " << c);
+            REQUIRE(r.q[c]>0);
+            REQUIRE_THAT(r.k[c],WithinRel(r.q[c],0.02));
+            lo[c]=std::min(lo[c],r.q[c]); hi[c]=std::max(hi[c],r.q[c]);
+        }
+    }
+    std::printf("  kernel/fit over the grid: pairs %.3f..%.3f, brems %.3f..%.3f, plasmon %.3f..%.3f\n",
+                lo[0],hi[0],lo[1],hi[1],lo[2],hi[2]);
+    // Measured 31 Oct 2026: pairs 0.93..1.08 (0.958 wherever the electrons are non-degenerate), brems 0.38..0.96
+    // (the fit is 1.05..2.7x above HR98, worst at T = 5 MeV and 1e14 g/cc, within 5 % at 40 MeV), plasmon 0.71..1.13.
+    // Bands with margin; tighten when a fit is replaced (the strict 20 % band is the hidden case).
+    REQUIRE(lo[0]>0.85);  REQUIRE(hi[0]<1.15);
+    REQUIRE(lo[1]>0.30);  REQUIRE(hi[1]<1.05);
+    REQUIRE(lo[2]>0.60);  REQUIRE(hi[2]<1.25);
+}
+
+TEST_CASE("Grey thermal fits within 20 % of the kernel LTE rates", "[.][fits-strict]") {
+    for(auto const& r: fits_vs_kernel_grid()) for(int c=0;c<3;++c) {
+        INFO("rho " << r.rho << " T " << r.T << " Ye " << r.ye << " channel " << c << " (0 pairs, 1 brems, 2 plasmon)");
+        REQUIRE_THAT(r.q[c],WithinRel(1.0,0.2));
+    }
+}
+
+// B2 (31 Oct 2026): at eta_numu = eta, eta_anumu = -eta the kernel's emissivity of a species carries only the
+// PARTNER's blocking (its own 1 - f multiplies the transport term) and its effective opacity loss/J the rest.  The
+// Ruffert fit puts both blockings into Q and Kirchhoff makes kappa = Q/B: the equilibrium is right, the relaxation
+// rate of the degenerate side is low by the own-blocking factor 1 + exp(eta - <E>/T).  Measured against the kernel,
+// with continuity of the fit across the +-5 clamp the standard path applies to the muon flavours.
+TEST_CASE("Pair fit at the clamped muon fugacity: own-species blocking sits in Q, not in kappa",
+          "[pairs][physics][clamp]") {
+    mock_eos_t eos; tau_policy_analytic_density tau;
+    std::printf("\n  B2 e+e- pairs at (eta, -eta): kernel/fit emissivity and opacity, nu_mu side | anti-nu_mu side; Ruffert own-blocking b0\n");
+    for(auto const st: {std::pair<double,double>{1e13,10.0},std::pair<double,double>{1e12,5.0}}) {
+        double const rho=st.first, T=st.second, ye=0.1, eta_e=electron_eta(rho,ye,T), mu_e=eta_e*T;
+        eos.mu_e=mu_e; eos.mu_mu=0; eos.mu_p=0; eos.mu_n=0; eos.Xn=1-ye; eos.Xp=ye; eos.Xa=0; eos.Xh=0;
+        material const m{T,mu_e,rho/nu_constants::mnuc_cgs,1-ye,ye};
+        kernel k; REQUIRE(k.init(m,{true,false,false},32,T));
+        auto const eval=[&](double const* f,double const* fb){ return evaluate(k,f,fb); };
+        double const mean_over_T=0.5*(fermi::FDR<4,3>::get(eta_e)+fermi::FDR<4,3>::get(-eta_e));   // the fit's <E>/T
+        auto const fit_at=[&](double eta,rates_accum& fit,fugacity_state& F) {
+            F=make_fugacity_state(eos,rho*nu_constants::RHOGF,T,ye,0.0,1.0,kXyzOrigin,tau);
+            for(int s=0;s<NUMSPECIES;++s) F.eta_nu[s]=0;
+            F.eta_nu[NUMU]=eta; F.eta_nu[NUMUBAR]=-eta;
+            fit=rates_accum{}; add_pair_process_emission(F,fit);
+        };
+        double r0_ref=0, r1_ref=0, b0_ref=0;
+        for(double eta: {0.0,1.0,2.0,3.0,5.0}) {
+            rates_accum fit{}; fugacity_state F; fit_at(eta,fit,F);
+            REQUIRE(fit.Q[NUMU]==fit.Q[NUMUBAR]);                               // the fit blocks both sides in one Q
+            double const kf0=fit.Q[NUMU]/black_body_energy(1.0,T,eta), kf1=fit.Q[NUMUBAR]/black_body_energy(1.0,T,-eta);
+            lte_rates r; REQUIRE(lte_pair_rates(k.g,T,eta,-eta,eval,r));
+            double const rq0=r.emission[0]/fit.Q[NUMU], rq1=r.emission[1]/fit.Q[NUMUBAR];
+            double const rk0=r.kappa_E[0]/nu_constants::clight/kf0, rk1=r.kappa_E[1]/nu_constants::clight/kf1;
+            double const b0=1+std::exp(eta-mean_over_T), b1=1+std::exp(-eta-mean_over_T);
+            std::printf("  rho %7.0e T %4.1f eta %3.1f | %6.3f (%6.3f) | %6.3f (%6.3f) | b0 %5.2f b1 %5.3f\n",rho,T,eta,rq0,rk0,rq1,rk1,b0,b1);
+            REQUIRE_THAT(rk0,WithinRel(rq0,0.02)); REQUIRE_THAT(rk1,WithinRel(rq1,0.02));
+            if(eta==0.0) { r0_ref=rq0; r1_ref=rq1; b0_ref=b0; continue; }
+            // the degenerate side: kernel/fit grows exactly like the fit's own-blocking factor
+            REQUIRE_THAT(rq0/r0_ref,WithinRel(b0/b0_ref,0.25));
+            // the dilute side keeps its eta = 0 agreement
+            REQUIRE_THAT(rq1/r1_ref,WithinRel(1.0,0.25));
+        }
+        // continuity of the fit across the clamp value
+        rates_accum a{}, b{}; fugacity_state Fa, Fb; fit_at(4.99,a,Fa); fit_at(5.0,b,Fb);
+        REQUIRE_THAT(a.Q[NUMU],WithinRel(b.Q[NUMU],0.02));
+        REQUIRE_THAT(a.Q[NUMU]/black_body_energy(1.0,T,4.99),WithinRel(b.Q[NUMU]/black_body_energy(1.0,T,5.0),0.02));
+    }
 }
 
 // Her e+e- kernel integrated to grey production rates (unblocked, f_nu = 0) at the states listed in the file

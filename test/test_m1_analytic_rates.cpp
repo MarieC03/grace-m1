@@ -535,6 +535,47 @@ TEST_CASE("Scattering opacity: flavor-blind at equal fugacities, linear in nb",
     REQUIRE_THAT(out2.kappa_s[NUE], WithinRel(2.0 * out.kappa_s[NUE], kExactTol));
 }
 
+TEST_CASE("Heavy-flavour thermal fits: power laws in T and rho and the brems composition factor",
+          "[m1rates][kernels][scaling]") {
+    // Structure of the three grey fits with blocking off (eta_nu = -50): pairs R ~ T^8, Q ~ T^9 and no rho
+    // dependence at fixed eta_e; plasmon R ~ T^8, Q ~ T^9 at fixed eta_e; brems R ~ rho^2 T^4.5, Q ~ rho^2 T^5.5
+    // with the (X_n^2 + X_p^2 + 28/3 X_n X_p) factor.  Pins the exponents the B1 kernel comparison relies on.
+    auto state = [](double T, double rho, double Xn, double Xp) {
+        fugacity_state F = make_hot_state();
+        F.temp_mev = T; F.rho_cgs = rho; F.nb = rho * nu_constants::avogadro; F.Xn = Xn; F.Xp = Xp;
+        F.eta_e = 0.0; F.eta_nu = {{-50.0, -50.0, -50.0, -50.0, -50.0}};
+        return F;
+    };
+    auto rates = [](const fugacity_state& F, int which) {
+        rates_accum r{};
+        if (which == 0) add_pair_process_emission(F, r);
+        if (which == 1) add_plasmon_decay_emission(F, r, false);
+        if (which == 2) add_brems_emission(F, r);
+        return r;
+    };
+    const double T0 = 10.0, rho0 = 1.0e13;
+    const rates_accum ref[3] = {rates(state(T0, rho0, 0.7, 0.3), 0), rates(state(T0, rho0, 0.7, 0.3), 1),
+                                rates(state(T0, rho0, 0.7, 0.3), 2)};
+    const double pR[3] = {8.0, 8.0, 4.5}, pQ[3] = {9.0, 9.0, 5.5}, prho[3] = {0.0, 0.0, 2.0};
+    for (int w = 0; w < 3; ++w) {
+        INFO("process " << w << " (0 pairs, 1 plasmon, 2 brems)");
+        REQUIRE(ref[w].R[NUX] > 0.0);
+        for (double T : {5.0, 20.0, 40.0}) {
+            const rates_accum r = rates(state(T, rho0, 0.7, 0.3), w);
+            REQUIRE_THAT(r.R[NUX] / ref[w].R[NUX], WithinRel(std::pow(T / T0, pR[w]), 1e-10));
+            REQUIRE_THAT(r.Q[NUX] / ref[w].Q[NUX], WithinRel(std::pow(T / T0, pQ[w]), 1e-10));
+        }
+        for (double rho : {1.0e11, 1.0e14}) {
+            const rates_accum r = rates(state(T0, rho, 0.7, 0.3), w);
+            REQUIRE_THAT(r.R[NUX] / ref[w].R[NUX], WithinRel(std::pow(rho / rho0, prho[w]), 1e-10));
+            REQUIRE_THAT(r.Q[NUX] / ref[w].Q[NUX], WithinRel(std::pow(rho / rho0, prho[w]), 1e-10));
+        }
+    }
+    const rates_accum pure_n = rates(state(T0, rho0, 1.0, 0.0), 2), mixed = rates(state(T0, rho0, 0.5, 0.5), 2);
+    REQUIRE_THAT(mixed.R[NUX] / pure_n.R[NUX], WithinRel(0.25 + 0.25 + (28.0 / 3.0) * 0.25, 1e-12));
+    REQUIRE_THAT(mixed.Q[NUX] / pure_n.Q[NUX], WithinRel(0.25 + 0.25 + (28.0 / 3.0) * 0.25, 1e-12));
+}
+
 TEST_CASE("Kirchhoff inversion round-trips kappa -> (Q,R) -> kappa",
           "[m1rates][kernels]") {
     fugacity_state F = make_hot_state();
@@ -696,7 +737,7 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
     mock_eos_t eos;
     tau_policy_analytic_density tau;
 
-    // The legacy gate is smooth, not a hard cutoff. Verify its actual factor
+    // The gate is smooth, not a hard cutoff. Verify its actual factor
     // for emission AND absorption; kappa_s intentionally survives.
     SECTION("cold matter suppresses muon emission") {
         auto const F=make_fugacity_state(eos,1.0e13*RHOGF,1.0,0.1,0.05,1.0,kXyzOrigin,tau);
@@ -716,6 +757,34 @@ TEST_CASE("compute_all_species: muon species suppressed below threshold",
             REQUIRE_THAT(all.out[s].eta_N,WithinRel(R_to_code(gate*raw.R[s],1),1e-12));
             REQUIRE_THAT(all.out[s].kappa_a,WithinRel(kappa_to_code(gate*raw.kappa_a[s],1),1e-12));
             REQUIRE_THAT(all.out[s].kappa_n,WithinRel(kappa_to_code(gate*raw.kappa_n[s],1),1e-12));
+            // the same S on (Q, kappa_a) and (R, kappa_n): E_eq = Q/kappa_a and n_eq = R/kappa_n are not gated
+            REQUIRE_THAT(all.out[s].eta_E / all.out[s].kappa_a,
+                         WithinRel(Q_mev_to_code(raw.Q[s],1) / kappa_to_code(raw.kappa_a[s],1), 1e-10));
+            REQUIRE_THAT(all.out[s].eta_N / all.out[s].kappa_n,
+                         WithinRel(R_to_code(raw.R[s],1) / kappa_to_code(raw.kappa_n[s],1), 1e-10));
+        }
+    }
+
+    SECTION("the gate function: bounded, monotone, continuous, 1/2 at its two scales, open in hot dense matter") {
+        // Scales 1e11 g/cc (power 5) and 2.5 MeV (power 6).  A1 (31 Oct 2026): the npe-mu Weakhub table itself
+        // carries a density factor of the same form with rho0 = 1e10 g/cc; this gate acts on top of it.
+        REQUIRE_THAT(muon_rate_gate(1.0e11, 1.0e3), WithinRel(0.5, 1e-12));
+        REQUIRE_THAT(muon_rate_gate(1.0e16, 2.5),   WithinRel(0.5, 1e-12));
+        REQUIRE(muon_rate_gate(1.0e13, 10.0) > 0.999);
+        REQUIRE(muon_rate_gate(1.0e9, 1.0) < 1.0e-12);
+        double prev = 0.0;
+        for (int i = 0; i <= 140; ++i) {                         // rho 1e8..1e15 g/cc at T = 50 MeV
+            const double rho = std::pow(10.0, 8.0 + 0.05 * i), S = muon_rate_gate(rho, 50.0);
+            REQUIRE(S > 0.0); REQUIRE(S <= 1.0); REQUIRE(S >= prev);
+            REQUIRE(std::abs(muon_rate_gate(rho * (1.0 + 1.0e-8), 50.0) - S) < 1.0e-7);
+            prev = S;
+        }
+        prev = 0.0;
+        for (int i = 0; i <= 100; ++i) {                         // T 0.3..30 MeV at rho = 1e14 g/cc
+            const double T = 0.3 * std::pow(100.0, 0.01 * i), S = muon_rate_gate(1.0e14, T);
+            REQUIRE(S > 0.0); REQUIRE(S <= 1.0); REQUIRE(S >= prev);
+            REQUIRE(std::abs(muon_rate_gate(1.0e14, T * (1.0 + 1.0e-8)) - S) < 1.0e-7);
+            prev = S;
         }
     }
 
@@ -807,6 +876,36 @@ TEST_CASE("compute_all_species: the neutrino-temperature factor scales the opaci
     REQUIRE(on.out[NUX].kappa_s == off.out[NUX].kappa_s);
     REQUIRE(on.out[NUX].eta_E   == off.out[NUX].eta_E);
 
+    SECTION("hot nux radiation scales kappa_s only, the muon flavours are never corrected, eps = 0 is inert") {
+        double hot[NUMSPECIES] = {0.0};
+        for (int s = 0; s < NUMSPECIES; ++s) hot[s] = 3.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[s]);
+        const nu_rates_all_out h = compute_all_species(F, true, true, true, true, kXyzOrigin, tau, true, hot);
+        REQUIRE(off.out[NUX].kappa_s > 1.0e-50);
+        REQUIRE_THAT(h.out[NUX].kappa_s, WithinRel(9.0 * off.out[NUX].kappa_s, 1e-12));
+        REQUIRE(h.out[NUX].kappa_a == off.out[NUX].kappa_a);
+        REQUIRE(h.out[NUX].kappa_n == off.out[NUX].kappa_n);
+        REQUIRE(h.out[NUX].eta_E   == off.out[NUX].eta_E);
+        REQUIRE(h.out[NUX].eta_N   == off.out[NUX].eta_N);
+        for (int s : {int(NUMU), int(NUMUBAR)}) {
+            INFO("species " << s);
+            REQUIRE(h.out[s].eta_E   == off.out[s].eta_E);
+            REQUIRE(h.out[s].eta_N   == off.out[s].eta_N);
+            REQUIRE(h.out[s].kappa_a == off.out[s].kappa_a);
+            REQUIRE(h.out[s].kappa_n == off.out[s].kappa_n);
+            REQUIRE(h.out[s].kappa_s == off.out[s].kappa_s);
+        }
+        const double zero[NUMSPECIES] = {0.0, 0.0, 0.0, 0.0, 0.0};
+        const nu_rates_all_out z = compute_all_species(F, true, true, true, true, kXyzOrigin, tau, true, zero);
+        for (int s = 0; s < NUMSPECIES; ++s) {
+            INFO("species " << s);
+            REQUIRE(z.out[s].eta_E   == off.out[s].eta_E);
+            REQUIRE(z.out[s].eta_N   == off.out[s].eta_N);
+            REQUIRE(z.out[s].kappa_a == off.out[s].kappa_a);
+            REQUIRE(z.out[s].kappa_n == off.out[s].kappa_n);
+            REQUIRE(z.out[s].kappa_s == off.out[s].kappa_s);
+        }
+    }
+
     SECTION("temperature_correction_emission also scales Q and R (FIL 'corrected' routine)") {
         const nu_rates_all_out emis = compute_all_species(
             F, true, true, true, true, kXyzOrigin, tau, true, eps, /*temp_correction_emission=*/true);
@@ -829,12 +928,12 @@ TEST_CASE("compute_all_species: the neutrino-temperature factor scales the opaci
 }
 
 namespace {
-// Constant-valued 5-species Weakhub table on a 2^4 grid bracketing (lrho, lT); the
-// lookup returns the same opacities anywhere inside, so only the assembly is tested.
-weakhub::device_handle constant_weakhub_handle(double lrho, double ltemp)
+// Constant-valued Weakhub table with nspec slots on a 2^4 grid bracketing (lrho, lT): slot s of table t holds
+// (1 + t) x (1 + s) x 1e-6 cm^-1 everywhere inside, so only the assembly of the rates is tested.
+weakhub::device_handle constant_weakhub_handle(double lrho, double ltemp, int nspec = 5)
 {
     weakhub::device_handle h;
-    h.n_species_table = 5;
+    h.n_species_table = nspec;
     h.nrho = 2; h.ntemp = 2; h.nye = 2; h.nymu = 2;
     const double ax[4][2] = {{lrho - 1.0, lrho + 1.0}, {ltemp - 1.0, ltemp + 1.0},
                              {0.01, 0.5}, {-12.0, -1.0}};
@@ -849,16 +948,49 @@ weakhub::device_handle constant_weakhub_handle(double lrho, double ltemp)
         m(0) = ax[a][0]; m(1) = ax[a][1];
         Kokkos::deep_copy(*axes[a], m);
     }
-    const int ntot = 5 * 16;
+    const int ntot = nspec * 16;
     Kokkos::View<double*>* tabs[3] = {&h.kappa_a_en_table, &h.kappa_a_num_table, &h.kappa_s_table};
     for (int t = 0; t < 3; ++t) {
         *tabs[t] = Kokkos::View<double*>("wh_tab", ntot);
         auto m = Kokkos::create_mirror_view(*tabs[t]);
-        for (int i = 0; i < ntot; ++i) m(i) = 1.0e-6 * (1 + t) * (1 + i % 5);   // cm^-1
+        for (int i = 0; i < ntot; ++i) m(i) = 1.0e-6 * (1 + t) * (1 + i % nspec);   // cm^-1
         Kokkos::deep_copy(*tabs[t], m);
     }
     h.valid = true;
     return h;
+}
+
+// The production call site is device code: evaluate compute_all_species_weakhub in a kernel (analytic extras off)
+// and copy the five outputs of every species back, index s * 5 + q with q = eta_E, eta_N, kappa_a, kappa_n, kappa_s.
+std::array<double, 5 * NUMSPECIES> weakhub_rates_on_device(
+    weakhub::device_handle const& h, fugacity_state const& F, tau_policy_analytic_density const& tau,
+    bool temp_corr = false, const double* eps = nullptr, bool temp_corr_emission = false)
+{
+    Kokkos::View<double*> out("wh_rates_out", 5 * NUMSPECIES);
+    Kokkos::View<double*> eps_d("wh_rates_eps", NUMSPECIES);
+    {
+        auto m = Kokkos::create_mirror_view(eps_d);
+        for (int s = 0; s < NUMSPECIES; ++s) m(s) = eps ? eps[s] : 0.0;
+        Kokkos::deep_copy(eps_d, m);
+    }
+    Kokkos::parallel_for("wh_rates", 1, KOKKOS_LAMBDA(int) {
+        double e[NUMSPECIES];
+        for (int s = 0; s < NUMSPECIES; ++s) e[s] = eps_d(s);
+        const double xyz[3] = {0.0, 0.0, 0.0};
+        const nu_rates_all_out r = compute_all_species_weakhub(
+            h, F, false, false, false, xyz, tau, temp_corr, e, temp_corr_emission);
+        for (int s = 0; s < NUMSPECIES; ++s) {
+            out(5 * s)     = r.out[s].eta_E;   out(5 * s + 1) = r.out[s].eta_N;
+            out(5 * s + 2) = r.out[s].kappa_a; out(5 * s + 3) = r.out[s].kappa_n;
+            out(5 * s + 4) = r.out[s].kappa_s;
+        }
+    });
+    Kokkos::fence();
+    auto m = Kokkos::create_mirror_view(out);
+    Kokkos::deep_copy(m, out);
+    std::array<double, 5 * NUMSPECIES> a{};
+    for (int i = 0; i < 5 * NUMSPECIES; ++i) a[i] = m(i);
+    return a;
 }
 }  // namespace
 
@@ -877,6 +1009,8 @@ TEST_CASE("compute_all_species_weakhub: temperature_correction_emission scales Q
     double eps[NUMSPECIES] = {0.0};
     eps[NUE]    =  3.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUE]);
     eps[NUEBAR] = 10.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[NUEBAR]);
+    // Hot radiation in the other species too: nux may scale kappa_s only, the muon flavours nothing (T_nu = 3 T).
+    for (int s : {int(NUMU), int(NUMUBAR), int(NUX)}) eps[s] = 3.0 * T_mev / fermi::FDR<2,3>::get(F.eta_nu[s]);
     const double fact[2] = {9.0, 100.0};
 
     // Device-side assembly (production call site), three variants copied back.
@@ -918,12 +1052,75 @@ TEST_CASE("compute_all_species_weakhub: temperature_correction_emission scales Q
         REQUIRE_THAT(val(2, s, 1), WithinRel(fact[s] * val(0, s, 1), 1e-12));
         for (int q = 2; q < 5; ++q) REQUIRE(val(2, s, q) == val(1, s, q));
     }
+    // nux: the factor (3 T -> 9) touches kappa_s alone; numu, anumu are never corrected (the table carries their
+    // spectral information); the emission flag changes nothing for the three.
+    REQUIRE(val(0, NUX, 4) > 1.0e-50);
+    REQUIRE_THAT(val(1, NUX, 4), WithinRel(9.0 * val(0, NUX, 4), 1e-12));
+    for (int q = 0; q < 4; ++q) REQUIRE(val(1, NUX, q) == val(0, NUX, q));
+    for (int s : {int(NUMU), int(NUMUBAR)})
+        for (int q = 0; q < 5; ++q) {
+            INFO("species " << s << " quantity " << q);
+            REQUIRE(val(1, s, q) == val(0, s, q));
+        }
     for (int s : {int(NUMU), int(NUMUBAR), int(NUX)})
         for (int q = 0; q < 5; ++q) {
             INFO("species " << s << " quantity " << q);
             REQUIRE(val(2, s, q) == val(1, s, q));
         }
 }
+
+#if GRACE_M1_NU_SPECIES >= 3
+TEST_CASE("compute_all_species_weakhub: a 6-species table maps its slots per build, the heavy-lepton multiplicity "
+          "enters the emission once, and the muon gate scales emission and absorption together",
+          "[m1rates][integration][weakhub][species][gate]") {
+    // Table slots 0..5 = nue, anue, numu, anumu, nutau, anutau, tags (1 + slot) x 1e-6 cm^-1 (x2 kappa_n, x3 kappa_s).
+    // kappa is intensive: a clumped species holds the MEAN of its slots and the species count enters only through
+    // g_nu in the Kirchhoff emission, so E_eq = eta_E / kappa_a is g_nu single-species black bodies.
+    using namespace nu_constants;
+    mock_eos_t eos;
+    tau_policy_analytic_density tau;
+#if GRACE_M1_NU_SPECIES >= 5
+    const double tag[NUMSPECIES]  = {1.0, 2.0, 3.0, 4.0, 5.5};
+    const double g_nu[NUMSPECIES] = {1.0, 1.0, 1.0, 1.0, 2.0};
+#else
+    const double tag[NUMSPECIES]  = {1.0, 2.0, 0.0, 0.0, 4.5};
+    const double g_nu[NUMSPECIES] = {1.0, 1.0, 0.0, 0.0, 4.0};
+#endif
+    for (double T_mev : {10.0, 1.0}) {          // gate open (S ~ 1) and nearly closed (S ~ 4e-3) at rho = 1e13 g/cc
+        const fugacity_state F = make_fugacity_state(eos, 1.0e13 * RHOGF, T_mev, 0.1, 1.0e-3, 1.0, kXyzOrigin, tau);
+        const weakhub::device_handle h = constant_weakhub_handle(std::log(F.rho_code), std::log(T_mev), 6);
+        const auto r = weakhub_rates_on_device(h, F, tau);
+        const double S = muon_rate_gate(F.rho_cgs, F.temp_mev);
+        INFO("T = " << T_mev << " MeV, gate S = " << S);
+        for (int s = 0; s < NUMSPECIES; ++s) {
+            INFO("species " << s);
+#if GRACE_M1_NU_SPECIES >= 5
+            const double gate = (s == NUMU || s == NUMUBAR) ? S : 1.0;
+#else
+            const double gate = 1.0;
+#endif
+            if (tag[s] == 0.0) {                 // slots this build does not evolve: every output at the floor
+                for (int q = 0; q < 5; ++q) REQUIRE(r[5 * s + q] == weakhub::kappa_floor_code);
+                continue;
+            }
+            const double ka = 1.0e-6 * tag[s], kn = 2.0e-6 * tag[s], ks = 3.0e-6 * tag[s];
+            REQUIRE_THAT(r[5 * s + 2], WithinRel(kappa_to_code(gate * ka, 1.0), 1e-12));
+            REQUIRE_THAT(r[5 * s + 3], WithinRel(kappa_to_code(gate * kn, 1.0), 1e-12));
+            REQUIRE_THAT(r[5 * s + 4], WithinRel(kappa_to_code(ks, 1.0), 1e-12));       // scattering is never gated
+            REQUIRE_THAT(r[5 * s], WithinRel(
+                Q_mev_to_code(gate * ka * black_body_energy(g_nu[s], F.temp_mev, F.eta_nu[s]), 1.0), 1e-12));
+            REQUIRE_THAT(r[5 * s + 1], WithinRel(
+                R_to_code(gate * kn * black_body_number(g_nu[s], F.temp_mev, F.eta_nu[s]), 1.0), 1e-12));
+            // the equilibrium the collision term relaxes to: g_nu single-species black bodies, whatever the gate
+            REQUIRE_THAT(r[5 * s] / r[5 * s + 2], WithinRel(
+                g_nu[s] * Q_mev_to_code(black_body_energy(1.0, F.temp_mev, F.eta_nu[s]), 1.0) / kappa_to_code(1.0, 1.0), 1e-10));
+        }
+#if GRACE_M1_NU_SPECIES >= 5
+        if (T_mev < 2.0) { REQUIRE(S > 0.0); REQUIRE(S < 0.01); }
+#endif
+    }
+}
+#endif
 
 TEST_CASE("compute_species wrapper agrees with compute_all_species",
           "[m1rates][integration]") {
