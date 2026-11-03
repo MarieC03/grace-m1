@@ -147,6 +147,36 @@ class eos_base_t {
         return static_cast<eos_impl_t const*>(this)->press_temp__eps_rho_ye_ymu_impl(temp,eps,rho,ye,ymu,err) ;
     }
     /**
+     * @brief Pressure given eps, rho, ye and ymu for the c2p residual; temp carries a
+     *        temperature seed in and the inversion result out.  The default _impl
+     *        (EOS types without a warm-started inversion) ignores the seed.
+     */
+    double GRACE_HOST_DEVICE
+    press_temp_seeded__eps_rho_ye_ymu(double& temp, double& eps, double& rho, double& ye, double& ymu, error_type& err) const
+    {
+        return static_cast<eos_impl_t const*>(this)->press_temp_seeded__eps_rho_ye_ymu_impl(temp,eps,rho,ye,ymu,err) ;
+    }
+    double GRACE_HOST_DEVICE
+    press_temp_seeded__eps_rho_ye_ymu_impl(double& temp, double& eps, double& rho, double& ye, double& ymu, error_type& err) const
+    {
+        return static_cast<eos_impl_t const*>(this)->press__eps_rho_ye_ymu_impl(eps,rho,ye,ymu,err) ;
+    }
+    /**
+     * @brief Pressure, temperature and entropy given eps, rho, ye and ymu: the c2p
+     *        final state, without the sound speed.  temp seeds the inversion as above.
+     */
+    double GRACE_HOST_DEVICE
+    press_temp_entropy__eps_rho_ye_ymu(double& temp, double& entropy, double& eps, double& rho, double& ye, double& ymu, error_type& err) const
+    {
+        return static_cast<eos_impl_t const*>(this)->press_temp_entropy__eps_rho_ye_ymu_impl(temp,entropy,eps,rho,ye,ymu,err) ;
+    }
+    double GRACE_HOST_DEVICE
+    press_temp_entropy__eps_rho_ye_ymu_impl(double& temp, double& entropy, double& eps, double& rho, double& ye, double& ymu, error_type& err) const
+    {
+        double h, csnd2 ;
+        return static_cast<eos_impl_t const*>(this)->press_h_csnd2_temp_entropy__eps_rho_ye_ymu_impl(h,csnd2,temp,entropy,eps,rho,ye,ymu,err) ;
+    }
+    /**
      * @brief Get pressure given temperature, rho, ye and ymu.
      *
      * @param temp Temperature.

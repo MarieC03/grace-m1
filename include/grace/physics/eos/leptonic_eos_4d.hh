@@ -241,6 +241,7 @@ class leptonic_eos_4d_t
     {
         lrhomin  = bar_logrho[0] ; lrhomax  = bar_logrho[bar_logrho.size()-1] ;
         ltempmin = bar_logT[0]   ; ltempmax = bar_logT[bar_logT.size()-1]    ;
+        ltemp_step_ = ( nT > 1 ) ? bar_logT[1] - bar_logT[0] : 1.0 ;
         // Default until the loader resolves the requested floor; never the
         // bare table boundary (see limit_temp).
         set_temperature_floor(-1.) ;
@@ -318,6 +319,48 @@ class leptonic_eos_4d_t
         }
         double const ltemp = ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
         temp = Kokkos::exp(ltemp) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
+    }
+
+    // c2p residual: temp carries the inversion seed in (0 = none) and the result out.
+    double GRACE_HOST_DEVICE
+    press_temp_seeded__eps_rho_ye_ymu_impl(double& temp, double& eps, double& rho,
+                                           double& ye, double& ymu, err_t& err) const
+    {
+        limit_rho(rho, err) ;
+        limit_ye (ye,  err) ;
+        limit_ymu(ye, ymu, err) ;
+        double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            temp = Kokkos::exp(lt) ;
+            double e, s, c ;
+            return fe_state(lrho, lt, ye, ymu, e, s, c) ;
+        }
+        double const ltemp = ltemp__eps_lrho_ye_ymu_seeded(eps, lrho, ye, ymu, err, Kokkos::log(temp)) ;
+        temp = Kokkos::exp(ltemp) ;
+        return total_press(lrho, ltemp, ye, ymu) ;
+    }
+
+    // c2p final state: press_h_csnd2_temp_entropy__eps_rho_ye_ymu_impl without the sound
+    // speed (ten total_* evaluations with add_ele_contribution), seeded like the residual.
+    double GRACE_HOST_DEVICE
+    press_temp_entropy__eps_rho_ye_ymu_impl(double& temp, double& entropy, double& eps,
+                                            double& rho, double& ye, double& ymu, err_t& err) const
+    {
+        limit_rho(rho, err) ;
+        limit_ye (ye,  err) ;
+        limit_ymu(ye, ymu, err) ;
+        double const lrho  = Kokkos::log(rho) ;
+        if ( fe_interp ) {
+            double const lt = fe_ltemp__eps(eps, lrho, ye, ymu, err) ;
+            temp = Kokkos::exp(lt) ;
+            double e, c ;
+            return fe_state(lrho, lt, ye, ymu, e, entropy, c) ;
+        }
+        double const ltemp = ltemp__eps_lrho_ye_ymu_seeded(eps, lrho, ye, ymu, err, Kokkos::log(temp)) ;
+        temp    = Kokkos::exp(ltemp) ;
+        entropy = total_entropy(lrho, ltemp, ye, ymu) ;
         return total_press(lrho, ltemp, ye, ymu) ;
     }
 
@@ -844,6 +887,7 @@ class leptonic_eos_4d_t
     double temp_ceil_ {0.} ;
     double lrhomin, lrhomax ;
     double ltempmin, ltempmax ;
+    double ltemp_step_ = 1.0 ;   ///< log-T grid spacing: first probe of the seeded inversion
     // If true, add electronic pressure/eps/entropy on top of the
     // baryon table.  Keep false when the baryon table already
     // contains the electron contribution (the usual case for SFHo,
@@ -1238,6 +1282,49 @@ class leptonic_eos_4d_t
             return total_eps(lrho, lt, ye, ymu) - eps ;
         } ;
         return utils::brent(rootfun, ltempmin, ltempmax, 1e-12) ;
+    }
+
+    // ----------------------------------------------------------
+    //  Warm-started inversion for c2p: probe the seed, grow a
+    //  bracket by doubling steps (first a quarter grid spacing),
+    //  Brent inside it.  A table edge met without a sign change is
+    //  the clamp of the cold path; an unusable seed is the cold path.
+    // ----------------------------------------------------------
+    KOKKOS_INLINE_FUNCTION double
+    ltemp__eps_lrho_ye_ymu_seeded(double& eps, double lrho, double ye, double ymu,
+                                  err_t& err, double lt_seed) const
+    {
+        if ( !(lt_seed >= ltempmin && lt_seed <= ltempmax) )    // NaN or outside the table
+            return ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;
+        auto rootfun = [this, lrho, ye, ymu, eps] (double lt) {
+            return total_eps(lrho, lt, ye, ymu) - eps ;
+        } ;
+        double a  = lt_seed ;
+        double ea = total_eps(lrho, a, ye, ymu) ;
+        double fa = ea - eps ;
+        if ( fa == 0.0 ) return a ;
+        bool const up = fa < 0.0 ;                                // eps grows with T
+        double h = 0.25 * ltemp_step_ ;
+        for (int k = 0; k < 40; ++k) {
+            double b = up ? lt_seed + h : lt_seed - h ;
+            bool const edge = up ? (b >= ltempmax) : (b <= ltempmin) ;
+            if ( edge ) b = up ? ltempmax : ltempmin ;
+            double const eb = ( b == a ) ? ea : total_eps(lrho, b, ye, ymu) ;   // seed already on the edge
+            double const fb = eb - eps ;
+            if ( fa * fb <= 0.0 )
+                return up ? utils::brent_bracketed(rootfun, a, b, fa, fb, 1e-12)
+                          : utils::brent_bracketed(rootfun, b, a, fb, fa, 1e-12) ;
+            if ( edge ) {                       // eps beyond the table: the clamp of the cold path
+                bool const significant = up
+                    ? eps > eb + eps_bracket_tol_ * Kokkos::fabs(eb)
+                    : eps < eb - eps_bracket_tol_ * Kokkos::fabs(eb) ;
+                eps = eb ;
+                if ( significant ) err.set(up ? EOS_EPS_TOO_HIGH : EOS_EPS_TOO_LOW) ;
+                return b ;
+            }
+            a = b ; ea = eb ; fa = fb ; h *= 2.0 ;
+        }
+        return ltemp__eps_lrho_ye_ymu(eps, lrho, ye, ymu, err) ;   // not reached with a monotone table
     }
 
     KOKKOS_INLINE_FUNCTION double

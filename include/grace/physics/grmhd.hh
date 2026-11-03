@@ -383,6 +383,7 @@ struct grmhd_equations_system_t
         aux(BZ_) = cons[BSZL] / metric.sqrtg() ;
         c2p_err_t c2p_errors ;
         grmhd_prims_array_t prims ;
+        prims[TEMPL] = aux(TEMP_) ;   // previous temperature: seed of the EOS inversion in c2p
         conservs_to_prims<eos_t>(
             cons, prims, metric, this->_eos,
             this->atmo_params, this->excision_params, this->c2p_params, rtp,

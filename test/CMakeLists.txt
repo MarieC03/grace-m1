@@ -260,7 +260,8 @@ add_test(NAME z4c_partner_equivariance_test COMMAND mpirun -n 1 ./z4c_partner_eq
 
 # Leptonic EOS baryon pressure interpolated as ln(P_b + P_e(Y_e=Y_q)) on synthetic
 # in-memory tables: node agreement with the linear mode, power-law exactness, the
-# add_ele=false path, the positivity guard, P->T and cs2.  No table file needed.
+# add_ele=false path, the positivity guard, P->T and cs2, and the seeded (c2p warm-start)
+# T inversion against the cold Brent.  No table file needed.
 add_kokkos_test(leptonic_logpress_test test_leptonic_logpress.cpp)
 add_test(NAME leptonic_logpress_test COMMAND mpirun -n 1 ./leptonic_logpress_test)
 set_tests_properties(leptonic_logpress_test PROPERTIES

@@ -407,3 +407,147 @@ TEST_CASE("leptonic log pressure: P -> T inversion and sound speed",
         REQUIRE(cs[n] < 1.) ;
     }
 }
+
+// ---------------------------------------------------------------------------
+//  Seeded temperature inversion (the c2p warm start) against the cold Brent.
+// ---------------------------------------------------------------------------
+namespace {
+enum : int { SEED_NONE = 0, SEED_FACTOR = 1, SEED_ABS = 2 } ;
+enum : int { OUT_LTEMP = 0, OUT_EPS = 1, OUT_ERR = 2, OUT_PRESS = 3 } ;
+
+// eps(T*)*eps_scale -> (log T, eps, error bits, P) through the seeded entry point or the cold one.
+struct inversion_f {
+    bool seeded ; int seed_kind ; double seed_value ; double eps_scale ; int out ;
+    KOKKOS_INLINE_FUNCTION double operator()(E const& eos, query_t q) const {
+        eos_err_t err ; double t = q.temp, r = q.rho, y = q.ye, m = q.ymu ;
+        double eps = eos.eps__temp_rho_ye_ymu(t, r, y, m, err) * eps_scale ;
+        double T1 = ( seed_kind == SEED_FACTOR ) ? seed_value * q.temp
+                  : ( seed_kind == SEED_ABS )    ? seed_value : 0.0 ;
+        eos_err_t e2 ;
+        double const p = seeded ? eos.press_temp_seeded__eps_rho_ye_ymu(T1, eps, r, y, m, e2)
+                                : eos.press_temp__eps_rho_ye_ymu(T1, eps, r, y, m, e2) ;
+        if ( out == OUT_LTEMP ) return Kokkos::log(T1) ;
+        if ( out == OUT_EPS )   return eps ;
+        if ( out == OUT_PRESS ) return p ;
+        return ( e2.test(grace::EOS_EPS_TOO_LOW) ? 1.0 : 0.0 ) + ( e2.test(grace::EOS_EPS_TOO_HIGH) ? 2.0 : 0.0 ) ;
+    }
+} ;
+// The c2p final-state entry point (seeded, no sound speed) against the full one: relative differences.
+struct final_state_f {
+    int out ;   // 0 press, 1 temp, 2 entropy
+    KOKKOS_INLINE_FUNCTION double operator()(E const& eos, query_t q) const {
+        eos_err_t err ; double t = q.temp, r = q.rho, y = q.ye, m = q.ymu ;
+        double const eps = eos.eps__temp_rho_ye_ymu(t, r, y, m, err) ;
+        double e1 = eps, e2 = eps, T1 = 0.9 * q.temp, T2 = 0.0, s1, s2, h, cs2 ;
+        eos_err_t ea, eb ;
+        double const p1 = eos.press_temp_entropy__eps_rho_ye_ymu(T1, s1, e1, r, y, m, ea) ;
+        double const p2 = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(h, cs2, T2, s2, e2, r, y, m, eb) ;
+        if ( out == 0 ) return Kokkos::fabs(p1 / p2 - 1.) ;
+        if ( out == 1 ) return Kokkos::fabs(T1 / T2 - 1.) ;
+        return Kokkos::fabs(s1 - s2) / Kokkos::fabs(s2) ;
+    }
+} ;
+struct seed_t { int kind ; double value ; } ;
+} // namespace
+
+TEST_CASE("leptonic seeded T inversion: every seed lands on the cold Brent root",
+          "[leptonic][inversion][seeded]")
+{
+    auto pb_of = [](double rho, double T, double y, double) { return 1e-3*rho*rho*(1. + 0.1*T) + 1e-4*y ; } ;
+    tables_t t = make_tables(pb_of, true) ;
+    double const nan = std::numeric_limits<double>::quiet_NaN() ;
+    std::vector<seed_t> const seeds = {
+        {SEED_NONE, 0.}, {SEED_FACTOR, 1.}, {SEED_FACTOR, 1. + 1e-3}, {SEED_FACTOR, 1. - 1e-3},
+        {SEED_FACTOR, 1.3}, {SEED_FACTOR, 0.7}, {SEED_FACTOR, 3.}, {SEED_FACTOR, nan}, {SEED_FACTOR, -1.},
+        {SEED_ABS, std::exp(lt_(0))}, {SEED_ABS, std::exp(lt_(NT-1))}, {SEED_ABS, 1e300}, {SEED_ABS, 0.} } ;
+    for (bool add_ele : {true, false}) for (bool log_press : {false, true}) {
+        E eos = make_eos(t, t.bar, add_ele, log_press) ;
+        auto const q    = off_node_queries() ;
+        auto const cold = eval(eos, q, inversion_f{false, SEED_NONE, 0., 1., OUT_LTEMP}) ;
+        auto const pc   = eval(eos, q, inversion_f{false, SEED_NONE, 0., 1., OUT_PRESS}) ;
+        auto const eps0 = eval(eos, q, eps_f{}) ;
+        for (auto const& s : seeds) {
+            auto const lt = eval(eos, q, inversion_f{true, s.kind, s.value, 1., OUT_LTEMP}) ;
+            auto const ep = eval(eos, q, inversion_f{true, s.kind, s.value, 1., OUT_EPS}) ;
+            auto const er = eval(eos, q, inversion_f{true, s.kind, s.value, 1., OUT_ERR}) ;
+            auto const ps = eval(eos, q, inversion_f{true, s.kind, s.value, 1., OUT_PRESS}) ;
+            for (std::size_t n=0; n<q.size(); ++n) {
+                INFO("add_ele " << add_ele << " log_press " << log_press << " seed kind " << s.kind << " value " << s.value
+                     << " rho " << q[n].rho << " T " << q[n].temp << " ye " << q[n].ye << " ymu " << q[n].ymu
+                     << " logT seeded " << lt[n] << " cold " << cold[n]) ;
+                REQUIRE(std::fabs(lt[n] - cold[n]) < 1e-10) ;
+                REQUIRE(std::fabs(std::exp(lt[n]) / q[n].temp - 1.) < 1e-9) ;
+                REQUIRE(ep[n] == eps0[n]) ;               // interior state: eps untouched
+                REQUIRE(er[n] == 0.) ;
+                REQUIRE(std::fabs(ps[n] / pc[n] - 1.) < 1e-10) ;
+            }
+        }
+    }
+}
+
+TEST_CASE("leptonic seeded T inversion: eps beyond the table clamps and flags like the cold path",
+          "[leptonic][inversion][seeded][clamp]")
+{
+    auto pb_of = [](double rho, double T, double, double) { return 1e-3*rho*rho*(1. + 0.1*T) ; } ;
+    tables_t t = make_tables(pb_of, true) ;
+    E eos = make_eos(t, t.bar, true, true) ;
+    double const Tmin = std::exp(lt_(0)), Tmax = std::exp(lt_(NT-1)) ;
+    std::vector<query_t> lo, hi ;
+    for (int i=0; i<NR-1; ++i) for (double ymu : {1e-6, 0.02}) {
+        lo.push_back({ std::exp(lr_(i) + 0.3), Tmin, yq_(2) + 0.02, ymu }) ;
+        hi.push_back({ std::exp(lr_(i) + 0.3), Tmax, yq_(2) + 0.02, ymu }) ;
+    }
+    struct case_t { std::vector<query_t> const* q ; double scale ; double flag ; double lt_edge ; } ;
+    std::vector<case_t> const cases = {
+        { &lo, 1. - 1e-12, 0., lt_(0) },    { &lo, 1. - 1e-6, 1., lt_(0) },        // below eps(Tmin): silent / flagged
+        { &hi, 1. + 1e-12, 0., lt_(NT-1) }, { &hi, 1. + 1e-6, 2., lt_(NT-1) } } ;  // above eps(Tmax)
+    std::vector<seed_t> const seeds = {
+        {SEED_NONE, 0.}, {SEED_ABS, Tmin}, {SEED_ABS, Tmax}, {SEED_FACTOR, 1.}, {SEED_ABS, 0.5*(Tmin+Tmax)} } ;
+    for (auto const& c : cases) {
+        auto const lt0 = eval(eos, *c.q, inversion_f{false, SEED_NONE, 0., c.scale, OUT_LTEMP}) ;
+        auto const ep0 = eval(eos, *c.q, inversion_f{false, SEED_NONE, 0., c.scale, OUT_EPS}) ;
+        auto const er0 = eval(eos, *c.q, inversion_f{false, SEED_NONE, 0., c.scale, OUT_ERR}) ;
+        for (auto const& s : seeds) {
+            auto const lt = eval(eos, *c.q, inversion_f{true, s.kind, s.value, c.scale, OUT_LTEMP}) ;
+            auto const ep = eval(eos, *c.q, inversion_f{true, s.kind, s.value, c.scale, OUT_EPS}) ;
+            auto const er = eval(eos, *c.q, inversion_f{true, s.kind, s.value, c.scale, OUT_ERR}) ;
+            for (std::size_t n=0; n<c.q->size(); ++n) {
+                INFO("scale " << c.scale << " seed kind " << s.kind << " value " << s.value
+                     << " rho " << (*c.q)[n].rho << " ymu " << (*c.q)[n].ymu << " logT " << lt[n] << " cold " << lt0[n]) ;
+                REQUIRE(std::fabs(lt0[n] - c.lt_edge) < 1e-14) ;   // log(exp(edge)) round-trips to an ulp
+                REQUIRE(er0[n] == c.flag) ;
+                REQUIRE(lt[n] == lt0[n]) ;      // the table edge exactly
+                REQUIRE(ep[n] == ep0[n]) ;      // eps clamped to the same table value
+                REQUIRE(er[n] == er0[n]) ;
+            }
+        }
+    }
+}
+
+TEST_CASE("leptonic c2p final state without the sound speed matches the full evaluation",
+          "[leptonic][inversion][final]")
+{
+    auto pb_of = [](double rho, double T, double y, double) { return 1e-3*rho*rho*(1. + 0.1*T) + 1e-4*y ; } ;
+    tables_t t = make_tables(pb_of, true) ;
+    for (bool add_ele : {true, false}) for (bool log_press : {false, true}) {
+        E eos = make_eos(t, t.bar, add_ele, log_press) ;
+        auto const q = off_node_queries() ;
+        for (int out : {0, 1, 2}) {
+            auto const d = eval(eos, q, final_state_f{out}) ;
+            for (std::size_t n=0; n<q.size(); ++n) {
+                INFO("add_ele " << add_ele << " log_press " << log_press << " out " << out
+                     << " rho " << q[n].rho << " T " << q[n].temp << " diff " << d[n]) ;
+                REQUIRE(d[n] < 1e-10) ;
+            }
+        }
+    }
+}
+
+TEST_CASE("brent_bracketed reproduces brent bitwise", "[rootfinding]")
+{
+    auto f = [](double x) { return x*x*x - 2.*x - 5. ; } ;
+    auto g = [](double x) { return std::cos(x) - x ; } ;
+    REQUIRE(utils::brent(f, 2., 3., 1e-12) == utils::brent_bracketed(f, 2., 3., f(2.), f(3.), 1e-12)) ;
+    REQUIRE(utils::brent(g, 0., 1., 1e-12) == utils::brent_bracketed(g, 0., 1., g(0.), g(1.), 1e-12)) ;
+    REQUIRE(std::fabs(utils::brent(f, 2., 3., 1e-12) - 2.0945514815423265) < 1e-11) ;
+}

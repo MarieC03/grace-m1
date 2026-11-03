@@ -229,11 +229,11 @@ namespace grace {
         eps = epsmin;
       }
 
-      double hh,csnd2 ;
-      // rho and eps are always in bound here
+      // rho and eps are always in bound here; the last residual's temperature seeds the inversion
       eos_err_t eos_err ;
-      press = eos.press_h_csnd2_temp_entropy__eps_rho_ye_ymu(
-        hh,csnd2,temp,entropy,eps,rho,ye,ymu,eos_err
+      temp  = temp_seed ;
+      press = eos.press_temp_entropy__eps_rho_ye_ymu(
+        temp,entropy,eps,rho,ye,ymu,eos_err
       ) ;
 
       // return the residual
@@ -276,8 +276,8 @@ namespace grace {
 
       // rho and eps are always in bound here
       eos_err_t eos_err ;
-      double const press = eos.press__eps_rho_ye_ymu(
-        eps,rho,ye,ymu,eos_err
+      double const press = eos.press_temp_seeded__eps_rho_ye_ymu(
+        temp_seed,eps,rho,ye,ymu,eos_err
       ) ;
 
       double const a = press/(rho*(1+eps)) ;
@@ -300,6 +300,8 @@ namespace grace {
     double vsqrmax, wmax ; //!< Maximum v^2 and W
     /************************************************/
     double eps_deficit = 0.0 ; //!< eps_min - eps_raw when compute_primitives clamped up, else 0
+    /************************************************/
+    double temp_seed = 0.0 ; //!< temperature of the last EOS inversion, seeds the next one (0 = none)
     /************************************************/
   } ;
   /************************************************/
@@ -377,6 +379,7 @@ namespace grace {
       }
 
       froot_t fmu(eos,D,q,r2,r_dot_Btilde2,Btilde2,ye,ymu,h0) ;
+      fmu.temp_seed = prims[TEMPL] ;   // the cell's previous temperature when the caller supplies it
 
       double mu = utils::brent(fmu, 0, mu0, 1e-15) ;
 

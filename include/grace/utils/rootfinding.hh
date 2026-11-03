@@ -72,7 +72,7 @@ bisection(F&& func, double const& a, double const& b, double const& tol)
 
 template <typename F>
 double GRACE_HOST_DEVICE
-brent(F& f, const double &a, const double &b, const double t)
+brent_bracketed(F& f, const double &a, const double &b, double fa, double fb, const double t)
 
 //****************************************************************************80
 //
@@ -118,6 +118,8 @@ brent(F& f, const double &a, const double &b, const double t)
 //
 //    Input, double A, B, the endpoints of the change of sign interval.
 //
+//    Input, double FA, FB, the values F(A), F(B) (brent() evaluates them).
+//
 //    Input, double T, a positive error tolerance.
 //
 //    Input, func_base& F, the name of a user-supplied c++ functor
@@ -131,8 +133,6 @@ brent(F& f, const double &a, const double &b, const double t)
   double c;
   double d;
   double e;
-  double fa;
-  double fb;
   double fc;
   double m;
   double p;
@@ -147,8 +147,6 @@ brent(F& f, const double &a, const double &b, const double t)
   //
   sa = a;
   sb = b;
-  fa = f(sa);
-  fb = f(sb);
 
   c = sa;
   fc = fa;
@@ -228,6 +226,17 @@ brent(F& f, const double &a, const double &b, const double t)
     }
   }
   return sb;
+}
+
+// Brent with the end-point values evaluated here; brent_bracketed takes them from
+// a caller that already has them (same iteration, two evaluations fewer).
+template <typename F>
+double GRACE_HOST_DEVICE
+brent(F& f, const double &a, const double &b, const double t)
+{
+  double const fa = f(a);
+  double const fb = f(b);
+  return brent_bracketed(f, a, b, fa, fb, t);
 }
 //****************************************************************************80
 //****************************************************************************80
