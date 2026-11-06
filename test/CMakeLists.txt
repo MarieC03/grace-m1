@@ -107,6 +107,12 @@ add_grace_test(test_sph_int test_spherical_surface.cpp)
 add_grace_test(interp_on_sphere_test test_interpolation_on_sphere.cpp)
 add_grace_test(grid_interpolator_test test_grid_interpolator.cpp)
 
+# MP5 reconstruction: exactness, extremum on a face, monotonicity, mirror symmetry (header only).
+add_standalone_test(reconstruction_test test_reconstruction.cpp)
+target_link_libraries(reconstruction_test PRIVATE Kokkos::kokkos)   # the reconstructors use Kokkos math on the host
+add_test(NAME reconstruction_test COMMAND ./reconstruction_test)
+set_tests_properties(reconstruction_test PROPERTIES LABELS "fast;numerics")
+
 if(GRACE_METRIC_EVOL STREQUAL "Z4")
     add_grace_test(adm_integrals_test test_adm_integrals.cpp)
 endif()

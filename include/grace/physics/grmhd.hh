@@ -43,6 +43,7 @@
 #include <grace/coordinates/coordinate_systems.hh>
 #include <grace/utils/reconstruction.hh>
 #include <grace/utils/weno_reconstruction.hh>
+#include <grace/utils/mp5_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/utils/rootfinding.hh>
 #include "grmhd_subexpressions.hh"

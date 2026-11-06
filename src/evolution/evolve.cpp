@@ -47,6 +47,7 @@
 #include <grace/parallel/mpi_wrappers.hh>
 #include <grace/utils/reconstruction.hh>
 #include <grace/utils/weno_reconstruction.hh>
+#include <grace/utils/mp5_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/utils/tstep_utils.hh>
 #include <grace/physics/grmhd.hh>
@@ -1098,6 +1099,9 @@ void compute_fluxes(
               {VEC(0,0,0),0}
             , {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}
         ) ;
+    // M1 reconstructor from GRACE_M1_RECONSTRUCTION (MC2 by default, as before; MP5 and WENOZ selectable).
+    // MC2 clips the even quantities at reflection planes (mirror plateau) and starves the first cell layer.
+    using m1_recon_t = GRACE_M1_RECONSTRUCTION_T ;
     if ( m1_is_active() )   // M1 activation trigger
     parallel_for(
           GRACE_EXECUTION_TAG("evol", "m1_normalize_conservs")
@@ -1249,27 +1253,27 @@ void compute_fluxes(
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_x_flux")
                 , flux_x_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
-         m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,0>(
+         m1_eq_system.template compute_x_flux<m1_recon_t,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,1>(
+        m1_eq_system.template compute_x_flux<m1_recon_t,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,2>(
+        m1_eq_system.template compute_x_flux<m1_recon_t,2>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,3>(
+        m1_eq_system.template compute_x_flux<m1_recon_t,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,4>(
+        m1_eq_system.template compute_x_flux<m1_recon_t,4>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
-        m1_eq_system.template compute_x_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
+        m1_eq_system.template compute_x_flux<m1_recon_t,M1_PHOTON_SPECIES>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
@@ -1288,27 +1292,27 @@ void compute_fluxes(
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_y_flux")
                 , flux_y_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
-         m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,0>(
+         m1_eq_system.template compute_y_flux<m1_recon_t,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,1>(
+        m1_eq_system.template compute_y_flux<m1_recon_t,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,2>(
+        m1_eq_system.template compute_y_flux<m1_recon_t,2>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,3>(
+        m1_eq_system.template compute_y_flux<m1_recon_t,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,4>(
+        m1_eq_system.template compute_y_flux<m1_recon_t,4>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
-        m1_eq_system.template compute_y_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
+        m1_eq_system.template compute_y_flux<m1_recon_t,M1_PHOTON_SPECIES>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
@@ -1327,27 +1331,27 @@ void compute_fluxes(
     parallel_for( GRACE_EXECUTION_TAG("EVOL", "compute_M1_z_flux")
                 , flux_z_policy
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q) {
-         m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,0>(
+         m1_eq_system.template compute_z_flux<m1_recon_t,0>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         ) ;
         #if GRACE_M1_NU_SPECIES >= 3
-        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,1>(
+        m1_eq_system.template compute_z_flux<m1_recon_t,1>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,2>(
+        m1_eq_system.template compute_z_flux<m1_recon_t,2>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #if GRACE_M1_NU_SPECIES >= 5
-        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,3>(
+        m1_eq_system.template compute_z_flux<m1_recon_t,3>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
-        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,4>(
+        m1_eq_system.template compute_z_flux<m1_recon_t,4>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif
         #ifdef GRACE_M1_PHOTONS
-        m1_eq_system.template compute_z_flux<slope_limited_reconstructor_t<MCbeta>,M1_PHOTON_SPECIES>(
+        m1_eq_system.template compute_z_flux<m1_recon_t,M1_PHOTON_SPECIES>(
             q, VEC(i,j,k), fluxes, vbar, dx, dt, dtfact
         );
         #endif

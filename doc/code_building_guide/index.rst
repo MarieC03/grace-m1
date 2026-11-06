@@ -241,8 +241,11 @@ These are *string-valued* selectors. Each picks one flavour of a compile-time sc
      - ``GS`` | ``UCT`` (default ``GS``)
      - CT EMF reconstruction scheme. ``GS`` is the Gardiner-Stone EMF reconstructed in-kernel from face fluxes during the directional flux sweep. ``UCT`` is upwind constrained transport with edge EMFs computed in a separate pass.
    * - GRACE_RECONSTRUCTION
-     - ``WENOZ`` | ``MC2`` | ``MINMOD`` | ``DONOR_CELL`` (default ``WENOZ``)
-     - Spatial reconstruction class for face-centred primitives. ``WENOZ`` is 5th-order WENO-Z (production default). ``MC2`` and ``MINMOD`` are 2nd-order slope-limited. ``DONOR_CELL`` is 1st-order piecewise-constant (intended for debugging).
+     - ``WENOZ`` | ``MP5`` | ``MC2`` | ``MINMOD`` | ``DONOR_CELL`` (default ``WENOZ``)
+     - Spatial reconstruction class for the face-centred primitives of the GRMHD fluxes. ``WENOZ`` is 5th-order WENO-Z (production default). ``MP5`` is 5th-order monotonicity-preserving (Suresh & Huynh 1997). ``MC2`` and ``MINMOD`` are 2nd-order slope-limited. ``DONOR_CELL`` is 1st-order piecewise-constant (intended for debugging).
+   * - GRACE_M1_RECONSTRUCTION
+     - ``MC2`` | ``MP5`` | ``WENOZ`` | ``MINMOD`` | ``DONOR_CELL`` (default ``MC2``)
+     - Spatial reconstruction class for the M1 radiation moments (E, N/E, F_i/E and the fluid velocity at faces), independent of the GRMHD choice. ``MC2`` (TVD) keeps the face flux factor of a beam at 1 but clips the smooth extrema that sit on reflection planes, which starves the first cell layer along a symmetry plane of free-streaming radiation. ``MP5`` and ``WENOZ`` preserve those extrema but can produce unrealizable face states (|F| > E, E < 0), seen as NaN in the moving-fluid beam, curved-beam and shadow tests; no face guard is applied.
    * - GRACE_RECON_THERMO
      - ``TEMP`` | ``PRESS`` (default ``TEMP``)
      - Thermodynamic primitive reconstructed at faces. ``TEMP`` reconstructs temperature. ``PRESS`` reconstructs pressure.

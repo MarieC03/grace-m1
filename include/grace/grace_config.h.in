@@ -147,9 +147,13 @@ namespace grace {
 #define GRACE_RIEMANN_SOLVER_LLF 2
 #define GRACE_RIEMANN_SOLVER GRACE_RIEMANN_SOLVER_@GRACE_RIEMANN_SOLVER@
 
-// 6.5 Reconstruction class (GRACE_RECONSTRUCTION = WENOZ|MC2|MINMOD|DONOR_CELL).
+// 6.5 Reconstruction class of the GRMHD fluxes (GRACE_RECONSTRUCTION = WENOZ|MP5|MC2|MINMOD|DONOR_CELL).
 //     Aliased as a C++ type tag GRACE_RECONSTRUCTION_T.  Default is WENOZ.
 #define GRACE_RECONSTRUCTION_T @GRACE_RECONSTRUCTION_T@
+
+// 6.5b Reconstruction class of the M1 radiation fluxes (GRACE_M1_RECONSTRUCTION, same choices).
+//      Aliased as GRACE_M1_RECONSTRUCTION_T.  Default is MC2.
+#define GRACE_M1_RECONSTRUCTION_T @GRACE_M1_RECONSTRUCTION_T@
 
 // 6.6 Thermodynamic primitive reconstructed at faces (GRACE_RECON_THERMO).
 //   GRACE_RECON_THERMO_TEMP  — reconstruct T (default).

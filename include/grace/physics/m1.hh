@@ -43,6 +43,7 @@
 #include <grace/evolution/evolution_kernel_tags.hh>
 #include <grace/utils/reconstruction.hh>
 #include <grace/utils/weno_reconstruction.hh>
+#include <grace/utils/mp5_reconstruction.hh>
 #include <grace/utils/riemann_solvers.hh>
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1_number_flux.hh>

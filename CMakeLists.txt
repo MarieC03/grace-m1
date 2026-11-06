@@ -207,20 +207,23 @@ if( GRACE_SAME_LEVEL_FLUX_AVERAGE )
     message(STATUS "Same-level flux averaging enabled — bit-exact mass conservation across rank boundaries.")
 endif()
 
-# Reconstructor selection.  Compile-time choice; substituted into
+# GRMHD reconstructor selection.  Compile-time choice; substituted into
 # GRACE_RECONSTRUCTION_T in grace_config.h.in.
 #   WENOZ      — 5th-order WENO-Z (default, production)
+#   MP5        — 5th-order monotonicity-preserving (Suresh & Huynh 1997)
 #   MC2        — 2nd-order monotonized-central slope-limited
 #   MINMOD     — 2nd-order minmod slope-limited
 #   DONOR_CELL — 1st-order piecewise-constant (provably L/R-symmetric;
 #                use for symmetry-preservation diagnostics, not production)
 set(GRACE_RECONSTRUCTION "WENOZ" CACHE STRING
-    "Spatial reconstructor (WENOZ|MC2|MINMOD|DONOR_CELL)")
+    "Spatial reconstructor of the GRMHD fluxes (WENOZ|MP5|MC2|MINMOD|DONOR_CELL)")
 set_property(CACHE GRACE_RECONSTRUCTION PROPERTY STRINGS
-    WENOZ MC2 MINMOD DONOR_CELL)
+    WENOZ MP5 MC2 MINMOD DONOR_CELL)
 
 if(GRACE_RECONSTRUCTION STREQUAL "WENOZ")
     set(GRACE_RECONSTRUCTION_T "weno_reconstructor_t<5>")
+elseif(GRACE_RECONSTRUCTION STREQUAL "MP5")
+    set(GRACE_RECONSTRUCTION_T "mp5_reconstructor_t")
 elseif(GRACE_RECONSTRUCTION STREQUAL "MC2")
     set(GRACE_RECONSTRUCTION_T "slope_limited_reconstructor_t<MCbeta>")
 elseif(GRACE_RECONSTRUCTION STREQUAL "MINMOD")
@@ -229,9 +232,35 @@ elseif(GRACE_RECONSTRUCTION STREQUAL "DONOR_CELL")
     set(GRACE_RECONSTRUCTION_T "donor_cell_reconstructor_t")
 else()
     message(FATAL_ERROR
-        "GRACE_RECONSTRUCTION=${GRACE_RECONSTRUCTION} is not one of WENOZ, MC2, MINMOD, DONOR_CELL.")
+        "GRACE_RECONSTRUCTION=${GRACE_RECONSTRUCTION} is not one of WENOZ, MP5, MC2, MINMOD, DONOR_CELL.")
 endif()
 message(STATUS "Reconstructor: ${GRACE_RECONSTRUCTION} (${GRACE_RECONSTRUCTION_T})")
+
+# M1 (radiation) reconstructor, chosen independently of the GRMHD one; same choices.
+# MC2 (default): TVD, keeps a beam's face flux factor at 1, clips the smooth extrema that sit on
+# reflection planes (first cell layer starved of free-streaming radiation).  MP5 / WENOZ keep those
+# extrema but can leave the face states unrealizable (|F| > E, E < 0 at smooth extrema: NaN seen in
+# the moving-fluid beam, curved-beam and shadow tests); no face guard is applied -- use with care.
+set(GRACE_M1_RECONSTRUCTION "MC2" CACHE STRING
+    "Spatial reconstructor of the M1 radiation fluxes (MC2|MP5|WENOZ|MINMOD|DONOR_CELL)")
+set_property(CACHE GRACE_M1_RECONSTRUCTION PROPERTY STRINGS
+    MC2 MP5 WENOZ MINMOD DONOR_CELL)
+
+if(GRACE_M1_RECONSTRUCTION STREQUAL "MP5")
+    set(GRACE_M1_RECONSTRUCTION_T "mp5_reconstructor_t")
+elseif(GRACE_M1_RECONSTRUCTION STREQUAL "WENOZ")
+    set(GRACE_M1_RECONSTRUCTION_T "weno_reconstructor_t<5>")
+elseif(GRACE_M1_RECONSTRUCTION STREQUAL "MC2")
+    set(GRACE_M1_RECONSTRUCTION_T "slope_limited_reconstructor_t<MCbeta>")
+elseif(GRACE_M1_RECONSTRUCTION STREQUAL "MINMOD")
+    set(GRACE_M1_RECONSTRUCTION_T "slope_limited_reconstructor_t<minmod>")
+elseif(GRACE_M1_RECONSTRUCTION STREQUAL "DONOR_CELL")
+    set(GRACE_M1_RECONSTRUCTION_T "donor_cell_reconstructor_t")
+else()
+    message(FATAL_ERROR
+        "GRACE_M1_RECONSTRUCTION=${GRACE_M1_RECONSTRUCTION} is not one of MC2, MP5, WENOZ, MINMOD, DONOR_CELL.")
+endif()
+message(STATUS "M1 reconstructor: ${GRACE_M1_RECONSTRUCTION} (${GRACE_M1_RECONSTRUCTION_T})")
 
 # Thermodynamic primitive reconstructed at cell faces.
 #   TEMP  — reconstruct temperature T (default, GRACE convention).  For
@@ -531,6 +560,7 @@ set(_grace_summary
 "  EMF scheme          : ${GRACE_EMF_SCHEME}\n"
 "  Riemann solver      : ${GRACE_RIEMANN_SOLVER}\n"
 "  Reconstruction      : ${GRACE_RECONSTRUCTION} (${GRACE_RECONSTRUCTION_T})\n"
+"  M1 reconstruction   : ${GRACE_M1_RECONSTRUCTION} (${GRACE_M1_RECONSTRUCTION_T})\n"
 "  Reconstructed thermo: ${GRACE_RECON_THERMO}\n"
 "  Freeze hydro        : ${_grace_freeze_hydro}\n"
 "  ---------------------------------------------------------\n"
