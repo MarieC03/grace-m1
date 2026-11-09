@@ -10,10 +10,11 @@
  *          - leptonic_eos_4d_t: (Ye, Ymu) are solved from a hot beta
  *            equilibrium at (rho, T_id) via `betaeq_ye_ymu__rho_temp`, so the
  *            composition shifts with temperature (the muon-capable path).
- *          - every other EOS (tabulated 3D, hybrid, ideal gas): no hot
- *            beta-eq solver exists, so the composition is taken from the cold
- *            slice (`ye_cold__press` / `ymu_cold__press`, always available via
- *            the CRTP base) and only the temperature is raised to T_id.
+ *          - tabulated_eos_t (npe): Ye from the hot beta equilibrium at
+ *            (rho, T_id), as FIL's hot slice: mu_e + mu_p - mu_n - Qnp = 0.
+ *          - hybrid, ideal gas: no chemical potentials, so the composition is
+ *            taken from the cold slice (`ye_cold__press` / `ymu_cold__press`,
+ *            always available via the CRTP base) and only T is raised to T_id.
  *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale (GRACE), Copyright (C) 2023-2026 GRACE Contributors.
@@ -26,6 +27,8 @@
 #include <grace_config.h>
 #include <grace/physics/id/tov.hh>   // reuse solve_tov + tov_id_t machinery
 #include <grace/physics/eos/leptonic_eos_4d.hh>  // leptonic_eos_4d_t (hot beta-eq dispatch)
+#include <grace/physics/eos/tabulated_eos.hh>    // tabulated_eos_t (npe hot beta-eq)
+#include <grace/utils/rootfinding.hh>
 
 #include <type_traits>
 
@@ -103,10 +106,9 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
                 w = Kokkos::fmin(1.0, Kokkos::fmax(0.0, w)) ;   // 0 bulk -> 1 surface
                 id.temp = _T_id + (temp_atm - _T_id) * w ;
             }
-            // Composition is EOS-aware (see file header): the leptonic EOS
-            // solves a hot beta-equilibrium so (Ye, Ymu) shift with T; every
-            // other EOS lacks a hot beta-eq solver, so the composition is
-            // taken from the cold slice and only the temperature is raised.
+            // Composition is EOS-aware (see file header): the leptonic EOS and
+            // the 3D table solve a hot beta-equilibrium so the composition
+            // shifts with T; the other EOSs take it from the cold slice.
             // NB: beta-eq uses the (tapered) id.temp so the envelope stays
             // self-consistent with its local temperature.
             if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
@@ -123,6 +125,9 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
                 // maintained copy of the same rule.
                 id.ye  = ye ;
                 id.ymu = ymu ;
+            } else if constexpr (std::is_same_v<eos_t, tabulated_eos_t>) {
+                id.ye  = betaeq_ye_npe(id.rho, id.temp) ;
+                id.ymu = 0.0 ;
             } else {
                 id.ye  = this->_eos.ye_cold__press(sol[0], err) ;
                 id.ymu = this->_eos.ymu_cold__press(sol[0], err) ;
@@ -162,6 +167,25 @@ struct hot_tov_id_t : public tov_id_t<eos_t> {
         id.kxx = id.kxy = id.kxz = id.kyy = id.kyz = id.kzz = 0. ;
 
         return std::move(id) ;
+    }
+
+    //! npe hot beta-eq Ye of a 3D table, FIL's hot slice (Margherita EOS_Tabulated::press_eps_yle_ymu__beta_eq__rho_temp);
+    //! no root in the table's Ye range -> the end with the smaller residual.
+    double GRACE_HOST_DEVICE
+    betaeq_ye_npe(double rho, double temp) const
+    {
+        constexpr double Qnp = 1.29333236 ;   // MeV, as the leptonic beta-eq (FIL 1.293333)
+        auto f = [&] (double ye) {
+            double r = rho, t = temp, y = ye, ymu = 0., mumu, mup, mun, Xa, Xh, Xn, Xp, Abar, Zbar ;
+            eos_err_t err ;
+            double const mue = this->_eos.mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(
+                mumu, mup, mun, Xa, Xh, Xn, Xp, Abar, Zbar, t, r, y, ymu, err) ;
+            return mue + mup - mun - Qnp ;
+        } ;
+        double const lo = this->_eos.get_c2p_ye_min(), hi = this->_eos.get_c2p_ye_max() ;
+        double const flo = f(lo), fhi = f(hi) ;
+        if ( flo * fhi > 0.0 ) return ( Kokkos::fabs(flo) < Kokkos::fabs(fhi) ) ? lo : hi ;
+        return utils::brent_bracketed(f, lo, hi, flo, fhi, 1e-14) ;
     }
 
     double _rho_cut ; //!< atmosphere at or below this rho (FIL's rho_threshold) [code]; <=0 = no cut, radius taper
