@@ -239,9 +239,10 @@ class leptonic_eos_4d_t
     , add_ele_contribution(add_ele_contribution_)
     , log_baryon_press(log_baryon_press_)
     {
-        lrhomin  = bar_logrho[0] ; lrhomax  = bar_logrho[bar_logrho.size()-1] ;
-        ltempmin = bar_logT[0]   ; ltempmax = bar_logT[bar_logT.size()-1]    ;
-        ltemp_step_ = ( nT > 1 ) ? bar_logT[1] - bar_logT[0] : 1.0 ;
+        // axis ends read on the host with small copies (the axes live in device memory)
+        lrhomin  = detail::host_read(bar_logrho, 0) ; lrhomax  = detail::host_read(bar_logrho, nrho - 1) ;
+        ltempmin = detail::host_read(bar_logT,   0) ; ltempmax = detail::host_read(bar_logT,   nT - 1) ;
+        ltemp_step_ = ( nT > 1 ) ? detail::host_read(bar_logT, 1) - ltempmin : 1.0 ;
         // Default until the loader resolves the requested floor; never the
         // bare table boundary (see limit_temp).
         set_temperature_floor(-1.) ;

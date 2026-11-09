@@ -73,15 +73,16 @@ public:
       , baryon_mass(_baryon_mass), energy_shift(_energy_shift)
     {
         // Cache table-edge eps so floor / ceiling lookups don't pay
-        // for an interpolation every time.
-        int const n = cold_table._logrho.size() ;
-        cold_eps_min = Kokkos::exp(cold_table._tables(0,    tabulated_eos_t::CTABEPS)) - energy_shift ;
-        cold_eps_max = Kokkos::exp(cold_table._tables(n-1,  tabulated_eos_t::CTABEPS)) - energy_shift ;
-        cold_press_min = Kokkos::exp(cold_table._tables(0,   tabulated_eos_t::CTABPRESS)) ;
-        cold_press_max = Kokkos::exp(cold_table._tables(n-1, tabulated_eos_t::CTABPRESS)) ;
+        // for an interpolation every time; read on the host with small copies.
+        using T = tabulated_eos_t ;
+        int const n = cold_table._logrho.extent(0) ;
+        cold_eps_min   = std::exp(detail::host_read(_cold_tabeos, 0,   T::CTABEPS)) - energy_shift ;
+        cold_eps_max   = std::exp(detail::host_read(_cold_tabeos, n-1, T::CTABEPS)) - energy_shift ;
+        cold_press_min = std::exp(detail::host_read(_cold_tabeos, 0,   T::CTABPRESS)) ;
+        cold_press_max = std::exp(detail::host_read(_cold_tabeos, n-1, T::CTABPRESS)) ;
         // h_minimum is consumed by hybrid_eos_t / Kastaun c2p as the bracket
         // upper bound on μ.  Computed at the cold-table low-density edge.
-        h_minimum = 1.0 + cold_eps_min + cold_press_min / Kokkos::exp(cold_table._logrho(0)) ;
+        h_minimum = 1.0 + cold_eps_min + cold_press_min / std::exp(detail::host_read(_cold_tabeos_logrho, 0)) ;
     }
 
     /************************************************/

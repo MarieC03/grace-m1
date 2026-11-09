@@ -55,6 +55,26 @@ clamp_table_index(double fidx, size_t npoints) {
     return static_cast<int>(fidx) ;
 }
 
+namespace detail {
+//! v(idx...) of a table view, read on the host with one small copy (the tables live in device memory).
+template < typename V, typename... I >
+double host_read(V const& v, I const... idx)
+{
+    double x ;
+    Kokkos::deep_copy(x, Kokkos::subview(v, static_cast<int>(idx)...)) ;
+    return x ;
+}
+//! 1 / (ax(1) - ax(0)) of a uniform axis, read on the host; 0 for an axis with fewer than two nodes.
+template < typename V >
+double host_inv_spacing(V const& ax)
+{
+    if ( ax.extent(0) < 2 ) return 0.0 ;
+    auto const h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),
+                       Kokkos::subview(ax, Kokkos::make_pair(0, 2))) ;
+    return 1.0 / (h(1) - h(0)) ;
+}
+} /* namespace detail */
+
 // interpolator for tabeos
 // spacing assumed constant
 struct tabeos_linterp_t {
@@ -68,9 +88,9 @@ struct tabeos_linterp_t {
         Kokkos::View<double *> ay
     ) : _tables(tabs), _logrho(ar), _logT(at), _ye(ay)
     {
-        idr =  1./(_logrho(1)-_logrho(0)) ;
-        idt = 1./(_logT(1)-_logT(0))      ;
-        idy = 1./(_ye(1)-_ye(0))          ;
+        idr = detail::host_inv_spacing(ar) ;
+        idt = detail::host_inv_spacing(at) ;
+        idy = detail::host_inv_spacing(ay) ;
     }
 
     double KOKKOS_INLINE_FUNCTION lrho(int idx) const { return _logrho(idx) ; }
@@ -149,7 +169,7 @@ struct cold_eos_linterp_t {
         Kokkos::View<double *> ar
     ) : _tables(tabs), _logrho(ar)
     {
-        idr =  1./(_logrho(1)-_logrho(0)) ;
+        idr = detail::host_inv_spacing(ar) ;
     }
 
     double KOKKOS_INLINE_FUNCTION lrho(int idx) const { return _logrho(idx) ; }
@@ -283,8 +303,8 @@ class tabulated_eos_t
         0.0, // c2p_ymu_atm
         _atmo_is_beta_eq)
     {
-        lrhomin = _logrho[0] ; lrhomax = _logrho[_logrho.size()-1] ;
-        ltempmin = _logT[0] ; ltempmax = _logT[_logT.size()-1] ;
+        lrhomin  = detail::host_read(_logrho, 0) ; lrhomax  = detail::host_read(_logrho, nrho - 1) ;
+        ltempmin = detail::host_read(_logT,   0) ; ltempmax = detail::host_read(_logT,   nT - 1) ;
     }
     /**************************************************************************************/
     // eos.tabulated_eos.interpolation = "hermite_free_energy": P, eps, s, T and cs2 come
