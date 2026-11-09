@@ -322,6 +322,12 @@ Optional physics modules
    * - GRACE_ENABLE_PARTICLES
      - Boolean
      - Build the GRACE particle subsystem (tracers; future MC / PIC).
+   * - GRACE_ENABLE_RESISTIVE
+     - Boolean
+     - Enable the REGIME correction for resistive effects (default ``OFF``).
+       Only implemented for ``GRACE_METRIC_EVOL=COWLING`` and
+       ``GRACE_EMF_SCHEME=GS``; any other combination stops at configure time
+       with an error.
    * - GRACE_FREEZE_HYDRO
      - Boolean
      - Freeze hydrodynamics evolution (debug / metric-only runs).
