@@ -125,7 +125,7 @@ grmhd: {
     press_floor: 1e-13,
     dr: 1e-3,
     hot_temperature: 20.0,          # default; T [MeV] of the hot slice, Ye/Ymu in hot beta-eq
-    rho_cut: 1e-6,                  # > 0: hard T step at this rho (FIL uses 1e-10); -1: smooth taper
+    rho_cut: 1e-6,                  # > 0: atmosphere at or below this rho (FIL rho_threshold), T step; -1: whole TOV + taper
   },
 
   atmosphere: {

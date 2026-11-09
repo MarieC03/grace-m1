@@ -884,13 +884,13 @@ grmhd:
       default: -1
       range: "[-1,*)"
       description: >
-        Only used by id_type = "hot_tov".  Selects how the ID temperature is
-        laid down.  Negative (default): T = hot_temperature in the bulk,
-        linearly tapered to the atmosphere temperature over the outer 5% of
-        R_iso, giving a smooth surface gradient.  Positive: FIL's prescription
-        instead (Margherita_ID/src/fix_ID.C) -- a hard density step, with
-        T = hot_temperature wherever rho > rho_cut and the atmosphere
-        temperature at or below it.  FIL uses 1e-10 [code units].  Either way
-        the chosen T feeds the beta-equilibrium solve, so Ye and Ymu follow it.
-        NB: a density step leaves no surface temperature gradient, which is
-        visible in 2D plots -- that is why the taper is the default.
+        Only used by id_type = "hot_tov".  Selects where the star ends and how
+        its temperature is laid down.  Negative (default): the whole TOV
+        solution is written, with T = hot_temperature in the bulk, linearly
+        tapered to the atmosphere temperature over the outer 5% of R_iso.
+        Positive: FIL's rho_threshold (ID_converter_ILGRMHD) -- every cell
+        with rho at or below rho_cut is atmosphere (rho_fl, ye_fl, ymu_fl, temp_fl,
+        v = 0) and the star above it has T = hot_temperature, a hard step.
+        The matched FIL hot TOV uses 1e-6 [code units].  The metric is the
+        full TOV solution either way, as in FIL.  The chosen T feeds the
+        beta-equilibrium solve, so Ye and Ymu follow it.
