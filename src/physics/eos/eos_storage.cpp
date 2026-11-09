@@ -155,6 +155,27 @@ static piecewise_polytropic_eos_t setup_cold_polytrope()
 
 }
 
+// One start-up line with h_inf(Y_p), plus warnings if the table cannot deliver cold, dilute matter.
+static void report_enthalpy_at_infinity(enthalpy_at_infinity_t const& hinf)
+{
+    if ( hinf.h.empty() ) {
+        GRACE_INFO("Bernoulli h_inf = {:.5f} (no composition axis).", hinf.h_const) ;
+    } else {
+        auto const kmin = std::min_element(hinf.h.begin(), hinf.h.end()) - hinf.h.begin() ;
+        GRACE_INFO("Bernoulli h_inf(Y_p), cold dilute matter from the table's coldest isotherm: "
+                   "{:.5f} at Y_p 0.05, {:.5f} at 0.1, {:.5f} at 0.2, {:.5f} at 0.3, {:.5f} at 0.4, "
+                   "{:.5f} at 0.5; minimum {:.5f} at Y_p {:.3f}.",
+                   hinf(0.05), hinf(0.1), hinf(0.2), hinf(0.3), hinf(0.4), hinf(0.5),
+                   hinf.h[kmin], hinf.yp0 + kmin / hinf.inv_dyp) ;
+        if ( hinf.axis_dev > 1e-6 )
+            GRACE_WARN("Bernoulli h_inf: the Y_p axis is not uniform (a node is {:.2e} steps off); the "
+                       "interpolation in Y_p assumes uniform nodes.", hinf.axis_dev) ;
+    }
+    if ( hinf.n_edge > 0 )
+        GRACE_WARN("Bernoulli h_inf: at {} composition point(s) the minimum over density sits on the first "
+                   "or last density node, so the table does not reach cold, dilute matter there.", hinf.n_edge) ;
+}
+
 eos_storage_t::eos_storage_t() {
     auto& params = grace::config_parser::get() ;
 
@@ -211,6 +232,8 @@ eos_storage_t::eos_storage_t() {
                        "(rho_min={}, rho_max={}, h_min={}, baryon_mass={}).",
                        _cold_tab.eos_rhomin, _cold_tab.eos_rhomax,
                        _cold_tab.h_minimum, _cold_tab.baryon_mass) ;
+            // Bernoulli h_inf: minimum over the cold rows (h_min above is only the first row's h)
+            _h_inf = enthalpy_at_infinity_from(_cold_tab) ;
 
         } else {
             ERROR("Unsupported cold_eos_type.") ;
@@ -245,6 +268,15 @@ eos_storage_t::eos_storage_t() {
     } else {
          ERROR("Unsupported eos_type") ;
     }
+
+    // Bernoulli h_inf(Y_p) for the outflow diagnostic, from the table nodes, once
+    // (the hybrid EOS with a tabulated backbone got its value in its branch above).
+    bool const hybrid_tabulated = eos_type == "hybrid"
+        && get_param<std::string>("eos","hybrid_eos","cold_eos_type") == "tabulated" ;
+    if ( eos_type == "tabulated" )     _h_inf = enthalpy_at_infinity_from(_tabulated) ;
+    else if ( eos_type == "leptonic" ) _h_inf = enthalpy_at_infinity_from(_leptonic_4d) ;
+    else if ( !hybrid_tabulated )      _h_inf.h_const = enthalpy_minimum() ;
+    report_enthalpy_at_infinity(_h_inf) ;
 
     // Gates of the two energy-consistency options (eos.tabulated_eos.interpolation and
     // grmhd.c2p.cold_deficit_policy): reject combinations where they would silently do nothing.

@@ -40,6 +40,7 @@
 #include <grace/physics/eos/ideal_gas_eos.hh>
 #include <grace/physics/eos/tabulated_eos.hh>
 #include <grace/physics/eos/leptonic_eos_4d.hh>
+#include <grace/physics/eos/enthalpy_at_infinity.hh>
 
 #include <Kokkos_Core.hpp>
 
@@ -150,10 +151,9 @@ class eos_storage_t {
     /**
      * @brief Minimum specific enthalpy h_min of the *active* EOS.
      *
-     * Dispatches on the configured eos_type so non-templated callers (e.g. the
-     * outflow diagnostic) can query it. Used as h_infinity in the Bernoulli
-     * unbound criterion -h u_t > h_min: for a finite-temperature / tabulated
-     * EOS h asymptotes to this floor, not to 1.
+     * Dispatches on the configured eos_type so non-templated callers can query it.
+     * It is the c2p's lower bound over the whole table, which for the leptonic EOS lies at
+     * nuclear density; the Bernoulli test uses enthalpy_at_infinity instead.
      */
     double GRACE_ALWAYS_INLINE
     enthalpy_minimum() {
@@ -172,6 +172,18 @@ class eos_storage_t {
         }
         ERROR("Unknown eos_type in enthalpy_minimum().") ;
         return 1.0 ;
+    }
+    //**************************************************************************************************
+    /**
+     * @brief Bernoulli h_inf of the active EOS at proton fraction yp = Y_e + Y_mu (host only).
+     *
+     * Tabulated and leptonic EOS: linear in yp between the cold, dilute values built from the
+     * table nodes at start-up (see enthalpy_at_infinity.hh).  Hybrid with a tabulated backbone:
+     * the minimum over the cold table.  Piecewise polytrope and ideal gas: 1.
+     */
+    double GRACE_ALWAYS_INLINE
+    enthalpy_at_infinity(double const yp) const {
+        return _h_inf(yp) ;
     }
     //**************************************************************************************************
  private:
@@ -200,6 +212,8 @@ class eos_storage_t {
     ideal_gas_eos_t _gammalaw ;
     //! The 4D leptonic EOS object (rho, T, Y_e, Y_mu).
     leptonic_eos_4d_t _leptonic_4d ;
+    //! Bernoulli h_inf(Y_p) of the active EOS; host data, never copied to the device.
+    enthalpy_at_infinity_t _h_inf ;
     //! Give access.
     friend class utils::singleton_holder<eos_storage_t, memory::default_create>  ;
     //! Give access.

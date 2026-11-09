@@ -274,6 +274,14 @@ set_tests_properties(leptonic_logpress_test PROPERTIES
     LABELS "fast;physics;eos"
     ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 
+# Bernoulli h_inf(Y_p) of the outflow diagnostic from synthetic tables: cold-isotherm minimum
+# over density in every pressure mode, electron-axis blending, the 3D table, Y_p interpolation.
+add_kokkos_test(enthalpy_at_infinity_test test_enthalpy_at_infinity.cpp)
+add_test(NAME enthalpy_at_infinity_test COMMAND mpirun -n 1 ./enthalpy_at_infinity_test)
+set_tests_properties(enthalpy_at_infinity_test PROPERTIES
+    LABELS "fast;physics;eos"
+    ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+
 add_standalone_test(hermite_polynomial_test test_hermite_polynomial.cpp)
 
 add_standalone_test(hermite_interp_test test_hermite_interp.cpp)

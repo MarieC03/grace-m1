@@ -167,6 +167,9 @@ private:
     double             cold_press_min, cold_press_max ;
 
 public:
+    //! Read-only access to the rows (h_inf of the Bernoulli test is their minimum).
+    cold_eos_linterp_t const& table() const { return cold_table ; }
+
     double eos_rhomin, eos_rhomax ;
     double baryon_mass, energy_shift ;
     double h_minimum ;

@@ -140,11 +140,9 @@ outflows::compute_local_fluxes(
     // if no local points return
     if (npoints == 0 ) return flux_loc ;
 
-    // h_infinity for the Bernoulli criterion: the minimum specific enthalpy the
-    // active EOS can reach (1 for ideal-gas / piecewise-polytrope; >1 at the cold
-    // table's low-density bound for a tabulated backbone). Material is unbound when
-    // -h u_t > h_min, i.e. it carries enough energy to escape after cooling to h_min.
-    double const h_min = grace::eos::get().enthalpy_minimum() ;
+    // Bernoulli test: unbound when -h u_t exceeds h_inf, the enthalpy the matter has once cold
+    // and dilute at the proton fraction it keeps (tabulated EOS: per point, see enthalpy_at_infinity.hh).
+    auto const& eos_store = grace::eos::get() ;
 
 
     // copy to host
@@ -199,6 +197,9 @@ outflows::compute_local_fluxes(
         #endif
         #ifdef GRACE_ENABLE_MUONS
         double const ymu = ivals_aux(i,loc_aux_idx_t::YMUL) ;
+        double const yp  = ye + ymu ;   // muons decay to electrons far out: Y_p is what remains
+        #else
+        double const yp  = ye ;
         #endif
         #if GRACE_METRIC_EVOL != GRACE_METRIC_EVOL_Z4
         metric_array_t metric{
@@ -247,7 +248,7 @@ outflows::compute_local_fluxes(
             flux_loc[diag_var_idx_t::GEO_UNBOUND] += r * r * domega * mass_flux ;
         }
 
-        if ( h*u_t < -h_min ) {
+        if ( h*u_t < -eos_store.enthalpy_at_infinity(yp) ) {
             double const dm = r * r * domega * mass_flux ;
             flux_loc[diag_var_idx_t::BERN_UNBOUND] += dm ;
             // Same integrand, binned by composition.  Clamped rather than
@@ -256,7 +257,7 @@ outflows::compute_local_fluxes(
             #ifdef GRACE_ENABLE_MUONS
             double const log_ymu = std::log10(std::max(ymu, 1.0e-300)) ;
             flux_loc[YMU_BIN0 + clamped_bin(log_ymu, log_ymu_bin_lo, log_ymu_bin_hi, n_ymu_bins)] += dm ;
-            flux_loc[YP_BIN0  + clamped_bin(ye + ymu, ye_bin_lo, ye_bin_hi, n_yp_bins)] += dm ;
+            flux_loc[YP_BIN0  + clamped_bin(yp, ye_bin_lo, ye_bin_hi, n_yp_bins)] += dm ;
             #endif
         }
 
