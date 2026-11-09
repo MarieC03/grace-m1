@@ -26,6 +26,12 @@ if(NOT GRACE_METRIC_EVOL MATCHES "^(COWLING|Z4)$")
 endif()
 message(STATUS "Metric evolution: ${GRACE_METRIC_EVOL}")
 
+# Resistivity (REGIME correction).
+# Only implemented for Cowling.
+if(GRACE_ENABLE_RESISTIVE AND NOT GRACE_METRIC_EVOL STREQUAL "COWLING")
+    message(FATAL_ERROR "Resistivity is only implemented for Cowling.")
+endif()
+
 # FD truncation orders (compile-time).
 #
 # GRACE_Z4C_DER_ORDER controls the truncation order of every Z4c RHS
@@ -452,6 +458,7 @@ endmacro()
 
 _grace_bool_label(GRACE_ENABLE_PARTICLES    _grace_particles)
 _grace_bool_label(GRACE_ENABLE_M1           _grace_m1)
+_grace_bool_label(GRACE_ENABLE_RESISTIVE    _grace_resistive)
 _grace_bool_label(GRACE_ENABLE_FOFC         _grace_fofc)
 _grace_bool_label(GRACE_ENABLE_LORENE       _grace_lorene)
 _grace_bool_label(GRACE_ENABLE_FUKA         _grace_fuka)
@@ -537,6 +544,7 @@ set(_grace_summary
 "  Particles           : ${_grace_particles}\n"
 "  M1 radiation        : ${_grace_m1}\n"
 ${_grace_m1_details}
+"  Resistivity         : ${_grace_resistive}\n"
 "  ---------------------------------------------------------\n"
 "  LORENE ID           : ${_grace_lorene}\n"
 "  FUKA ID             : ${_grace_fuka}\n"

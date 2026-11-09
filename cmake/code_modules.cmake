@@ -195,3 +195,11 @@ message(STATUS "EMF scheme: ${GRACE_EMF_SCHEME}")
 if( GRACE_ENABLE_FUKA )
     message(STATUS "FUKA module enabled.")
 endif()
+
+# Resistivity (REGIME correction for now).
+option(GRACE_ENABLE_RESISTIVE "Enable REGIME correction for resistive effects" OFF)
+# Currently only considering GS.
+if(GRACE_ENABLE_RESISTIVE AND NOT GRACE_EMF_SCHEME STREQUAL "GS")
+    message(FATAL_ERROR
+        "Resistivity is only implemented for GS.")
+endif()

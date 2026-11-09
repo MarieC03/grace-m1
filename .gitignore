@@ -9,3 +9,5 @@ testb
 *~
 .vscode
 .claude
+.clangd
+compile_commands.json

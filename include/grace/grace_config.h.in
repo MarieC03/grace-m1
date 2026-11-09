@@ -191,6 +191,8 @@ namespace grace {
 #define GRACE_N_M1_AUX  5
 #endif
 
+#cmakedefine GRACE_ENABLE_RESISTIVE
+
 //=====================================================================
 // 8. Numeric constants
 //=====================================================================
