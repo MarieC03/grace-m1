@@ -1,0 +1,29 @@
+resistive:
+  type: schema
+  description: >
+    REGIME resistive correction as given in Tenes2026 v2.
+  eta0:
+    type: double
+    range: "[0,*)"
+    default: 0.0
+    description: >
+      Peak Resistivity 
+  eta_f:
+    type: double
+    range: "[0,*)"
+    default: 0.0
+    description: >
+      Lowest resistivity value
+  rho_th:
+    type: double
+    range: "(0,*)"
+    default: 1.e11
+    description: >
+      Critical transition density. 
+      Tenes2026 (v2) calls it rho_c in eq. 46 but in fig. 4 it's already called rho_th instead.
+  lambda:
+    type: double
+    range: "(0,*)"
+    default: 0.75
+    description: >
+      Logaritmic width for the resistivity profile.
