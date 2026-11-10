@@ -492,6 +492,7 @@ void register_variables() {
     register_aux_scalar(PAIR_ACTIVE_,"pair_active") ;
     register_aux_scalar(PAIR_MUMU_,"pair_mu_mu") ;
     register_aux_scalar(PAIR_DECAY_QDEF_,"decay_equilibrium_charge_defect") ;
+    register_aux_scalar(PAIR_DECAY_DQ_,"decay_number_increment_defect") ;
     register_aux_scalar(PAIR_KAPPA1_,"pair_transport_kappa1") ;
     register_aux_scalar(PAIR_KAPPA2_,"pair_transport_kappa2") ;
     register_aux_scalar(PAIR_KAPPA3_,"pair_transport_kappa3") ;

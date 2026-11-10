@@ -11,7 +11,14 @@
 #error "neutrino_pair_collision.hh needs a build with -DGRACE_M1_PAIR_KERNELS=ON"
 #endif
 #include <Kokkos_Core.hpp>
+#include <grace/physics/neutrino_source_profile.hh>
 #include <grace/physics/neutrino_pair_diagnostics.hh>
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
+#include <bit>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#endif
 #ifdef GRACE_HAVE_BNS_NURATES
 #include <kernel_pair.hpp>
 #include <kernel_brem_HR98.hpp>
@@ -26,6 +33,10 @@ constexpr double phase = 4*pi/(hc*hc*hc);
 constexpr double energy_unit = 1.60217733e-6 * 1.61887093132742e-18 * 1.11265005605362e-21;
 constexpr double number_unit = (938.27208943*1.602176634e-6/(2.99792458e10*2.99792458e10)) * 1.61887093132742e-18;
 constexpr double time_unit = 2.03040204956746e5;
+
+KOKKOS_INLINE_FUNCTION double minimum_fermi_energy_density(double n) {
+    return 0.75*n*Kokkos::cbrt(3*n/phase);
+}
 
 struct material {
     double T, mu_e, nb, yn, yp; // nb in cm^-3, chemical potential includes rest mass
@@ -45,14 +56,12 @@ KOKKOS_INLINE_FUNCTION double occupation(double x) {
     return x >= 0 ? z/(1+z) : 1/(1+z);
 }
 
-// Rational Gauss-Legendre quadrature: epsilon = scale*x/(1-x), x in (0,1).
-// Shared nodes are essential: a kernel element is one event for BOTH partners.
-struct grid {
+// The unscaled roots and derivatives depend only on quadrature order.
+struct grid_rule {
     int n;
-    double scale;                      // energy scale of the rational map, for diagnostics
-    double e[max_order], w[max_order]; // w includes the one-helicity phase space
-    KOKKOS_INLINE_FUNCTION void init(int order, double scale) {
-        n = order; this->scale = scale;
+    double nodes[max_order], derivatives[max_order];
+    KOKKOS_INLINE_FUNCTION void init(int order) {
+        n = order;
         for (int i=0; i<n; ++i) {
             double z = Kokkos::cos(pi*(i+0.75)/(n+0.5)), dp=0;
             for (int it=0; it<20; ++it) {
@@ -64,10 +73,31 @@ struct grid {
                 double const dz=p/dp; z-=dz;
                 if (Kokkos::fabs(dz)<2e-15) break;
             }
+            nodes[i]=z;
+            derivatives[i]=dp;
+        }
+    }
+};
+
+// Rational Gauss-Legendre quadrature: epsilon = scale*x/(1-x), x in (0,1).
+// Shared nodes are essential: a kernel element is one event for BOTH partners.
+struct grid {
+    int n;
+    double scale;                      // energy scale of the rational map, for diagnostics
+    double e[max_order], w[max_order]; // w includes the one-helicity phase space
+    KOKKOS_INLINE_FUNCTION void init(grid_rule const& rule, double scale) {
+        n=rule.n; this->scale=scale;
+        for(int i=0;i<n;++i) {
+            double const z=rule.nodes[i],dp=rule.derivatives[i];
             double const x=(1-z)/2;
             e[i]=scale*x/(1-x);
             w[i]=phase*e[i]*e[i]*scale/((1-x)*(1-x)*(1-z*z)*dp*dp);
         }
+    }
+    KOKKOS_INLINE_FUNCTION void init(int order, double scale) {
+        grid_rule rule;
+        rule.init(order);
+        init(rule,scale);
     }
 };
 
@@ -224,7 +254,9 @@ struct kernel {
     grid g;
     double a[max_order][max_order], boltz[max_order];
     KOKKOS_INLINE_FUNCTION bool init(material m, channels c, int order, double scale,
-                                     bool symmetric=false, diagnostic* diag=nullptr) {
+                                     bool symmetric=false, diagnostic* diag=nullptr,
+                                     grid_rule const* rule=nullptr) {
+        GRACE_SOURCE_PROFILE(thermal_kernel);
         if(diag) *diag = diagnostic{};
         if (!(m.T>0 && scale>0 && m.nb>=0 && m.yn>=0 && m.yn<=1 && m.yp>=0 && m.yp<=1)
             || !Kokkos::isfinite(m.mu_e) || !Kokkos::isfinite(m.T)
@@ -238,7 +270,8 @@ struct kernel {
             return false;
         }
 #endif
-        g.init(order,scale);
+        if(rule && rule->n==order) g.init(*rule,scale);
+        else g.init(order,scale);
         for (int i=0; i<g.n; ++i) boltz[i]=Kokkos::exp(-g.e[i]/m.T);
 #ifdef GRACE_HAVE_BNS_NURATES
         ee_cache ee; if(c.ee) ee.init(m,g);
@@ -285,17 +318,114 @@ struct kernel {
     }
 };
 
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
+// Process-local exact cache. Cached matrices are private: callers get copies
+// so subsequent tau symmetrization cannot modify an entry used by nu_mu.
+template<int Capacity=4096,int Ways=4> class thermal_kernel_cache {
+    static_assert(Capacity>0 && Ways>0 && Capacity%Ways==0);
+    struct key {
+        int n{}, flags{};
+        std::uint64_t value[6+2*max_order]{};
+        key()=default;
+        key(material const& m,channels c,grid const& g,bool symmetric):n(g.n),
+            flags(int(c.ee)+2*int(c.nn)+4*int(c.plasmon)+8*int(symmetric)) {
+            double const input[6]={m.T,m.mu_e,m.nb,m.yn,m.yp,g.scale};
+            for(int i=0;i<6;++i) value[i]=std::bit_cast<std::uint64_t>(input[i]);
+            for(int i=0;i<n;++i) {
+                value[6+2*i]=std::bit_cast<std::uint64_t>(g.e[i]);
+                value[7+2*i]=std::bit_cast<std::uint64_t>(g.w[i]);
+            }
+        }
+        bool operator==(key const& b) const {
+            if(n!=b.n || flags!=b.flags) return false;
+            for(int i=0;i<6+2*n;++i) if(value[i]!=b.value[i]) return false;
+            return true;
+        }
+        std::uint64_t hash() const {
+            std::uint64_t h=14695981039346656037ULL;
+            auto mix=[&](std::uint64_t x) { h^=x; h*=1099511628211ULL; h^=h>>32; };
+            mix(n); mix(flags);
+            for(int i=0;i<6+2*n;++i) mix(value[i]);
+            return h;
+        }
+    };
+    struct entry { bool valid=false; key input{}; kernel data{}; };
+    struct bucket { std::mutex mutex; unsigned next=0; entry entries[Ways]; };
+    std::unique_ptr<bucket[]> buckets=std::make_unique<bucket[]>(Capacity/Ways);
+    static void copy(kernel const& from,kernel& to) {
+        to.g.n=from.g.n; to.g.scale=from.g.scale;
+        for(int i=0;i<from.g.n;++i) {
+            to.g.e[i]=from.g.e[i]; to.g.w[i]=from.g.w[i]; to.boltz[i]=from.boltz[i];
+            for(int j=0;j<from.g.n;++j) to.a[i][j]=from.a[i][j];
+        }
+    }
+public:
+    bool find(material const& m,channels c,grid const& g,bool symmetric,kernel& out) {
+        if(g.n<1 || g.n>max_order) return false;
+        key const k(m,c,g,symmetric);
+        auto& b=buckets[k.hash()%(Capacity/Ways)];
+        std::lock_guard lock(b.mutex);
+        for(auto const& e:b.entries) if(e.valid && e.input==k) { copy(e.data,out); return true; }
+        return false;
+    }
+    void insert(material const& m,channels c,bool symmetric,kernel const& data) {
+        key const k(m,c,data.g,symmetric);
+        auto& b=buckets[k.hash()%(Capacity/Ways)];
+        std::lock_guard lock(b.mutex);
+        for(auto const& e:b.entries) if(e.valid && e.input==k) return;
+        auto& e=b.entries[b.next]; b.next=(b.next+1)%Ways;
+        e.input=k; copy(data,e.data); e.valid=true;
+    }
+};
+inline thermal_kernel_cache<>& shared_thermal_kernel_cache() {
+    static thermal_kernel_cache<> cache;
+    return cache;
+}
+#endif
+
+KOKKOS_INLINE_FUNCTION bool init_thermal_kernel(kernel& out,material m,channels c,
+    int order,double scale,bool symmetric=false,diagnostic* diag=nullptr,
+    grid_rule const* rule=nullptr,bool reuse=false) {
+    #if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
+    // Validate exactly as kernel::init before constructing a grid/cache key.
+    // Invalid inputs go through the original path to retain failure diagnostics.
+    if(reuse && m.T>0 && Kokkos::isfinite(m.T) && Kokkos::isfinite(m.mu_e)
+       && m.nb>=0 && m.yn>=0 && m.yn<=1 && m.yp>=0 && m.yp<=1
+       && scale>0 && Kokkos::isfinite(scale) && order>=8 && order<=max_order) {
+        grid g;
+        if(rule && rule->n==order) g.init(*rule,scale); else g.init(order,scale);
+        auto& cache=shared_thermal_kernel_cache();
+        if(cache.find(m,c,g,symmetric,out)) {
+            if(diag) *diag=diagnostic{};
+            #ifdef GRACE_LEPTON_PROFILE
+            source_profile::thermal_cache_hits.fetch_add(1,std::memory_order_relaxed);
+            #endif
+            return true;
+        }
+        #ifdef GRACE_LEPTON_PROFILE
+        source_profile::thermal_cache_misses.fetch_add(1,std::memory_order_relaxed);
+        #endif
+        if(!out.init(m,c,order,scale,symmetric,diag,rule)) return false;
+        cache.insert(m,c,symmetric,out);
+        return true;
+    }
+    #else
+    (void)reuse; // Host parameter validation rejects caching on GPU builds.
+    #endif
+    return out.init(m,c,order,scale,symmetric,diag,rule);
+}
+
 // Discrete maximum-entropy FD reconstruction, matching BOTH supplied moments.
 // A negative or non-Fermi-realizable state is rejected, never clipped to LTE.
 // x=epsilon/mean keeps the two Newton columns well scaled.
 KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, double* f,
-                                        diagnostic* diag=nullptr) {
+                                        diagnostic* diag=nullptr,double* shape=nullptr) {
     if(diag) {
         *diag = diagnostic{};
         diag->n=n; diag->J=J;
         diag->emin=g.e[0]; diag->emax=g.e[g.n-1];
     }
-    if (n==0 && J==0) { for(int i=0;i<g.n;++i) f[i]=0; return true; }
+    if (n==0 && J==0) { for(int i=0;i<g.n;++i) f[i]=0; if(shape) { shape[0]=1e300; shape[1]=0; } return true; }
     if (!(n>0 && J>0) || !Kokkos::isfinite(n) || !Kokkos::isfinite(J)) {
         if(diag) diag->code = failure_code::moment_input;
         return false;
@@ -318,7 +448,7 @@ KOKKOS_INLINE_FUNCTION bool reconstruct(grid const& g, double n, double J, doubl
         }
         double const err=Kokkos::fmax(Kokkos::fabs(m0-1),Kokkos::fabs(m1-1));
         if(diag) { diag->iteration=it; diag->residual=err; }
-        if (err<2e-11) return true;
+        if (err<2e-11) { if(shape) { shape[0]=a; shape[1]=b/mean; } return true; }
         double const det=h0*h2-h1*h1;
         if (!(det>0) || !Kokkos::isfinite(det)) {
             if(diag) diag->code = failure_code::reconstruction_jacobian;
@@ -372,6 +502,49 @@ KOKKOS_INLINE_FUNCTION sources evaluate(kernel const& k, double const* f, double
     }
     return s;
 }
+
+// Analytic collision response for a single species block. The integrands are
+// bilinear in the two occupation arrays: this expansion is exact (up to
+// rounding) whenever only one species changes, even for a finite probe.
+// Used ONLY to assemble Jacobian columns, never to accept a nonlinear step.
+struct collision_block {
+    sources base;
+    double f0[2][max_order];
+    struct response { double number=0, energy[2]={0,0}, loss[2]={0,0}; } df[2][max_order];
+
+    template<class Rates>
+    KOKKOS_INLINE_FUNCTION void init(grid const& g, double const* f, double const* fb,
+                                    sources const& value, Rates const& rates) {
+        base=value;
+        for(int i=0;i<g.n;++i) {
+            f0[0][i]=f[i]; f0[1][i]=fb[i];
+            df[0][i]=response{}; df[1][i]=response{};
+        }
+        for(int i=0;i<g.n;++i) for(int j=0;j<g.n;++j) {
+            double p,a; rates(i,j,p,a);
+            double const w=g.w[i]*g.w[j]; p*=w; a*=w;
+            double const d0=-p*(1-fb[j])-a*fb[j];
+            double const d1=-p*(1-f[i])-a*f[i];
+            auto& u=df[0][i]; auto& v=df[1][j];
+            u.number+=d0; v.number+=d1;
+            u.energy[0]+=g.e[i]*d0; u.energy[1]+=g.e[j]*d0;
+            v.energy[0]+=g.e[i]*d1; v.energy[1]+=g.e[j]*d1;
+            u.loss[0]-=g.e[i]*d0; u.loss[1]+=g.e[j]*(a-p)*fb[j];
+            v.loss[0]+=g.e[i]*(a-p)*f[i]; v.loss[1]-=g.e[j]*d1;
+        }
+    }
+    // Only number, energy and loss are consumed by the conservative residual.
+    KOKKOS_INLINE_FUNCTION sources evaluate(grid const& g,double const* f,double const* fb) const {
+        sources out=base;
+        for(int side=0;side<2;++side) for(int i=0;i<g.n;++i) {
+            double const delta=(side==0?f[i]:fb[i])-f0[side][i];
+            auto const& d=df[side][i];
+            out.number+=d.number*delta;
+            for(int s=0;s<2;++s) { out.energy[s]+=d.energy[s]*delta; out.loss[s]+=d.loss[s]*delta; }
+        }
+        return out;
+    }
+};
 
 struct lte_rates { double emission[2], emission_n[2], kappa_E[2], kappa_N[2]; };
 

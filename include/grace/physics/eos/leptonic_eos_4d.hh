@@ -702,6 +702,14 @@ class leptonic_eos_4d_t
         return mumu_core(Kokkos::log(rho), Kokkos::log(temp), ye, ymu) ;
     }
 
+    // Raw thermodynamic value for reaction policies with their own dilute limit.
+    double GRACE_HOST_DEVICE
+    raw_mumu__temp_rho_ye_ymu(double temp, double rho, double ye, double ymu) const {
+        err_t err;
+        limit_rho(rho,err); limit_ye(ye,err); limit_ymu(ye,ymu,err); limit_temp(temp,err);
+        return muon_table.interp(Kokkos::log(rho),Kokkos::log(temp),Kokkos::log(ymu),MUON_VIDX::TABMUMU);
+    }
+
     // ----- Cold-slice accessors -----
     double GRACE_HOST_DEVICE
     press_cold__rho_impl(double& rho, err_t& err) const {

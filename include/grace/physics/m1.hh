@@ -63,7 +63,9 @@ namespace grace {
 // Host-side fatal report, after the producing device launch has completed.
 void check_pair_failures(pairs::failure_buffer const& failures, var_array_t state,
                          var_array_t aux, char const* phase, double stage_h=0);
-void trace_pair_moments(var_array_t state, char const* label, int stage=0, double factor=0);
+// Supply aux only when it contains the fluid primitives for this exact state.
+void trace_pair_moments(var_array_t state, char const* label, int stage=0, double factor=0,
+                        var_array_t current_aux={});
 #endif
 //**************************************************************************************************/
 //**************************************************************************************************
@@ -84,6 +86,7 @@ struct m1_equations_system_t
     static constexpr std::array<int,3> ye_coupling_sign {1,-1,0} ;
     #endif
     public:
+    bool fermi_fofc=false;
 
     #ifdef GRACE_M1_PAIR_KERNELS
     pairs::failure_buffer pair_failures;
@@ -96,7 +99,7 @@ struct m1_equations_system_t
     #ifdef GRACE_M1_PAIR_KERNELS
     , mass_scale(grace::get_param<double>("coordinate_system","mass_scale"))
     #endif
-    {} ;
+    { fermi_fofc=grace::get_param<bool>("m1","eas","fermi_fofc"); } ;
 
     m1_equations_system_t(grace::var_array_t state_
                         , grace::staggered_variable_arrays_t stag_state_
@@ -714,7 +717,7 @@ struct m1_equations_system_t
     KOKKOS_INLINE_FUNCTION void compute_pair_implicit_update(
         int q, VEC(int i,int j,int k), scalar_array_t<GRACE_NSPACEDIM> const idx,
         var_array_t state_new, double dt, double dtfact, int order,
-        pairs::kernel const* prebuilt=nullptr) const {
+        pairs::kernel const* prebuilt=nullptr,bool thermal_cache=false) const {
         int const bits=int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&7;   // thermal channels only
         if(bits==0) {
             compute_implicit_update<sa>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
@@ -742,7 +745,7 @@ struct m1_equations_system_t
         read(std::integral_constant<int,sa>{},0); read(std::integral_constant<int,sb>{},1);
         pairs::material const mat=pair_material(q,VEC(i,j,k));
         double scale=mat.T;
-        for(int s=0;s<2;++s) {
+        for(int s=0;!prebuilt && s<2;++s) {
             m1_closure_t cl{p[s],metric}; cl.update_closure(0);
             if(old[5*s+4]>0) {
                 double const mean=cl.J*cl.Gamma/old[5*s+4]*pairs::number_unit/pairs::energy_unit;
@@ -760,7 +763,7 @@ struct m1_equations_system_t
             pair_failures.save(r);
         };
         if(!kernel) {
-            if(!local.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag)) {
+            if(!pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag,nullptr,thermal_cache)) {
                 fail();
                 return;
             }
@@ -789,11 +792,12 @@ struct m1_equations_system_t
     KOKKOS_INLINE_FUNCTION void compute_leptonic_implicit_update(
         int q,VEC(int i,int j,int k),scalar_array_t<GRACE_NSPACEDIM> const idx,
         var_array_t state_new,double dt,double dtfact,int order,int decay_order,
-        pairs::kernel const* prebuilt=nullptr) const {
+        pairs::kernel const* prebuilt=nullptr,var_array_t const& seed_state={},bool lagged=false,bool singlepass=false,
+        bool decay_cache=false,bool thermal_cache=false,bool block_jacobian=false,bool grey_decay=0) const {
         if(!(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8)) {   // no decay in this cell
             compute_implicit_update<0>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             compute_implicit_update<1>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
-            compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order,prebuilt);
+            compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order,prebuilt,thermal_cache);
             return;
         }
         metric_array_t metric; FILL_METRIC_ARRAY(metric,this->_state,q,VEC(i,j,k));
@@ -813,7 +817,7 @@ struct m1_equations_system_t
         read(std::integral_constant<int,2>{}); read(std::integral_constant<int,3>{});
         pairs::material const mat=pair_material(q,VEC(i,j,k));
         double scale=Kokkos::fmax(mat.T,pairs::muon_mass/3);
-        for(int s=0;s<4;++s) if(old[5*s+4]>0) {
+        for(int s=0;!prebuilt && s<4;++s) if(old[5*s+4]>0) {
             m1_closure_t cl{p[s],metric}; cl.update_closure(0);
             double const mean=cl.J*cl.Gamma/old[5*s+4]*pairs::number_unit/pairs::energy_unit;
             scale=Kokkos::fmax(scale,Kokkos::sqrt(mat.T*mean/3));
@@ -822,15 +826,45 @@ struct m1_equations_system_t
         pairs::kernel local; pairs::decay_kernel decay;
         pairs::kernel const* thermal=prebuilt;
         if(!thermal) {
-            if(!local.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale))
+            if(!pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,false,nullptr,nullptr,thermal_cache))
                 Kokkos::abort("Invalid four-species leptonic kernel");
             thermal=&local;
         }
-        if(!decay.init(thermal->g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order))
+        if(!pairs::init_decay_kernel(decay,thermal->g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order,decay_cache,grey_decay))
             Kokkos::abort("Invalid four-species leptonic kernel");
+        double seed[20];
+        bool const have_seed=seed_state.data()!=nullptr;
+        if(have_seed) {
+            metric_array_t seed_metric;
+            FILL_METRIC_ARRAY(seed_metric,seed_state,q,VEC(i,j,k));
+            auto const read_seed=[&](auto species) {
+                constexpr int s=decltype(species)::value;
+                constexpr int v[5]={m1_erad_idx<s>(),m1_fradx_idx<s>(),m1_frady_idx<s>(),m1_fradz_idx<s>(),m1_nrad_idx<s>()};
+                for(int a=0;a<5;++a) seed[5*s+a]=seed_state(VEC(i,j,k),v[a],q)/seed_metric.sqrtg();
+            };
+            read_seed(std::integral_constant<int,0>{}); read_seed(std::integral_constant<int,1>{});
+            read_seed(std::integral_constant<int,2>{}); read_seed(std::integral_constant<int,3>{});
+        }
         double residual=0;
-        if(!pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual))
+        bool const solved=singlepass
+            ? pairs::leptonic_singlepass_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr)
+            : lagged
+            ? pairs::leptonic_lagged_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,nullptr,nullptr,block_jacobian)
+            : pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,false,block_jacobian);
+        if(!solved)
             Kokkos::abort("Coupled leptonic source solve failed: check timestep and quadrature");
+        // Signed number-increment defect of decay after ordinary sources are
+        // subtracted. Conservative same-flavour thermal pairs cancel here.
+        #ifdef GRACE_LEPTON_PROFILE
+        double defect=0;
+        for(int s=0;s<4;++s) {
+            m1_closure_t cl{p[s],metric};
+            cl.update_closure(out[5*s],{out[5*s+1],out[5*s+2],out[5*s+3]},0,true);
+            double const qn=out[5*s+4]-old[5*s+4]-dt*dtfact*metric.alp()*(eas[s][ETANL]-eas[s][KANL]*out[5*s+4]/cl.Gamma);
+            defect+=(s==0 || s==2?1:-1)*qn;
+        }
+        this->_aux(VEC(i,j,k),PAIR_DECAY_DQ_,q)=metric.sqrtg()*defect;
+        #endif
         this->_aux(VEC(i,j,k),PAIR_RES_,q)=Kokkos::fmax(
             this->_aux(VEC(i,j,k),PAIR_RES_,q),residual);
         auto const write=[&](auto species) {
@@ -876,6 +910,7 @@ struct m1_equations_system_t
         if(!(tau>0)) theta=0;
         if(dE<0 && tau+dE<=0) theta=Kokkos::fmin(theta,tau/(-dE)*(1-1e-10));
         theta=Kokkos::fmax(0.0,theta);
+        this->_aux(VEC(i,j,k),PAIR_DECAY_DQ_,q)*=theta;
         state_new(VEC(i,j,k),TAU_,q)+=theta*dE;
         state_new(VEC(i,j,k),SX_,q)+=theta*(e.Sx+eb.Sx+m.Sx+mb.Sx+x.Sx);
         state_new(VEC(i,j,k),SY_,q)+=theta*(e.Sy+eb.Sy+m.Sy+mb.Sy+x.Sy);
@@ -1546,6 +1581,42 @@ struct m1_equations_system_t
             }
         };
         to_physical(primL,primR);
+        #ifdef GRACE_M1_PAIR_KERNELS
+        if constexpr(normalized_input && ispec<GRACE_M1_NU_SPECIES) {
+            if(fermi_fofc) {
+                constexpr double multiplicity=GRACE_M1_NU_SPECIES==5 ? (ispec==4?2:1) : (ispec==2?4:1);
+                if(!pairs::fermi_moments_admissible(primL,metric_face,multiplicity)
+                   || !pairs::fermi_moments_admissible(primR,metric_face,multiplicity)) {
+                    m1_prims_array_t donorL{},donorR{};
+                    donor_cell_reconstructor_t donor;
+                    for(int v=0;v<5;++v) {
+                        auto values=Kokkos::subview(this->_state,VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()),recon_indices[v],q);
+                        donor(values,VEC(i,j,k),donorL[recon_indices_loc[v]],donorR[recon_indices_loc[v]],idir);
+                    }
+                    for(int v=0;v<3;++v) {
+                        auto values=Kokkos::subview(this->_aux,VEC(Kokkos::ALL(),Kokkos::ALL(),Kokkos::ALL()),recon_indices_aux[v],q);
+                        donor(values,VEC(i,j,k),donorL[recon_indices_aux_loc[v]],donorR[recon_indices_aux_loc[v]],idir);
+                    }
+                    to_physical(donorL,donorR);
+                    auto const limit=[&](m1_prims_array_t& face,m1_prims_array_t const& cell) {
+                        if(pairs::fermi_moments_admissible(face,metric_face,multiplicity)) return;
+                        auto const original=face;
+                        face=cell;
+                        if(!pairs::fermi_moments_admissible(cell,metric_face,multiplicity)) return;
+                        double lo=0,hi=1;
+                        for(int iter=0;iter<24;++iter) {
+                            double const theta=0.5*(lo+hi);
+                            m1_prims_array_t trial;
+                            for(int v=0;v<N_M1_VARS;++v) trial[v]=cell[v]+theta*(original[v]-cell[v]);
+                            if(pairs::fermi_moments_admissible(trial,metric_face,multiplicity)) {lo=theta; face=trial;}
+                            else hi=theta;
+                        }
+                    };
+                    limit(primL,donorL); limit(primR,donorR);
+                }
+            }
+        }
+        #endif
         // closures
         m1_closure_t cl{
             primL[ERADL],
@@ -1816,6 +1887,7 @@ void set_m1_eas(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
     , grace::var_array_t& aux
+    , bool compute_pair_transport = true
 ) ;
 
 template < typename eos_t >
@@ -1834,6 +1906,7 @@ void set_m1_eas<EOS>(                    \
       grace::var_array_t&                \
     , grace::staggered_variable_arrays_t&\
     , grace::var_array_t&                \
+    , bool                              \
 );                                       \
 extern template                          \
 void set_m1_eas<EOS>()

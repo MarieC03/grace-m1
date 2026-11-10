@@ -994,6 +994,32 @@ std::array<double, 5 * NUMSPECIES> weakhub_rates_on_device(
 }
 }  // namespace
 
+#if GRACE_M1_NU_SPECIES >= 5
+TEST_CASE("Dilute WeakHub CC target changes emission without removing absorption", "[m1rates][weakhub][dilute]") {
+    using namespace nu_constants;
+    mock_eos_t eos; tau_policy_analytic_density tau;
+    auto F=make_fugacity_state(eos,1e13*RHOGF,10.0,0.1,5e-4,1.0,kXyzOrigin,tau);
+    F.eta_nu[NUMU]=5; F.eta_nu[NUMUBAR]=-5;
+    auto const h=constant_weakhub_handle(std::log(F.rho_code),std::log(F.temp_mev),6);
+    auto const before=weakhub_rates_on_device(h,F,tau);
+    F.dilute_cc_target=true; F.eta_cc_mu=0;
+    auto const after=weakhub_rates_on_device(h,F,tau);
+    for(int s=0;s<NUMSPECIES;++s) {
+        for(int v=2;v<5;++v) REQUIRE(after[5*s+v]==before[5*s+v]);
+        if(s!=NUMU && s!=NUMUBAR) {
+            REQUIRE(after[5*s]==before[5*s]); REQUIRE(after[5*s+1]==before[5*s+1]);
+        } else {
+            double const equilibrium=R_to_code(black_body_number(1,F.temp_mev,0),1)/kappa_to_code(1,1);
+            REQUIRE_THAT(after[5*s+1]/after[5*s+3],WithinRel(equilibrium,1e-12));
+            // Incident radiation above the new target must still be absorbed.
+            REQUIRE(after[5*s+1]-after[5*s+3]*(2*equilibrium)<0);
+        }
+    }
+    REQUIRE(after[5*NUMU+1]<before[5*NUMU+1]);
+    REQUIRE(after[5*NUMUBAR+1]>before[5*NUMUBAR+1]);
+}
+#endif
+
 TEST_CASE("compute_all_species_weakhub: temperature_correction_emission scales Q and R "
           "of nue/nuebar only", "[m1rates][integration][tnu][weakhub]") {
     // FIL's Weakhub routine multiplies Q, R and all kappas of nue/nuebar by the factor;

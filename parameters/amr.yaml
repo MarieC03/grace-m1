@@ -135,6 +135,16 @@ amr:
     description: >
       Maximum allowed regrid depth. Note this only affects AMR. FMR ignores this.
 
+  static_fmr_finest_weight:
+    type: int
+    default: 1
+    range: "[1,1024]"
+    description: >
+      Relative MPI partition weight of the finest fixed-refinement blocks
+      at initialization. Values above one allow splitting sibling groups
+      and require a fixed mesh with regridding disabled. The default uses
+      equal weights and keeps sibling groups together.
+
   regrid_at_preinitial:
     type: bool 
     default: false 
