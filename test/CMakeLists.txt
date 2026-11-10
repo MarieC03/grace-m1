@@ -144,6 +144,7 @@ if(GRACE_M1_PAIR_KERNELS)   # implies >= 3 species and the bns_nurates submodule
     if(GRACE_M1_NU_SPECIES GREATER_EQUAL 5 AND GRACE_ENABLE_MUONS)
         # Explicit, archived EOS-domain experiments; not part of routine CTest.
         add_grace_test(grey_decay_validation test_grey_decay_validation.cpp)
+        add_grace_test(cc_target_validation test_cc_target_validation.cpp)
         add_test(NAME muon_decay_setup_rejection COMMAND ${CMAKE_COMMAND}
             -DTEST_PROGRAM=$<TARGET_FILE:muon_decay_test>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/check_muon_decay_setup.cmake)
