@@ -618,26 +618,47 @@ class grace_runtime_impl_t
             #endif // GRACE_ENABLE_M1
         };
 
-        // M1 diagnostics -- deliberately its own group, NOT folded into
-        // "rates": those are the EAS rates the transport consumes, these are
-        // read-only by-products of the fugacity_state used to build them.
-        // Requires -DGRACE_M1_DIAGNOSTICS.
-        const std::vector<std::string> diagnostics_aux = {
-            #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_DIAGNOSTICS)
-            // Per-species fugacity eta_nu and the matter chemical potentials
-            // [MeV] that build it.
+        // M1 physics output (GRACE_M1_PHYSICS_OUTPUT), two groups: the fugacities and
+        // chemical potentials the rates used, and the backreaction the collision applied.
+        const std::vector<std::string> fugacity_aux = {
+            #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_PHYSICS_OUTPUT)
             "eta_nu1"
             #if GRACE_M1_NU_SPECIES >= 3
-            , "eta_nu2", "eta_nu3"
+            , "eta_nu2"
             #endif
             #if GRACE_M1_NU_SPECIES >= 5
-            , "eta_nu4", "eta_nu5"
+            , "eta_nu3", "eta_nu4"
             #endif
-            , "mu_e", "mu_mu", "mu_p", "mu_n"
+            , "mu_e"
+            #ifdef GRACE_ENABLE_MUONS
+            , "mu_mu"
+            #endif
+            , "mu_p", "mu_n"
+            #endif
+        };
+        const std::vector<std::string> backreaction_aux = {
+            #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_PHYSICS_OUTPUT)
+            "m1_heatcool", "m1_lepton_source"
+            #if GRACE_M1_NU_SPECIES >= 5
+            , "m1_muon_source"
+            #endif
+            , "m1_br_reject"
+            #endif
+        };
+        // M1 debugging diagnostics (GRACE_M1_DIAGNOSTICS); the "diagnostics" output
+        // group lists them together with the two physics groups above.
+        std::vector<std::string> diagnostics_aux = {
+            #if defined(GRACE_ENABLE_M1) && defined(GRACE_M1_DIAGNOSTICS)
             // Raw beta-equilibrium offsets (zero at equilibrium).
-            , "mu_delta_npe"
+            "mu_delta_npe"
             #ifdef GRACE_ENABLE_MUONS
             , "mu_delta_npmu"
+            #endif
+            // nux fugacity, identically 0 in the standard rates.
+            #if GRACE_M1_NU_SPECIES >= 5
+            , "eta_nu5"
+            #elif GRACE_M1_NU_SPECIES >= 3
+            , "eta_nu3"
             #endif
             // Nuclear composition + beta-equilibration timescale ratio.
             , "X_n", "X_p", "X_a", "X_h", "Abar", "Zbar"
@@ -645,18 +666,20 @@ class grace_runtime_impl_t
             // Closure target (-1 where it did not apply).
             , "betaeq_t_eq", "betaeq_ye_eq"
             #if GRACE_M1_NU_SPECIES >= 5
-            , "betaeq_ymu_eq"
+            , "betaeq_ymu_eq", "m1_muon_source_raw"
             #endif
-            // Backreaction applied this step and its rejections.
-            , "m1_heatcool", "m1_lepton_source"
-            #if GRACE_M1_NU_SPECIES >= 5
-            , "m1_muon_source", "m1_muon_source_raw"
-            #endif
-            , "m1_br_reject"
             // Implicit collision solve: failure mask and exit residual.
             , "m1_implicit_err", "m1_implicit_res", "m1_explicit_step"
             #endif // GRACE_ENABLE_M1 && GRACE_M1_DIAGNOSTICS
         };
+        diagnostics_aux.insert(diagnostics_aux.begin(), backreaction_aux.begin(), backreaction_aux.end()) ;
+        diagnostics_aux.insert(diagnostics_aux.begin(), fugacity_aux.begin(), fugacity_aux.end()) ;
+        auto const m1_output_group = [&] (std::string const& x) -> std::vector<std::string> const* {
+            if ( x == "fugacity" )     return &fugacity_aux ;
+            if ( x == "backreaction" ) return &backreaction_aux ;
+            if ( x == "diagnostics" )  return &diagnostics_aux ;
+            return nullptr ;
+        } ;
         auto out_cell_vars_volume = get_param<std::vector<std::string>>("IO","volume_output_cell_variables") ;
         auto out_cell_vars_plane_surface = get_param<std::vector<std::string>>("IO","plane_surface_output_cell_variables") ;
         auto out_cell_vars_sphere_surface = get_param<std::vector<std::string>>("IO","sphere_surface_output_cell_variables") ;
@@ -717,8 +740,10 @@ class grace_runtime_impl_t
                         _cell_volume_output_scalar_aux.push_back(vn) ;
                     }
                 }
-            } else if ( x == "diagnostics" ) {
-                for( auto const& vn: diagnostics_aux ) {
+            } else if ( auto const* grp = m1_output_group(x) ) {
+                if ( grp->empty() )
+                    GRACE_WARN("Output group {} has no variables in this build (see GRACE_M1_PHYSICS_OUTPUT, GRACE_M1_DIAGNOSTICS).", x) ;
+                for( auto const& vn: *grp ) {
                     if ( auxprops[vn].is_vector ) {
                         _cell_volume_output_vector_aux.push_back(auxprops[vn].name) ;
                     } else {
@@ -792,8 +817,10 @@ class grace_runtime_impl_t
                         _cell_plane_surface_output_scalar_aux.push_back(vn) ;
                     }
                 }
-            } else if ( x == "diagnostics" ) {
-                for( auto const& vn: diagnostics_aux ) {
+            } else if ( auto const* grp = m1_output_group(x) ) {
+                if ( grp->empty() )
+                    GRACE_WARN("Output group {} has no variables in this build (see GRACE_M1_PHYSICS_OUTPUT, GRACE_M1_DIAGNOSTICS).", x) ;
+                for( auto const& vn: *grp ) {
                     if ( auxprops[vn].is_vector ) {
                         _cell_plane_surface_output_vector_aux.push_back(auxprops[vn].name) ;
                     } else {
@@ -867,8 +894,10 @@ class grace_runtime_impl_t
                         _cell_sphere_surface_output_scalar_aux.push_back(vn) ;
                     }
                 }
-            } else if ( x == "diagnostics" ) {
-                for( auto const& vn: diagnostics_aux ) {
+            } else if ( auto const* grp = m1_output_group(x) ) {
+                if ( grp->empty() )
+                    GRACE_WARN("Output group {} has no variables in this build (see GRACE_M1_PHYSICS_OUTPUT, GRACE_M1_DIAGNOSTICS).", x) ;
+                for( auto const& vn: *grp ) {
                     if ( auxprops[vn].is_vector ) {
                         _cell_sphere_surface_output_vector_aux.push_back(auxprops[vn].name) ;
                     } else {

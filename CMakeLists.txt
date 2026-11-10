@@ -507,6 +507,12 @@ if(GRACE_ENABLE_M1)
     _grace_bool_label(GRACE_M1_PHOTONS _grace_m1_photons)
     _grace_bool_label(GRACE_M1_OPTICAL_DEPTH _grace_m1_optd)
     _grace_bool_label(GRACE_M1_DIAGNOSTICS _grace_m1_diag)
+    # Effective value: the diagnostics imply it, and it needs neutrino species (grace_config.h).
+    if((GRACE_M1_PHYSICS_OUTPUT OR GRACE_M1_DIAGNOSTICS) AND GRACE_M1_NU_SPECIES GREATER 0)
+        set(_grace_m1_physout "ON")
+    else()
+        set(_grace_m1_physout "OFF")
+    endif()
     _grace_bool_label(GRACE_M1_PAIR_KERNELS _grace_m1_pairs)
     if(GRACE_HAVE_BNS_NURATES)
         set(_grace_m1_nurates "available")
@@ -517,6 +523,7 @@ if(GRACE_ENABLE_M1)
 "  M1 neutrino species : ${_grace_m1_nspecies}\n"
 "  M1 photon block     : ${_grace_m1_photons}\n"
 "  M1 optical depth    : ${_grace_m1_optd}\n"
+"  M1 physics output   : ${_grace_m1_physout}\n"
 "  M1 diagnostics      : ${_grace_m1_diag}\n"
 "  M1 pair kernels     : ${_grace_m1_pairs}\n"
 "  M1 bns_nurates      : ${_grace_m1_nurates}\n")

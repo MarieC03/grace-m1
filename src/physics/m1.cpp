@@ -255,11 +255,14 @@ void report_betaeq_failures() {
     uint64_t global_u64[5] = { 0, 0, 0, 0, 0 } ;
     parallel::mpi_allreduce(local_u64, global_u64, 5, sc_MPI_SUM) ;
 
+    #ifdef GRACE_M1_DIAGNOSTICS
+    // Rescued cells are not failures: reported in the diagnostics build only.
     if ( global_u64[3] > 0 )
         GRACE_INFO("Beta-equilibrium: the electron-only fallback (Ymu held) equilibrated "
                    "{} cells at iteration {} where the joint solve failed ({} of them with "
                    "Ymu held at the table floor).",
                    global_u64[3], grace::get_iteration(), global_u64[4]) ;
+    #endif
     if ( global_u64[0] == 0 ) return ;
     GRACE_WARN("Beta-equilibrium solver failed in {} cells at iteration {} "
                "({} ran into a variable bound; {} of those settled there but "
@@ -443,12 +446,24 @@ void set_m1_eas(
 
     DECLARE_GRID_EXTENTS ;
 
-    // M1 idle: without the diagnostics build there is nothing to produce here,
-    // so skip the whole EAS pass.  With it, the providers still run in
-    // fugacity-only mode (see neutrinos_eas_op::diagnostics_only).
-    #ifndef GRACE_M1_DIAGNOSTICS
-    if ( !m1_is_active() ) return ;
-    #endif
+    // M1 idle (trigger not fired): no EOS, no rates.  A store-only pass gives every
+    // EAS field its transparent-cell floor, so the output is not stale memory.
+    if ( !m1_is_active() ) {
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>,default_execution_space>
+            idle_policy({VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}) ;
+        parallel_for(GRACE_EXECUTION_TAG("EVOL","floor_eas_m1_idle"), idle_policy
+                , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
+            {
+                floor_neutrino_eas(aux, VEC(i,j,k), q) ;
+                #ifdef GRACE_M1_PHOTONS
+                constexpr double f = weakhub::kappa_floor_code ;
+                aux(VEC(i,j,k),ETAPH_,q) = f ;     aux(VEC(i,j,k),ETANPH_,q) = f ;
+                aux(VEC(i,j,k),KAPPAAPH_,q) = f ;  aux(VEC(i,j,k),KAPPAANPH_,q) = f ;
+                aux(VEC(i,j,k),KAPPASPH_,q) = f ;
+                #endif
+            });
+        return ;
+    }
 
     auto eos = eos::get().get_eos<eos_t>() ;
 

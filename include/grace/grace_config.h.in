@@ -175,6 +175,14 @@ namespace grace {
 #cmakedefine GRACE_M1_PHOTONS
 #cmakedefine GRACE_M1_OPTICAL_DEPTH
 #cmakedefine GRACE_M1_DIAGNOSTICS
+// Physics output ("fugacity", "backreaction"): implied by the diagnostics, needs neutrinos.
+#cmakedefine GRACE_M1_PHYSICS_OUTPUT
+#if defined(GRACE_M1_DIAGNOSTICS) && !defined(GRACE_M1_PHYSICS_OUTPUT)
+#define GRACE_M1_PHYSICS_OUTPUT
+#endif
+#if defined(GRACE_M1_PHYSICS_OUTPUT) && !(defined(GRACE_ENABLE_M1) && GRACE_M1_NU_SPECIES >= 1)
+#undef GRACE_M1_PHYSICS_OUTPUT
+#endif
 // Muon sector (conserved YMUSTAR_, primitive/aux ymu, c2p muon resets,
 // muonic backreaction).  Independent of M1 -- valid at any species count and
 // with M1 off -- but implied by 5-species transport.

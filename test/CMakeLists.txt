@@ -213,6 +213,16 @@ if(GRACE_M1_NU_SPECIES EQUAL 5)
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
 
+# Transparent-cell EAS floor, shared by the atmosphere cells and the idle-M1 pass:
+# every owned slot is overwritten, nothing else is touched.
+if(GRACE_ENABLE_M1 AND GRACE_M1_NU_SPECIES GREATER 0)
+    add_kokkos_test(m1_eas_floor_test test_m1_eas_floor.cpp)
+    add_test(NAME m1_eas_floor_test COMMAND mpirun -n 1 ./m1_eas_floor_test)
+    set_tests_properties(m1_eas_floor_test PROPERTIES
+        LABELS "fast;physics;m1"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # Eikonal optical-depth relaxation kernel on a small flat block: tau must rise when
 # opacity appears (moving stars), fall when matter leaves, and stay a fixed point.
 if(GRACE_M1_OPTICAL_DEPTH)

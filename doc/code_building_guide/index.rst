@@ -304,11 +304,20 @@ Optional physics modules
      - Boolean
      - Enable the eikonal neutrino optical-depth solver.  Enables the M1
        infrastructure.
+   * - GRACE_M1_PHYSICS_OUTPUT
+     - Boolean
+     - ON by default.  Write what the rates used and the collision step applied
+       to aux: output group ``fugacity`` (eta_nu of the lepton flavours, mu_e,
+       mu_mu, mu_p, mu_n) and ``backreaction`` (m1_heatcool, m1_lepton_source,
+       m1_muon_source, m1_br_reject).  12 values per cell at 5 species, 8 at 3;
+       needs neutrino species.
    * - GRACE_M1_DIAGNOSTICS
      - Boolean
-     - Write M1 diagnostics (eta_nu, chemical potentials, composition) to aux,
-       dumped via the ``diagnostics`` output group.  Enables the M1
-       infrastructure.
+     - Write the M1 debugging diagnostics (nux fugacity, beta-equilibrium
+       offsets, composition, beta-equilibrium closure, implicit-solver records)
+       to aux and the per-step solver reports to the log.  Implies
+       ``GRACE_M1_PHYSICS_OUTPUT``; the ``diagnostics`` output group lists both.
+       Enables the M1 infrastructure.
    * - GRACE_M1_PAIR_KERNELS
      - Boolean
      - Compile the spectral heavy-flavour pair kernels and the muon decay

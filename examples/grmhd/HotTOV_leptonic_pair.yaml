@@ -72,8 +72,8 @@ IO: {
   xz_plane_offset: 0.0,
   yz_plane_offset: 0.0,
 
-  # CHANGED: + "diagnostics" (eta_nu, mu_*, beta_eq_tscale, betaeq_*_eq, m1_br_reject,
-  # m1_muon_source(_raw), ...; needs a GRACE_M1_DIAGNOSTICS build, as on Hunter).
+  # CHANGED: + "diagnostics" = the "fugacity" and "backreaction" groups (eta_nu, mu_*, m1_heatcool,
+  # m1_*_source, m1_br_reject; default build) + the debugging fields of a GRACE_M1_DIAGNOSTICS build.
   # Add "pair_active", "pair_transport_kappa3".."pair_transport_kappa5" in a GRACE_M1_PAIR_KERNELS build.
   plane_surface_output_cell_variables: ["metric", "hydro", "m1", "rates", "cons", "diagnostics"],
   plane_surface_output_every: 32, #128,

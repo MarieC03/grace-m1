@@ -506,20 +506,34 @@ void register_variables() {
     register_aux_scalar(KAPPAANPH_,"kappa_n_ph") ;
     register_aux_scalar(ETANPH_,"eta_n_ph") ;
     #endif
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     register_aux_scalar(ETANU1_,"eta_nu1") ;
     #if GRACE_M1_NU_SPECIES >= 3
     register_aux_scalar(ETANU2_,"eta_nu2") ;
-    register_aux_scalar(ETANU3_,"eta_nu3") ;
     #endif
     #if GRACE_M1_NU_SPECIES >= 5
+    register_aux_scalar(ETANU3_,"eta_nu3") ;
     register_aux_scalar(ETANU4_,"eta_nu4") ;
-    register_aux_scalar(ETANU5_,"eta_nu5") ;
     #endif
     register_aux_scalar(MUE_, "mu_e") ;
+    #ifdef GRACE_ENABLE_MUONS
     register_aux_scalar(MUMU_,"mu_mu") ;
+    #endif
     register_aux_scalar(MUP_, "mu_p") ;
     register_aux_scalar(MUN_, "mu_n") ;
+    register_aux_scalar(M1_HEATCOOL_,     "m1_heatcool") ;
+    register_aux_scalar(M1_LEPTON_SOURCE_,"m1_lepton_source") ;
+    #if GRACE_M1_NU_SPECIES >= 5
+    register_aux_scalar(M1_MUON_SOURCE_,  "m1_muon_source") ;
+    #endif
+    register_aux_scalar(M1_BR_REJECT_,    "m1_br_reject") ;
+    #endif
+    #ifdef GRACE_M1_DIAGNOSTICS
+    #if GRACE_M1_NU_SPECIES >= 5
+    register_aux_scalar(ETANU5_,"eta_nu5") ;
+    #elif GRACE_M1_NU_SPECIES >= 3
+    register_aux_scalar(ETANU3_,"eta_nu3") ;
+    #endif
     register_aux_scalar(MUDELTA_NPE_, "mu_delta_npe") ;
     #ifdef GRACE_ENABLE_MUONS
     register_aux_scalar(MUDELTA_NPMU_,"mu_delta_npmu") ;
@@ -536,13 +550,9 @@ void register_variables() {
     #if GRACE_M1_NU_SPECIES >= 5
     register_aux_scalar(BETAEQ_YMU_EQ_,"betaeq_ymu_eq") ;
     #endif
-    register_aux_scalar(M1_HEATCOOL_,     "m1_heatcool") ;
-    register_aux_scalar(M1_LEPTON_SOURCE_,"m1_lepton_source") ;
     #if GRACE_M1_NU_SPECIES >= 5
-    register_aux_scalar(M1_MUON_SOURCE_,  "m1_muon_source") ;
     register_aux_scalar(M1_MUON_SOURCE_RAW_, "m1_muon_source_raw") ;
     #endif
-    register_aux_scalar(M1_BR_REJECT_,    "m1_br_reject") ;
     register_aux_scalar(M1_IMPLICIT_ERR_, "m1_implicit_err") ;
     register_aux_scalar(M1_IMPLICIT_RES_, "m1_implicit_res") ;
     register_aux_scalar(M1_EXPLICIT_STEP_, "m1_explicit_step") ;

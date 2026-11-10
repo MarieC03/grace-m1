@@ -727,9 +727,8 @@ m1:
       gate: M1 does not constrain the timestep in Z4 runs, so an idle M1 cannot
       change the inspiral evolution.
 
-      With GRACE_M1_DIAGNOSTICS the EAS still runs in a reduced fugacity-only
-      mode, so the chemical potentials and composition keep being written while
-      the rates themselves are skipped.
+      While idle, the EAS pass only floors the rate, fugacity and diagnostics
+      fields (stores, no EOS lookups), so the output shows the floor values.
 
     enabled:
       type: bool

@@ -9,7 +9,7 @@
 #     -DGRACE_M1_NU_SPECIES=5        # FIL: frankfurt_m1::use_5_spec_m1     = yes
 #     -DGRACE_ENABLE_MUONS=ON        # forced ON at 5 species anyway
 #     -DGRACE_M1_OPTICAL_DEPTH=ON    # FIL: m1_which_tau = "eikonal-simple"
-#     -DGRACE_M1_DIAGNOSTICS=ON      # FIL: frankfurt_m1::use_m1_diagnostics = yes
+#     -DGRACE_M1_DIAGNOSTICS=ON      # FIL: frankfurt_m1::use_m1_diagnostics = yes (mu_*, eta_nu: default build too)
 #     -DGRACE_METRIC_EVOL=Z4 -DGRACE_ENABLE_FOFC=ON -DCMAKE_BUILD_TYPE=Release
 #
 # Grid equivalence: GRACE builds a BRICK of CUBIC trees sized on the smallest

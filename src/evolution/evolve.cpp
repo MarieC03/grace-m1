@@ -184,15 +184,19 @@ void evolve_impl() {
                     , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
         {
             aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
-            #ifdef GRACE_M1_DIAGNOSTICS
-            // Backreaction diagnostics accumulate over the step's implicit stages.
+            #ifdef GRACE_M1_PHYSICS_OUTPUT
+            // Backreaction output accumulates over the step's implicit stages.
             aux(i,j,k,M1_HEATCOOL_,q)      = 0.0 ;
             aux(i,j,k,M1_LEPTON_SOURCE_,q) = 0.0 ;
             #if GRACE_M1_NU_SPECIES >= 5
             aux(i,j,k,M1_MUON_SOURCE_,q)   = 0.0 ;
-            aux(i,j,k,M1_MUON_SOURCE_RAW_,q) = 0.0 ;
             #endif
             aux(i,j,k,M1_BR_REJECT_,q)     = 0.0 ;
+            #endif
+            #ifdef GRACE_M1_DIAGNOSTICS
+            #if GRACE_M1_NU_SPECIES >= 5
+            aux(i,j,k,M1_MUON_SOURCE_RAW_,q) = 0.0 ;
+            #endif
             aux(i,j,k,M1_IMPLICIT_ERR_,q)  = 0.0 ;
             aux(i,j,k,M1_IMPLICIT_RES_,q)  = 0.0 ;
             aux(i,j,k,M1_EXPLICIT_STEP_,q) = 0.0 ;

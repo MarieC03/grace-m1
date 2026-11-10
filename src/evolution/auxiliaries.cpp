@@ -199,10 +199,8 @@ void compute_auxiliary_quantities(
         m1_eq_system.compute_auxiliaries<M1_PHOTON_SPECIES>(VEC(i,j,k), q, dev_coords);
         #endif
     }) ;
-    // Now fill out the eas.  Still called while M1 is idle: with
-    // GRACE_M1_DIAGNOSTICS it runs in a reduced fugacity-only mode so the
-    // chemical potentials keep being written (and the rate slots floored);
-    // without it, set_m1_eas returns immediately.
+    // Now fill out the eas.  While M1 is idle set_m1_eas only floors the EAS fields
+    // (store-only, no EOS), so the output shows the floor rather than stale memory.
     set_m1_eas<eos_t>(state,sstate,aux) ;
     #endif
 

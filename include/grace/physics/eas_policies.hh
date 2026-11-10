@@ -365,6 +365,68 @@ betaeq_held_ymu( bool const floor_variant, double const Ymu_old
 
 
 //------------------------------------------------------------------------------
+// The EAS fields of a transparent cell: every rate at the 1e-60 floor (log plots work,
+// nothing to amplify), no beta-eq failure, placeholder fugacities.  Shared by the
+// atmosphere cells and by the idle-M1 pass (set_m1_eas), which runs only this.
+//------------------------------------------------------------------------------
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+void floor_neutrino_eas(var_array_t const& aux, VEC(int const i, int const j, int const k), int64_t q)
+{
+    #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
+    for(int a=PAIR_MUE_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
+    #endif
+    constexpr double f = weakhub::kappa_floor_code ;
+    #if (GRACE_M1_NU_SPECIES >= 1)
+    aux(i,j,k,ETA1_,q)=f; aux(i,j,k,KAPPAA1_,q)=f; aux(i,j,k,KAPPAS1_,q)=f; aux(i,j,k,ETAN1_,q)=f; aux(i,j,k,KAPPAAN1_,q)=f;
+    #endif
+    #if (GRACE_M1_NU_SPECIES >= 3)
+    aux(i,j,k,ETA2_,q)=f; aux(i,j,k,KAPPAA2_,q)=f; aux(i,j,k,KAPPAS2_,q)=f; aux(i,j,k,ETAN2_,q)=f; aux(i,j,k,KAPPAAN2_,q)=f;
+    aux(i,j,k,ETA3_,q)=f; aux(i,j,k,KAPPAA3_,q)=f; aux(i,j,k,KAPPAS3_,q)=f; aux(i,j,k,ETAN3_,q)=f; aux(i,j,k,KAPPAAN3_,q)=f;
+    #endif
+    #if (GRACE_M1_NU_SPECIES >= 5)
+    aux(i,j,k,ETA4_,q)=f; aux(i,j,k,KAPPAA4_,q)=f; aux(i,j,k,KAPPAS4_,q)=f; aux(i,j,k,ETAN4_,q)=f; aux(i,j,k,KAPPAAN4_,q)=f;
+    aux(i,j,k,ETA5_,q)=f; aux(i,j,k,KAPPAA5_,q)=f; aux(i,j,k,KAPPAS5_,q)=f; aux(i,j,k,ETAN5_,q)=f; aux(i,j,k,KAPPAAN5_,q)=f;
+    #endif
+    // Written (not OR'd) so a stale bit cannot survive here.
+    aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
+    // No F is built in a transparent cell.  To inspect F in the low-density region,
+    // set grmhd.atmosphere.atmo_tol = -1.
+    aux(i,j,k,ETANU1_,q)=1.e-30;
+    #if (GRACE_M1_NU_SPECIES >= 3)
+    aux(i,j,k,ETANU2_,q)=1.e-30;
+    #endif
+    #if (GRACE_M1_NU_SPECIES >= 5)
+    aux(i,j,k,ETANU3_,q)=1.e-30; aux(i,j,k,ETANU4_,q)=1.e-30;
+    #endif
+    aux(i,j,k,MUE_,q)=1.e-30; aux(i,j,k,MUP_,q)=1.e-30; aux(i,j,k,MUN_,q)=1.e-30;
+    #ifdef GRACE_ENABLE_MUONS
+    aux(i,j,k,MUMU_,q)=1.e-30;
+    #endif
+    #endif
+    #ifdef GRACE_M1_DIAGNOSTICS
+    #if (GRACE_M1_NU_SPECIES >= 5)
+    aux(i,j,k,ETANU5_,q)=1.e-30;
+    #elif (GRACE_M1_NU_SPECIES >= 3)
+    aux(i,j,k,ETANU3_,q)=1.e-30;
+    #endif
+    aux(i,j,k,MUDELTA_NPE_,q)=1.e-30;
+    #ifdef GRACE_ENABLE_MUONS
+    aux(i,j,k,MUDELTA_NPMU_,q)=1.e-30;
+    #endif
+    aux(i,j,k,XN_,q)=1.e-30; aux(i,j,k,XP_,q)=1.e-30; aux(i,j,k,XA_,q)=1.e-30; aux(i,j,k,XH_,q)=1.e-30;
+    aux(i,j,k,ABAR_,q)=1.e-30; aux(i,j,k,ZBAR_,q)=1.e-30;
+    // Sentinel, not the 1e-30 floor: a transparent cell never equilibrates,
+    // and beta_eq_tscale is a ratio where small means "equilibrates fast".
+    aux(i,j,k,BETAEQ_TSCALE_,q)=1.e30;
+    aux(i,j,k,BETAEQ_T_EQ_,q)=-1.0; aux(i,j,k,BETAEQ_YE_EQ_,q)=-1.0;
+    #if GRACE_M1_NU_SPECIES >= 5
+    aux(i,j,k,BETAEQ_YMU_EQ_,q)=-1.0;
+    #endif
+    #endif
+}
+
+//------------------------------------------------------------------------------
 // Neutrino EAS operator
 //------------------------------------------------------------------------------
 template <typename eos_t>
@@ -400,10 +462,7 @@ struct neutrinos_eas_op
         betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
         betaeq_ymu_floor(grace::get_param<bool>("m1", "eas", "betaeq_fallback_ymu_floor")),
         tau_kind(get_tau_policy_kind()),
-        weakhub(grace::weakhub::get_device_handle()),
-        // M1 trigger not yet fired: build the fugacity state for the
-        // diagnostics but skip the rates entirely.
-        diagnostics_only(!m1_is_active())
+        weakhub(grace::weakhub::get_device_handle())
     {
         spherical_tau.r_outer_code = grace::get_param<double>("m1", "eas", "tau_outer_radius_code");
         spherical_tau.seed_with_analytic = true;
@@ -1111,60 +1170,10 @@ struct neutrinos_eas_op
     }
     #endif  // GRACE_M1_PAIR_KERNELS
 
-    // Transparent low-density cell: floor every EAS rate output without touching
-    // the EOS.  1e-60 not 0 so log-scale plots of kappa work; this path returns
-    // before the temperature correction, so the value cannot be amplified.
-    // Rate slots only.  Split out of floor_eas so the fugacity-only mode (M1
-    // trigger not yet fired) can floor the rates while still writing REAL
-    // diagnostics from F, instead of the transparent-cell placeholders.
-    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    void floor_rates(VEC(const int i, const int j, const int k), int64_t q) const {
-        #if GRACE_M1_NU_SPECIES >= 3 && defined(GRACE_M1_PAIR_KERNELS)
-        for(int a=PAIR_MUE_; a<=PAIR_RES_; ++a) aux(VEC(i,j,k),a,q)=0;
-        #endif
-        #if (GRACE_M1_NU_SPECIES >= 1)
-        aux(i,j,k,ETA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS1_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN1_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN1_,q)=weakhub::kappa_floor_code;
-        #endif
-        #if (GRACE_M1_NU_SPECIES >= 3)
-        aux(i,j,k,ETA2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS2_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN2_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN2_,q)=weakhub::kappa_floor_code;
-        aux(i,j,k,ETA3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS3_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN3_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN3_,q)=weakhub::kappa_floor_code;
-        #endif
-        #if (GRACE_M1_NU_SPECIES >= 5)
-        aux(i,j,k,ETA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS4_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN4_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN4_,q)=weakhub::kappa_floor_code;
-        aux(i,j,k,ETA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAA5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAS5_,q)=weakhub::kappa_floor_code; aux(i,j,k,ETAN5_,q)=weakhub::kappa_floor_code; aux(i,j,k,KAPPAAN5_,q)=weakhub::kappa_floor_code;
-        #endif
-    }
-
+    // Transparent low-density cell: floor every EAS output without touching the EOS.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
     void floor_eas(VEC(const int i, const int j, const int k), int64_t q) const {
-        floor_rates(VEC(i,j,k), q) ;
-        // Transparent cell: the beta-eq solver never ran, so "no failure".
-        // Written (not OR'd) so a stale bit cannot survive here.
-        aux(i,j,k,BETAEQ_ERR_,q) = 0.0 ;
-        #ifdef GRACE_M1_DIAGNOSTICS
-        // Keep the debug fugacity / chemical-potential fields consistent with a
-        // transparent cell (no F is built here) so they don't show stale data.
-        // To inspect F in the low-density region, set grmhd.atmosphere.atmo_tol = -1.
-        #if (GRACE_M1_NU_SPECIES >= 1)
-        aux(i,j,k,ETANU1_,q)=1.e-30;
-        #endif
-        #if (GRACE_M1_NU_SPECIES >= 5)
-        aux(i,j,k,ETANU2_,q)=1.e-30; aux(i,j,k,ETANU3_,q)=1.e-30; aux(i,j,k,ETANU4_,q)=1.e-30; aux(i,j,k,ETANU5_,q)=1.e-30;
-        #elif (GRACE_M1_NU_SPECIES >= 3)
-        aux(i,j,k,ETANU2_,q)=1.e-30; aux(i,j,k,ETANU3_,q)=1.e-30;
-        #endif
-        aux(i,j,k,MUE_,q)=1.e-30; aux(i,j,k,MUMU_,q)=1.e-30; aux(i,j,k,MUP_,q)=1.e-30; aux(i,j,k,MUN_,q)=1.e-30;
-        aux(i,j,k,MUDELTA_NPE_,q)=1.e-30;
-        #ifdef GRACE_ENABLE_MUONS
-        aux(i,j,k,MUDELTA_NPMU_,q)=1.e-30;
-        #endif
-        aux(i,j,k,XN_,q)=1.e-30; aux(i,j,k,XP_,q)=1.e-30; aux(i,j,k,XA_,q)=1.e-30; aux(i,j,k,XH_,q)=1.e-30;
-        aux(i,j,k,ABAR_,q)=1.e-30; aux(i,j,k,ZBAR_,q)=1.e-30;
-        // Sentinel, not the 1e-30 floor: a transparent cell never equilibrates,
-        // and beta_eq_tscale is a ratio where small means "equilibrates fast".
-        aux(i,j,k,BETAEQ_TSCALE_,q)=1.e30;
-        write_betaeq_target(VEC(i,j,k), q, -1.0, -1.0, -1.0) ;
-        #endif
+        floor_neutrino_eas(aux, VEC(i,j,k), q) ;
     }
 
     //! Closure-target diagnostic (T [MeV], Ye, Ymu); -1 = the closure did not apply.
@@ -1181,40 +1190,47 @@ struct neutrinos_eas_op
         (void)T_eq ; (void)Ye_eq ; (void)Ymu_eq ;
     }
 
-    // Write the M1 diagnostics from a finished fugacity_state.  Factored out so
-    // both the normal path and the fugacity-only path (M1 trigger not yet
-    // fired) produce identical fields; only `betaeq_tscale` differs, since it
-    // is the one diagnostic derived from the rates rather than from F.
+    // Physics output: per-species fugacity eta_nu = mu_nu / T as the rates used it
+    // (tau-interpolated electron flavours, clamped muon flavours; the kernel modes of
+    // GRACE_M1_PAIR_KERNELS builds override both in launch()) and the chemical potentials.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    void write_diagnostics(VEC(const int i, const int j, const int k), int64_t q,
-                           fugacity_state const& F, double betaeq_tscale) const {
-        #ifdef GRACE_M1_DIAGNOSTICS
-        // M1 diagnostics -- everything below is read straight out of the
-        // fugacity_state F that was already built above, so this costs stores
-        // and (for the two mu_delta) two subtractions, nothing else.
-        //
-        // Per-species equilibrium fugacity eta_nu = mu_nu / T, as the rates used it
-        // (tau-interpolated electron flavours, clamped muon flavours; the kernel
-        // modes of GRACE_M1_PAIR_KERNELS builds override both in launch()).
-        #if (GRACE_M1_NU_SPECIES >= 1)
+    void write_fugacity(VEC(const int i, const int j, const int k), int64_t q,
+                        fugacity_state const& F) const {
+        #ifdef GRACE_M1_PHYSICS_OUTPUT
         aux(i,j,k,ETANU1_,q) = F.eta_nu[NUE];
-        #endif
         #if (GRACE_M1_NU_SPECIES >= 5)
         aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
         aux(i,j,k,ETANU3_,q) = F.eta_nu[NUMU];
         aux(i,j,k,ETANU4_,q) = F.eta_nu[NUMUBAR];
-        aux(i,j,k,ETANU5_,q) = F.eta_nu[NUX];
         #elif (GRACE_M1_NU_SPECIES >= 3)
         aux(i,j,k,ETANU2_,q) = F.eta_nu[NUEBAR];
-        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUX];
         #endif
         // Matter chemical potentials [MeV] that built eta_nu, straight from the
         // EOS read in make_fugacity_state.  mu_nue = mu_e+mu_p-mu_n-Qnp, so a
         // collapsed mu_n-mu_p shows up directly as mu_n ~ mu_p here.
         aux(i,j,k,MUE_,q)  = F.mu_e;
+        #ifdef GRACE_ENABLE_MUONS
         aux(i,j,k,MUMU_,q) = F.mu_mu;
+        #endif
         aux(i,j,k,MUP_,q)  = F.mu_p;
         aux(i,j,k,MUN_,q)  = F.mu_n;
+        #else
+        (void)F ;
+        #endif
+    }
+
+    // Debugging diagnostics from the same finished fugacity_state: stores and two
+    // subtractions, nothing else.  betaeq_tscale is the one value taken from the rates.
+    GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+    void write_diagnostics(VEC(const int i, const int j, const int k), int64_t q,
+                           fugacity_state const& F, double betaeq_tscale) const {
+        #ifdef GRACE_M1_DIAGNOSTICS
+        // nux fugacity, identically 0 in the standard rates (mu_nux = 0).
+        #if (GRACE_M1_NU_SPECIES >= 5)
+        aux(i,j,k,ETANU5_,q) = F.eta_nu[NUX];
+        #elif (GRACE_M1_NU_SPECIES >= 3)
+        aux(i,j,k,ETANU3_,q) = F.eta_nu[NUX];
+        #endif
         // Raw beta-equilibrium offsets [MeV] (FIL's mu_delta_*).  Identically
         // -mu_nue and -mu_numu in GRACE's Qnp convention, but built from the
         // potentials directly so they carry neither the tau suppression nor the
@@ -1234,6 +1250,8 @@ struct neutrinos_eas_op
         // tau_beta_min/dt from the "timescale" betaeq policy (< 1 => the cell
         // equilibrates within the step); large sentinel under other policies.
         aux(i,j,k,BETAEQ_TSCALE_,q) = betaeq_tscale;
+        #else
+        (void)F ; (void)betaeq_tscale ;
         #endif
     }
 
@@ -1340,35 +1358,6 @@ struct neutrinos_eas_op
             }
             return launch(tau_policy_none{});
         };
-
-        #ifdef GRACE_M1_DIAGNOSTICS
-        // M1 idle: the diagnostics all read F alone, so build it through the
-        // same tau dispatch and stop there.  The rate slots are floored rather
-        // than left stale -- they are in the "rates" output group and would
-        // otherwise plot as garbage.  beta_eq_tscale keeps its "never
-        // equilibrates" sentinel, the honest value when no rates were computed.
-        if ( diagnostics_only ) {
-            switch (tau_kind) {
-            case tau_policy_kind_t::local_spherical:
-                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, spherical_tau); break;
-            case tau_policy_kind_t::analytic_density:
-                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy_analytic_density{}); break;
-            case tau_policy_kind_t::local_kappa:
-                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz,
-                        make_lagged_kappa_tau(aux, VEC(i,j,k), q, spherical_tau.r_outer_code, xyz)); break;
-            #ifdef GRACE_M1_OPTICAL_DEPTH
-            case tau_policy_kind_t::eikonal:
-                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz,
-                        make_eikonal_tau(state, VEC(i,j,k), q)); break;
-            #endif
-            default:
-                F = make_fugacity_state(eos, rho, T, Ye, Ymu, mass_scale, xyz, tau_policy_none{}); break;
-            }
-            floor_rates(VEC(i,j,k), q) ;
-            write_diagnostics(VEC(i,j,k), q, F, 1.0e30) ;
-            return ;
-        }
-        #endif
 
         nu_rates_all_out all = evaluate_rates();
         #ifdef GRACE_M1_PAIR_KERNELS
@@ -1605,6 +1594,7 @@ struct neutrinos_eas_op
             aux(VEC(i,j,k),BETAEQ_ERR_,q) = static_cast<double>(prev | berr.words[0]) ;
         }
 
+        write_fugacity(VEC(i,j,k), q, F) ;
         #ifdef GRACE_M1_DIAGNOSTICS
         write_diagnostics(VEC(i,j,k), q, F, betaeq_tscale_diag) ;
         #endif
@@ -1631,9 +1621,6 @@ struct neutrinos_eas_op
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
   bool betaeq_ymu_floor;    // ... held at the table floor when the muon equilibrium is below it
   tau_policy_kind_t tau_kind;
-  //! Fugacity-only mode: write diagnostics from F, floor the rates, skip the
-  //! rate evaluation and everything downstream of it.
-  bool diagnostics_only;
   grace::weakhub::device_handle weakhub;
   grace::tau_policy_local_spherical spherical_tau{};
 };

@@ -887,7 +887,7 @@ struct m1_equations_system_t
             blend_species<2>(q,VEC(i,j,k),state_new,theta); blend_species<3>(q,VEC(i,j,k),state_new,theta);
             blend_species<4>(q,VEC(i,j,k),state_new,theta);
         }
-        #ifdef GRACE_M1_DIAGNOSTICS
+        #ifdef GRACE_M1_PHYSICS_OUTPUT
         this->_aux(VEC(i,j,k),M1_HEATCOOL_,q)+=theta*dE/D;
         this->_aux(VEC(i,j,k),M1_LEPTON_SOURCE_,q)+=theta*dye;
         this->_aux(VEC(i,j,k),M1_MUON_SOURCE_,q)+=theta*dym;
@@ -1068,11 +1068,11 @@ struct m1_equations_system_t
         if ( !acc_E ) revert_species<2>(q,VEC(i,j,k),state_new) ;
         #endif
 
-        #ifdef GRACE_M1_DIAGNOSTICS
-        #if GRACE_M1_NU_SPECIES >= 5
+        #if defined(GRACE_M1_DIAGNOSTICS) && GRACE_M1_NU_SPECIES >= 5
         // What the collision proposed for Ymu, whatever the limiters did with it.
         this->_aux(VEC(i,j,k),M1_MUON_SOURCE_RAW_,q) += ( x_mu.N - x_mubar.N ) / D ;
         #endif
+        #ifdef GRACE_M1_PHYSICS_OUTPUT
         // What was applied, summed raw over the step's implicit stages (not
         // IMEX-weighted); reset every step.  FIL: m1_heatcool, m1_lepton_source.
         if ( acc_E ) {
@@ -1096,7 +1096,7 @@ struct m1_equations_system_t
             double& flag = this->_aux(VEC(i,j,k),M1_BR_REJECT_,q) ;
             flag = static_cast<double>( static_cast<int>(flag) | rejected ) ;
         }
-        #endif // GRACE_M1_DIAGNOSTICS
+        #endif // GRACE_M1_PHYSICS_OUTPUT
         #endif // !GRACE_FREEZE_HYDRO && GRACE_M1_NU_SPECIES >= 3
 
         #else // scaled limiter

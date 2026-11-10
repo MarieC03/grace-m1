@@ -68,19 +68,13 @@ if(GRACE_M1_OPTICAL_DEPTH)
     message(STATUS "M1 eikonal optical-depth solver enabled.")
 endif()
 
-# Write M1 diagnostic fields into dedicated aux slots, dumped via the
-# "diagnostics" output group.  All of them are read straight out of the
-# fugacity_state that neutrinos_eas_op already builds every substep, so they
-# cost stores but no extra EOS lookups or root-finds (contrast FIL's
-# compute_m1_diagnostics.cc, which recomputes everything at analysis time).
-# Covers: the per-species equilibrium fugacity eta_nu = mu_nu/T (eta_nu1..5),
-# the matter chemical potentials feeding it (mu_e, mu_mu, mu_p, mu_n), the raw
-# beta-equilibrium offsets (mu_delta_npe, mu_delta_npmu), the nuclear
-# composition already interpolated by the same EOS call (X_n, X_p, X_a, X_h,
-# Abar, Zbar) and the beta-equilibration timescale ratio (beta_eq_tscale).
-# Off by default; costs a handful of extra aux scalars when enabled.
-# Implies the M1 infrastructure.
-option(GRACE_M1_DIAGNOSTICS "Output M1 diagnostics (eta_nu, chemical potentials, composition) to aux" OFF)
+# M1 physics output (stores only, needs neutrinos): what the rates used ("fugacity": eta_nu, mu_e/mu/p/n) and
+# what the collision applied ("backreaction": m1_heatcool, m1_*_source, m1_br_reject).  Not rebuildable offline.
+option(GRACE_M1_PHYSICS_OUTPUT "Output the rates' fugacities/chemical potentials and the applied backreaction to aux" ON)
+
+# M1 debugging diagnostics (implies the physics output and the M1 infrastructure): nux eta_nu, mu_delta_*,
+# composition, beta-eq closure, m1_muon_source_raw, implicit-solver records, per-step solver reports.
+option(GRACE_M1_DIAGNOSTICS "Output M1 debugging diagnostics (composition, beta-eq closure, solver records) to aux" OFF)
 if(GRACE_M1_DIAGNOSTICS)
     message(STATUS "M1 diagnostics enabled.")
 endif()

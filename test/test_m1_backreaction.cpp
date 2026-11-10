@@ -850,7 +850,7 @@ TEST_CASE("M1 backreaction: a Ye rejection restores the whole nue/nuebar pair",
     #endif
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, ye0);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 1.0);
     REQUIRE(c.get_aux(M1_LEPTON_SOURCE_) == 0.0);
     REQUIRE_THAT(c.get_aux(M1_HEATCOOL_), WithinRel(dE_kept, 1e-12));
@@ -894,7 +894,7 @@ TEST_CASE("M1 backreaction: electron_partial_at_bound lands Ye on the floor with
     require_kept(c, pre, kNux);
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, ye0);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 16.0);
     REQUIRE_THAT(c.get_aux(M1_LEPTON_SOURCE_), WithinRel(-f * 1.0e-3, 1e-12));
     #endif
@@ -935,7 +935,7 @@ TEST_CASE("M1 backreaction: electron_partial_at_bound reverts a pair already on 
     require_restored(c, 1);
     REQUIRE(c.get_new(YESTAR_) == ye0);
     REQUIRE_THAT(c.get_new(TAU_), WithinAbs(tau0, 1e-15));
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 1.0);
     #endif
 }
@@ -958,7 +958,7 @@ TEST_CASE("M1 backreaction: electron_partial_at_bound still yields to the energy
     require_restored(c, kNux);
     REQUIRE(c.get_new(YESTAR_) == ye0);
     REQUIRE(c.get_new(TAU_) == tau0);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 5.0);   // energy | electron pair
     #endif
 }
@@ -995,9 +995,11 @@ TEST_CASE("M1 backreaction: a Ymu rejection restores the whole numu/numubar pair
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
     require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
+    REQUIRE(c.get_aux(M1_MUON_SOURCE_) == 0.0);                                  // applied
+    #endif
     #ifdef GRACE_M1_DIAGNOSTICS
     REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_RAW_), WithinRel(-1.0e-3, 1e-12));   // proposed
-    REQUIRE(c.get_aux(M1_MUON_SOURCE_) == 0.0);                                  // applied
     #endif
 }
 
@@ -1040,10 +1042,12 @@ TEST_CASE("M1 backreaction: muon_partial_at_bound lands Ymu on the floor with th
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
     require_lepton_identity(c, NRAD3_, NRAD4_, YMUSTAR_, ymu0);
     require_lepton_identity(c, NRAD1_, NRAD2_, YESTAR_, 0.30);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 8.0);
-    REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_RAW_), WithinRel(-1.0e-3, 1e-12));
     REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_), WithinRel(-f * 1.0e-3, 1e-12));
+    #endif
+    #ifdef GRACE_M1_DIAGNOSTICS
+    REQUIRE_THAT(c.get_aux(M1_MUON_SOURCE_RAW_), WithinRel(-1.0e-3, 1e-12));
     #endif
 }
 
@@ -1084,7 +1088,7 @@ TEST_CASE("M1 backreaction: muon_partial_at_bound reverts a pair already on the 
     require_restored(c, 3);
     REQUIRE(c.get_new(YMUSTAR_) == ymu0);
     REQUIRE_THAT(c.get_new(TAU_), WithinAbs(tau0, 1e-15));
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 2.0);
     #endif
 }
@@ -1108,7 +1112,7 @@ TEST_CASE("M1 backreaction: muon_partial_at_bound still yields to the energy dec
     require_restored(c, kNux);
     REQUIRE(c.get_new(YMUSTAR_) == ymu0);
     REQUIRE(c.get_new(TAU_) == tau0);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 6.0);   // energy | muon pair
     #endif
 }
@@ -1169,7 +1173,7 @@ TEST_CASE("M1 backreaction: a lepton-rejected pair cannot pay for cooling elsewh
     REQUIRE(c.get_new(TAU_) == tau0);
     REQUIRE(c.get_new(YESTAR_) == 0.30);
     require_em_conserved(c, tau0, 0.0, 0.0, 0.0);
-    #ifdef GRACE_M1_DIAGNOSTICS
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
     REQUIRE(c.get_aux(M1_BR_REJECT_) == 5.0);   // Ye pair | energy
     REQUIRE(c.get_aux(M1_HEATCOOL_) == 0.0);
     #endif
@@ -2160,7 +2164,7 @@ TEST_CASE("Vacuum muon decay: Ymu -> dilute band through the solve and the hard 
         REQUIRE_THAT(c.get_new(YESTAR_) / D, WithinRel(ye0 + ymu0 - ymu, 1e-9));
         REQUIRE_THAT(c.get_new(TAU_) + e_rad(), WithinRel(tau0, 1e-12));
         REQUIRE(c.get_new(NRAD2_) == c.get_new(NRAD3_));
-        #ifdef GRACE_M1_DIAGNOSTICS
+        #ifdef GRACE_M1_PHYSICS_OUTPUT
         REQUIRE(c.get_aux(M1_BR_REJECT_) == 0.0);
         #endif
     }

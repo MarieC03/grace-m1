@@ -72,7 +72,7 @@ So a step performs **five full auxiliaries + EAS passes** (3 explicit, 2 implici
    E_fl, N_fl with (r_damping/r)² fall-off, F zeroed on reset, ε bounds), excision (lapse or radius,
    `m1.excision.*`).
 3. `set_m1_eas`: the rates pass (section 4) for every cell; floors for transparent cells; diagnostics.
-   While the activation trigger is idle only a fugacity-only pass runs.
+   While the activation trigger is idle only a store-only pass runs that floors the EAS fields.
 
 ### 2.3 Implicit substep (`advance_implicit_substep`, `evolve.cpp:1993`)
 
@@ -108,13 +108,17 @@ these conservatives — always convert when comparing [OK, documented].
 `ETAs_` (Q), `ETANs_` (R); `BETAEQ_ERR_`; only in `GRACE_M1_PAIR_KERNELS` builds (≥ 3 species) the 12
 `PAIR_*` slots (`PAIR_MUE_ … PAIR_RES_`, zero in the standard mode; `PAIR_ACTIVE_` bit 8 = decay active).
 
-**Aux, diagnostics group** (`GRACE_M1_DIAGNOSTICS`, output group "diagnostics"): `ETANUs_` (η_ν as used),
-`MUE_ MUMU_ MUP_ MUN_`, `MUDELTA_NPE_/NPMU_`, `XN_ XP_ XA_ XH_ ABAR_ ZBAR_`, `BETAEQ_TSCALE_`
-(τ_β/dt; 1e30 = never), `BETAEQ_T/YE/YMU_EQ_` (closure target; −1 = not applied), `M1_HEATCOOL_`,
-`M1_LEPTON_SOURCE_`, `M1_MUON_SOURCE_(RAW_)`, `M1_BR_REJECT_` (1 full reject, 8 muon partial, 16
-electron partial, 32 connected-decay limiting), `M1_IMPLICIT_ERR_` (5 bits per species: roundoff,
+**Aux, physics output** (`GRACE_M1_PHYSICS_OUTPUT`, default ON): output group "fugacity" = `ETANUs_` of the
+lepton flavours (η_ν as used), `MUE_ MUMU_ MUP_ MUN_` (`MUMU_` with muons); group "backreaction" =
+`M1_HEATCOOL_`, `M1_LEPTON_SOURCE_`, `M1_MUON_SOURCE_`, `M1_BR_REJECT_` (1 full reject, 8 muon partial,
+16 electron partial, 32 connected-decay limiting).
+**Aux, debugging diagnostics** (`GRACE_M1_DIAGNOSTICS`, implies the physics output; output group
+"diagnostics" = both physics groups plus these): `ETANU` of νx (identically 0), `MUDELTA_NPE_/NPMU_`,
+`XN_ XP_ XA_ XH_ ABAR_ ZBAR_`, `BETAEQ_TSCALE_` (τ_β/dt; 1e30 = never), `BETAEQ_T/YE/YMU_EQ_` (closure
+target; −1 = not applied), `M1_MUON_SOURCE_RAW_`, `M1_IMPLICIT_ERR_` (5 bits per species: roundoff,
 small step, max iter, linear fallback, non-physical), `M1_IMPLICIT_RES_`, `M1_EXPLICIT_STEP_`.
-All of these are written straight from the fugacity state, never recomputed [CHOICE: FIL recomputes].
+All of these are written straight from the fugacity state and the solves, never recomputed [CHOICE: FIL
+recomputes].
 
 **Scalars / surfaces**: luminosity detectors (species, index bug fixed), outflow bins
 (`Mdot_ye` 30 linear bins over `outflows.ye_bin_min/max`, `Mdot_ymu` 24 log bins, `Mdot_yp` on the Yₑ
@@ -397,7 +401,7 @@ needed (project to the realisable boundary for the transport opacity/seed, or re
 ## 10. Build matrix and parameter map
 
 Build: `GRACE_ENABLE_M1` (derived, cache-internal), `GRACE_M1_NU_SPECIES` 0/1/3/5, `GRACE_ENABLE_MUONS`
-(forced on at 5), `GRACE_M1_OPTICAL_DEPTH`, `GRACE_M1_DIAGNOSTICS`, `GRACE_M1_PHOTONS`,
+(forced on at 5), `GRACE_M1_OPTICAL_DEPTH`, `GRACE_M1_PHYSICS_OUTPUT` (default ON), `GRACE_M1_DIAGNOSTICS`, `GRACE_M1_PHOTONS`,
 `GRACE_M1_PAIR_KERNELS` (default OFF: Marie's kernel modes, §9), `GRACE_HAVE_BNS_NURATES` (submodule
 present), `GRACE_ENABLE_FOFC`, `GRACE_FREEZE_HYDRO`; defines
 `GRACE_M1_EXPLICIT_THIN`, `GRACE_M1_BACKREACT_HARDSTOP`, `GRACE_M1_IMPLICIT_LB`. Mac: Release only,

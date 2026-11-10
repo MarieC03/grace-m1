@@ -399,28 +399,44 @@ enum aux_var_idx : int {
     ETANPH_,
     KAPPAANPH_,
     #endif
-    #ifdef GRACE_M1_DIAGNOSTICS
-    // M1 diagnostics written by neutrinos_eas_op from the fugacity_state F it
-    // already builds every substep, dumped via the "diagnostics" output group.
-    // Read-only by-products: no extra EOS lookups or root-finds.  Gate with the
-    // GRACE_M1_DIAGNOSTICS CMake option.
-    //   eta_nu = mu_nu / T  (per species)  -- the equilibrium fugacity.
+    #ifdef GRACE_M1_PHYSICS_OUTPUT
+    // GRACE_M1_PHYSICS_OUTPUT: what the rates used and the collision step applied (not
+    // reproducible from snapshots).  "fugacity" group: eta_nu as the rates used it (nux,
+    // identically 0, is a diagnostic) and the chemical potentials [MeV] feeding it.
     ETANU1_,
     #if GRACE_M1_NU_SPECIES >= 3
     ETANU2_,
-    ETANU3_,
     #endif
     #if GRACE_M1_NU_SPECIES >= 5
+    ETANU3_,
     ETANU4_,
-    ETANU5_,
     #endif
-    //   Matter chemical potentials [MeV] feeding eta_nu (mu_nue = mu_e+mu_p-mu_n
-    //   -Qnp).  mu_n-mu_p collapsing toward 0 leaves eta_nu ~ mu_e/T even at
-    //   beta equilibrium -- these localise that.
     MUE_,
+    #ifdef GRACE_ENABLE_MUONS
     MUMU_,
+    #endif
     MUP_,
     MUN_,
+    //   "backreaction" group, summed over the step's implicit stages: specific energy
+    //   dtau/D, dYe, dYmu, and a sticky reject mask (1 = Ye pair, 2 = Ymu pair,
+    //   4 = energy; 16 / 8 = Ye / Ymu pair accepted only in part, see
+    //   m1.backreaction.*_partial_at_bound).  FIL: m1_heatcool/m1_lepton_source.
+    M1_HEATCOOL_,
+    M1_LEPTON_SOURCE_,
+    #if GRACE_M1_NU_SPECIES >= 5
+    M1_MUON_SOURCE_,
+    #endif
+    M1_BR_REJECT_, // additionally 32: connected decay-network limiting (GRACE_M1_PAIR_KERNELS builds)
+    #endif
+    #ifdef GRACE_M1_DIAGNOSTICS
+    // M1 debugging diagnostics (GRACE_M1_DIAGNOSTICS, implies the physics output),
+    // written from the same fugacity_state / solves: no extra EOS lookups.
+    //   eta_nu of nux, identically 0 in the standard rates (mu_nux = 0).
+    #if GRACE_M1_NU_SPECIES >= 5
+    ETANU5_,
+    #elif GRACE_M1_NU_SPECIES >= 3
+    ETANU3_,
+    #endif
     //   Raw beta-equilibrium offsets [MeV], FIL's mu_delta_* (compute_m1_diagnostics.cc).
     //   In GRACE's Qnp convention mu_delta_npe = -mu_nue and mu_delta_npmu = -mu_numu,
     //   but taken straight from the potentials: unlike eta_nu they see neither the
@@ -453,19 +469,9 @@ enum aux_var_idx : int {
     BETAEQ_YE_EQ_,
     #if GRACE_M1_NU_SPECIES >= 5
     BETAEQ_YMU_EQ_,
-    #endif
-    //   Backreaction actually applied, summed over the step's implicit stages:
-    //   specific energy dtau/D, dYe, dYmu, and a sticky reject mask
-    //   (1 = Ye pair, 2 = Ymu pair, 4 = energy; 16 / 8 = Ye / Ymu pair accepted only in
-    //   part, see m1.backreaction.*_partial_at_bound).  FIL: m1_heatcool/m1_lepton_source.
-    M1_HEATCOOL_,
-    M1_LEPTON_SOURCE_,
-    #if GRACE_M1_NU_SPECIES >= 5
-    M1_MUON_SOURCE_,
     //   dYmu the collision proposed, before the hard stop / partial acceptance.
     M1_MUON_SOURCE_RAW_,
     #endif
-    M1_BR_REJECT_, // additionally 32: connected decay-network limiting (GRACE_M1_PAIR_KERNELS builds)
     //   Implicit collision solve: sticky per-species mask (m1_implicit_err_bits_t below)
     //   and the largest estimated relative error |dU|/E of the accepted state.
     M1_IMPLICIT_ERR_,
