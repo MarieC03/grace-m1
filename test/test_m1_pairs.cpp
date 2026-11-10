@@ -23,6 +23,93 @@ void fd(grid const& g,double T,double eta,double* f,double& n,double& J) {
 material const matter{10,20,6e37,0.8,0.2};
 }
 
+#if !defined(KOKKOS_ENABLE_CUDA) && !defined(KOKKOS_ENABLE_HIP) && !defined(KOKKOS_ENABLE_SYCL)
+TEST_CASE("Exact thermal cache checks every input and isolates tau mutation", "[pairs][thermal_cache]") {
+    channels const ch{true,true,true};
+    kernel original,got;
+    REQUIRE(original.init(matter,ch,8,19));
+    thermal_kernel_cache<4,4> cache;
+    REQUIRE_FALSE(cache.find(matter,ch,original.g,false,got));
+    cache.insert(matter,ch,false,original);
+    REQUIRE(cache.find(matter,ch,original.g,false,got));
+    got.symmetrize(); got.a[0][1]=-1; got.boltz[0]=-1;
+    REQUIRE(cache.find(matter,ch,original.g,false,got));
+    auto equal=[&](kernel const& a,kernel const& b) {
+        REQUIRE(a.g.n==b.g.n); REQUIRE(a.g.scale==b.g.scale);
+        for(int i=0;i<a.g.n;++i) {
+            REQUIRE(a.g.e[i]==b.g.e[i]); REQUIRE(a.g.w[i]==b.g.w[i]);
+            REQUIRE(a.boltz[i]==b.boltz[i]);
+            for(int j=0;j<a.g.n;++j) REQUIRE(a.a[i][j]==b.a[i][j]);
+        }
+    };
+    equal(got,original);
+    for(int kind=0;kind<5;++kind) {
+        auto changed=matter;
+        double* fields[]={&changed.T,&changed.mu_e,&changed.nb,&changed.yn,&changed.yp};
+        *fields[kind]=std::nextafter(*fields[kind],2*(*fields[kind]));
+        REQUIRE_FALSE(cache.find(changed,ch,original.g,false,got));
+    }
+    for(int kind=0;kind<4;++kind) {
+        auto changed=original.g;
+        if(kind==0) changed.scale=std::nextafter(changed.scale,2*changed.scale);
+        if(kind==1) changed.e[0]=std::nextafter(changed.e[0],2*changed.e[0]);
+        if(kind==2) changed.w[0]=std::nextafter(changed.w[0],2*changed.w[0]);
+        if(kind==3) --changed.n;
+        REQUIRE_FALSE(cache.find(matter,ch,changed,false,got));
+    }
+    REQUIRE_FALSE(cache.find(matter,{false,true,true},original.g,false,got));
+    REQUIRE_FALSE(cache.find(matter,{true,false,true},original.g,false,got));
+    REQUIRE_FALSE(cache.find(matter,{true,true,false},original.g,false,got));
+    REQUIRE_FALSE(cache.find(matter,ch,original.g,true,got));
+    kernel symmetric; REQUIRE(symmetric.init(matter,ch,8,19,true));
+    cache.insert(matter,ch,true,symmetric);
+    REQUIRE(cache.find(matter,ch,original.g,true,got)); equal(got,symmetric);
+    for(int i=0;i<4;++i) {
+        auto m=matter; m.T+=i+1;
+        kernel k; REQUIRE(k.init(m,ch,8,19)); cache.insert(m,ch,false,k);
+    }
+    REQUIRE_FALSE(cache.find(matter,ch,original.g,false,got));
+    auto last=matter; last.T+=4;
+    REQUIRE(cache.find(last,ch,original.g,false,got));
+    kernel fresh; REQUIRE(fresh.init(last,ch,8,19)); equal(got,fresh);
+
+    // A supplied quadrature rule, not just its nominal order, determines the key.
+    grid_rule rule; rule.init(8); rule.derivatives[0]*=1.001;
+    REQUIRE(fresh.init(matter,ch,8,19,false,nullptr,&rule));
+    diagnostic d;
+    REQUIRE(init_thermal_kernel(got,matter,ch,8,19,false,&d,&rule,true)); equal(got,fresh);
+    got.symmetrize();
+    REQUIRE(init_thermal_kernel(got,matter,ch,8,19,false,&d,&rule,true)); equal(got,fresh);
+    auto bad=matter; bad.T=-1;
+    REQUIRE_FALSE(init_thermal_kernel(got,bad,ch,8,19,false,&d,nullptr,true));
+    REQUIRE(d.code==failure_code::kernel_input);
+    REQUIRE_FALSE(init_thermal_kernel(got,matter,ch,0,19,false,&d,nullptr,true));
+    REQUIRE(d.code==failure_code::kernel_input);
+    REQUIRE(init_thermal_kernel(got,matter,ch,8,19,false,&d,&rule,true));
+    REQUIRE(d.code==failure_code::none);
+}
+
+TEST_CASE("Shared thermal cache preserves cold misses and warm hits across threads", "[pairs][thermal_cache]") {
+    material const m{13,-17,7e36,0.7,0.3}; channels const ch{true,true,true};
+    kernel reference; REQUIRE(reference.init(m,ch,8,21));
+    for(int repeat=0;repeat<2;++repeat) {
+        Kokkos::View<int*> errors("thermal cache errors",64);
+        Kokkos::parallel_for("concurrent thermal cache",64,KOKKOS_LAMBDA(int a) {
+            kernel k;
+            int bad=!init_thermal_kernel(k,m,ch,8,21,false,nullptr,nullptr,true);
+            if(!bad) for(int i=0;i<k.g.n;++i) {
+                bad+=k.boltz[i]!=reference.boltz[i];
+                for(int j=0;j<k.g.n;++j) bad+=k.a[i][j]!=reference.a[i][j];
+            }
+            k.symmetrize(); // Mutating one return value must not affect other threads.
+            errors(a)=bad;
+        });
+        auto host=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{},errors);
+        for(int i=0;i<64;++i) REQUIRE(host(i)==0);
+    }
+}
+#endif
+
 TEST_CASE("Pair failures retain reconstruction context and bounded device samples", "[pairs][diagnostics]") {
     kernel k; diagnostic d;
     auto bad=matter; bad.T=-1;

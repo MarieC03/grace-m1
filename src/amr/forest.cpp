@@ -33,6 +33,7 @@
 #include <grace/config/config_parser.hh>
 #include <grace/system/print.hh>
 
+#include <algorithm>
 #include <vector>
 #include <iostream>
 
@@ -90,7 +91,14 @@ struct fmr_box_t {
 struct fmr_context {
     std::vector<fmr_box_t> boxes;
     unsigned base_level;
+    int finest_level;
+    int finest_weight;
 };
+
+static int fmr_partition_weight(p4est_t* forest, p4est_topidx_t, p4est_quadrant_t* quad) {
+    auto const& context = *static_cast<fmr_context const*>(forest->user_pointer);
+    return quad->level == context.finest_level ? context.finest_weight : 1;
+}
 
 forest_impl_t::forest_impl_t(
     p4est_t* _forest_ptr
@@ -169,6 +177,11 @@ forest_impl_t::forest_impl_t()
     auto n_boxes = grace::get_param<unsigned>("amr","n_fmr_boxes") ; 
     auto base_level = grace::get_param<unsigned>("amr", "initial_refinement_level") ; 
     auto fmr_boxes_params = grace::config_parser::get().get()["amr"]["fmr_boxes"] ; 
+    int const finest_weight = grace::get_param<int>("amr", "static_fmr_finest_weight");
+    if (finest_weight > 1 && (n_boxes == 0 || grace::get_param<int>("amr", "regrid_every") != -1
+                            || grace::get_param<bool>("amr", "regrid_at_preinitial"))) {
+        ERROR("amr.static_fmr_finest_weight requires fixed-refinement boxes and regridding disabled");
+    }
 
     std::vector<fmr_box_t> boxes ; 
     for( int ib=0; ib<n_boxes; ++ib) {
@@ -180,13 +193,22 @@ forest_impl_t::forest_impl_t()
         fmr_context context ; 
         context.boxes = boxes ; 
         context.base_level = base_level ; 
+        context.finest_level = base_level;
+        context.finest_weight = finest_weight;
+        for (auto const& box : boxes)
+            context.finest_level = std::max(context.finest_level, static_cast<int>(base_level) + box.target_level_delta);
         _p4est->user_pointer = &context ; 
         // call refine
         p4est_refine(_p4est, 1, fmr_refine_cback, initialize_quadrant_fmr) ;
         // call balance 
         p4est_balance(_p4est, P4EST_CONNECT_FULL, initialize_quadrant_fmr) ; 
         // call partition! 
-        p4est_partition(_p4est, 1, nullptr) ; 
+        if (finest_weight > 1) {
+            p4est_partition(_p4est, 0, fmr_partition_weight);
+        } else {
+            p4est_partition(_p4est, 1, nullptr);
+        }
+        _p4est->user_pointer = nullptr;
     }
 
     GRACE_INFO("Forest initialized with {} ({}) total (local) quadrants."

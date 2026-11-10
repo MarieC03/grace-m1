@@ -77,7 +77,8 @@
 namespace grace {
 
 #ifdef GRACE_M1_PAIR_KERNELS
-void trace_pair_moments(var_array_t state, char const* label, int stage, double factor) {
+void trace_pair_moments(var_array_t state, char const* label, int stage, double factor,
+                        var_array_t current_aux) {
     int const steps=get_param<int>("m1","eas","pair_trace_iterations");
     if(steps==0 || get_iteration()-get_initial_iteration()>=static_cast<size_t>(steps)
        || !m1_is_active() || get_pair_treatment()!=pair_treatment_t::evolved) return;
@@ -86,24 +87,87 @@ void trace_pair_moments(var_array_t state, char const* label, int stage, double 
     MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> policy(
         {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq});
     int const rank=parallel::mpi_comm_rank();
+    bool const comoving=current_aux.data()!=nullptr;
+    int64_t const sx=nx+2*ngz;
+    int64_t const sy=GRACE_NSPACEDIM>=2?ny+2*ngz:1;
+    int64_t const sz=GRACE_NSPACEDIM>=3?nz+2*ngz:1;
+    using worst_t=MaxLoc<double,int64_t>;
     for(int sp=0;sp<GRACE_M1_NU_SPECIES;++sp) {
         double minE=0,minN=0,maxMean=0;
         int bad=0;
+        worst_t::value_type interior_worst{},ghost_worst{};
+        double multiplicity=1;
+        if(GRACE_M1_NU_SPECIES==3 && sp==2) multiplicity=4;
+        if(GRACE_M1_NU_SPECIES>=5 && sp==4) multiplicity=2;
         parallel_reduce("pair_trace_moments",policy,
             KOKKOS_LAMBDA(VEC(int const& i,int const& j,int const& k),int const& q,
-                          double& e,double& n,double& mean,int& invalid) {
+                          double& e,double& n,double& mean,int& invalid,
+                          worst_t::value_type& interior,worst_t::value_type& ghost) {
                 int const off=sp*GRACE_N_M1_VARS;
                 double const E=state(VEC(i,j,k),ERAD1_+off,q);
                 double const N=state(VEC(i,j,k),NRAD1_+off,q);
                 e=Kokkos::fmin(e,E); n=Kokkos::fmin(n,N);
-                if(!Kokkos::isfinite(E) || !Kokkos::isfinite(N) || E<0 || N<0 || ((E==0)!=(N==0))) ++invalid;
-                else if(N>0) mean=Kokkos::fmax(mean,E/N*pairs::number_unit/pairs::energy_unit);
-            },Min<double>(minE),Min<double>(minN),Max<double>(maxMean),Sum<int>(bad));
+                if(!Kokkos::isfinite(E) || !Kokkos::isfinite(N) || E<0 || N<0 || ((E==0)!=(N==0))) {
+                    ++invalid;
+                    return;
+                }
+                if(N==0) return;
+                mean=Kokkos::fmax(mean,E/N*pairs::number_unit/pairs::energy_unit);
+                metric_array_t metric;
+                FILL_METRIC_ARRAY(metric,state,q,VEC(i,j,k));
+                double const sqrtg=metric.sqrtg();
+                double physical_number=N/sqrtg;
+                double physical_energy=E/sqrtg;
+                if(comoving) {
+                    m1_prims_array_t p{};
+                    p[ERADL]=physical_energy;
+                    p[FXL]=state(VEC(i,j,k),FRADX1_+off,q)/sqrtg;
+                    p[FYL]=state(VEC(i,j,k),FRADY1_+off,q)/sqrtg;
+                    p[FZL]=state(VEC(i,j,k),FRADZ1_+off,q)/sqrtg;
+                    p[ZXL]=current_aux(VEC(i,j,k),ZVECX_,q);
+                    p[ZYL]=current_aux(VEC(i,j,k),ZVECY_,q);
+                    p[ZZL]=current_aux(VEC(i,j,k),ZVECZ_,q);
+                    m1_closure_t cl{p,metric};
+                    cl.update_closure(0);
+                    physical_number/=cl.Gamma;
+                    physical_energy=cl.J;
+                }
+                physical_number/=pairs::number_unit*multiplicity;
+                physical_energy/=pairs::energy_unit*multiplicity;
+                if(!(physical_number>0 && physical_energy>0)) return;
+
+                // Filling all states below the Fermi energy minimizes energy
+                // at fixed number. A ratio above one violates the continuum
+                // bound, regardless of the reconstruction quadrature.
+                double const fermi_energy=Kokkos::cbrt(3*physical_number/pairs::phase);
+                double const ratio=0.75*fermi_energy/(physical_energy/physical_number);
+                bool const owned=i>=ngz && i<nx+ngz
+                    EXPR(, && j>=ngz && j<ny+ngz, && k>=ngz && k<nz+ngz);
+                auto& worst=owned?interior:ghost;
+                if(ratio>worst.val) {
+                    worst.val=ratio;
+                    worst.loc=((int64_t(q)*sz EXPR(,,+k))*sy EXPR(,+j,))*sx+i;
+                }
+            },Min<double>(minE),Min<double>(minN),Max<double>(maxMean),Sum<int>(bad),
+              worst_t(interior_worst),worst_t(ghost_worst));
         maxMean=std::max(0.0,maxMean); // no positive-N cells (e.g. exact vacuum)
         std::fprintf(stderr,"[PAIR_TRACE] rank=%d iteration=%zu phase=%s stage=%d factor=%.17e "
                      "species=%d min_densitized_E=%.17e min_densitized_N=%.17e "
                      "max_lab_mean_MeV=%.17e invalid_EN_cells=%d\n",
                      rank,get_iteration(),label,stage,factor,sp,minE,minN,maxMean,bad);
+        auto const report_worst=[&](char const* region,worst_t::value_type const& worst) {
+            if(!(worst.val>0)) return;
+            long long const i=worst.loc%sx;
+            long long const j=worst.loc/sx%sy;
+            long long const k=worst.loc/sx/sy%sz;
+            long long const q=worst.loc/sx/sy/sz;
+            std::fprintf(stderr,"[PAIR_FERMI] rank=%d iteration=%zu phase=%s stage=%d "
+                         "species=%d frame=%s region=%s min_energy_over_energy=%.17e "
+                         "q=%lld ijk=%lld,%lld,%lld\n",rank,get_iteration(),label,stage,sp,
+                         comoving?"comoving":"lab",region,worst.val,q,i,j,k);
+        };
+        report_worst("interior",interior_worst);
+        report_worst("ghost",ghost_worst);
     }
     std::fflush(stderr);
 }
@@ -436,6 +500,7 @@ void set_m1_eas(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
     , grace::var_array_t& aux
+    , bool compute_pair_transport
 )
 {
     using namespace grace  ;
@@ -457,7 +522,7 @@ void set_m1_eas(
     #if GRACE_M1_NU_SPECIES >= 5
     // The vacuum decay sink stops at the EOS's dilute band, which must lie above the table floor.
     if constexpr ( std::is_same_v<eos_t, leptonic_eos_4d_t> ) {
-        if ( get_muon_decay() && pair_mode == pair_treatment_t::standard
+        if ( get_vacuum_muon_decay()
              && !(eos.get_c2p_ymu_min() < leptonic_eos_4d_t::dilute_ymu0()) )
             ERROR("m1.eas.muon_decay: the lepton table's Ymu floor " << eos.get_c2p_ymu_min()
                   << " is not below the EOS dilute band " << leptonic_eos_4d_t::dilute_ymu0()) ;
@@ -518,7 +583,16 @@ void set_m1_eas(
         [[fallthrough]] ;
     case eas_kind_t::neutrino_analytic : {
         auto coords = grace::coordinate_system::get().get_device_coord_system() ;
-        neutrinos_eas_op<eos_t> op(state, aux) ;
+        neutrinos_eas_op<eos_t> op(state, aux, compute_pair_transport) ;
+        #ifdef GRACE_M1_PAIR_KERNELS
+        // Trace the exact fluid-frame moments consumed by pair transport.
+        trace_pair_moments(state,"eas-input",0,0,aux);
+        // KOKKOS_LAMBDA captures op by value. Install the collector before
+        // making that copy, otherwise a failing cell aborts without its state.
+        if(pair_mode==pair_treatment_t::equilibrium ||
+           (pair_mode==pair_treatment_t::evolved && op.compute_pair_transport))
+            op.pair_failures.allocate();
+        #endif
         auto const evaluate = KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
             {
                 double xyz[3] ;
@@ -528,7 +602,6 @@ void set_m1_eas(
         #ifdef GRACE_M1_PAIR_KERNELS
         if(pair_mode!=pair_treatment_t::standard) {
             // Small tiles: the spectral kernel scratch must not inherit the EAS launch bounds.
-            op.pair_failures.allocate();
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
                 {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
             parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);
@@ -858,6 +931,7 @@ void set_m1_eas<EOS>(                    \
       grace::var_array_t&                \
     , grace::staggered_variable_arrays_t&\
     , grace::var_array_t&                \
+    , bool                              \
 );                                       \
 template                                 \
 void set_m1_eas<EOS>()

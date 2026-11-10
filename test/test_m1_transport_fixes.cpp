@@ -9,6 +9,56 @@
 using namespace grace;
 using Catch::Matchers::WithinRel;
 
+#ifdef GRACE_M1_PAIR_KERNELS
+namespace {
+struct number_overshoot_reconstructor {
+    template<class View> KOKKOS_INLINE_FUNCTION
+    void operator()(View& u,VEC(int i,int j,int k),double& left,double& right,int8_t dir) {
+        donor_cell_reconstructor_t donor;
+        donor(u,VEC(i,j,k),left,right,dir);
+        // Test data have N/E > 1; all other reconstructed variables are < 1.
+        if(left>1) left*=2;
+        if(right>1) right*=2;
+    }
+};
+}
+TEST_CASE("Fermi face limiter prevents a reconstructed number overshoot", "[m1][transport][fermi]") {
+    var_array_t state("fermi_face_state",4,4,4,N_EVOL_VARS,1);
+    var_array_t aux("fermi_face_aux",4,4,4,N_AUX_VARS,1);
+    flux_array_t flux("fermi_face_flux",4,4,4,N_EVOL_VARS,3,1);
+    scalar_array_t<GRACE_NSPACEDIM> dx("fermi_face_dx",3,1);
+    Kokkos::deep_copy(state,0.0); Kokkos::deep_copy(aux,0.0); Kokkos::deep_copy(dx,1.0);
+    auto st=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),state);
+    double const n=1e33, E=1.1*pairs::minimum_fermi_energy_density(n)*pairs::energy_unit;
+    double const N=n*pairs::number_unit;
+    REQUIRE(N/E>1);
+    for(int i=0;i<4;++i) for(int j=0;j<4;++j) for(int k=0;k<4;++k) {
+        #if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+        st(i,j,k,GXX_,0)=st(i,j,k,GYY_,0)=st(i,j,k,GZZ_,0)=1;
+        #else
+        st(i,j,k,GTXX_,0)=st(i,j,k,GTYY_,0)=st(i,j,k,GTZZ_,0)=st(i,j,k,CHI_,0)=1;
+        #endif
+        st(i,j,k,ALP_,0)=1;
+        st(i,j,k,ERAD1_,0)=E; st(i,j,k,NRAD1_,0)=N/E;
+        st(i,j,k,FRADX1_,0)=0.1;
+    }
+    Kokkos::deep_copy(state,st);
+    m1_equations_system_t system(state,staggered_variable_arrays_t{},aux);
+    double number_flux[2],energy_flux[2];
+    for(int enabled=0;enabled<2;++enabled) {
+        system.fermi_fofc=bool(enabled);
+        Kokkos::parallel_for("fermi_overshoot",1,KOKKOS_LAMBDA(int) {
+            system.compute_x_flux<number_overshoot_reconstructor,0>(0,VEC(2,2,2),flux,flux,dx,0.01,1);
+        });
+        auto got=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),flux);
+        number_flux[enabled]=got(2,2,2,NRAD1_,0,0);
+        energy_flux[enabled]=got(2,2,2,ERAD1_,0,0);
+    }
+    REQUIRE_THAT(energy_flux[1],WithinRel(energy_flux[0],1e-12));
+    REQUIRE_THAT(number_flux[1]/number_flux[0],WithinRel(std::pow(1.1,0.75)/2,1e-6));
+}
+#endif
+
 TEST_CASE("Zero radiation ID matches the independent evolution floors", "[m1][initial_data]") {
     m1_atmo_params_t atmo{};
     atmo.E_fl=1e-16; atmo.N_fl=1e-14; atmo.eps_fl=1; atmo.r_damping=50;

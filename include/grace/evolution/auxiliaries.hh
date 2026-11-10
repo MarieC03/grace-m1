@@ -45,6 +45,8 @@ void compute_auxiliary_quantities() ;
  * @tparam eos_t Type of active EOS.
  * @param state The state to be used to compute auxiliaries.
  * @param aux   The array where to store computed aux variables.
+ * @param compute_pair_transport Refresh the evolved-pair transport opacity.
+ *        May be deferred for a stage consumed only by the implicit source solve.
  */
 template< typename eos_t >
 void compute_auxiliary_quantities(
@@ -52,6 +54,7 @@ void compute_auxiliary_quantities(
     , grace::staggered_variable_arrays_t& sstate
     , grace::var_array_t& aux
     , bool clamp_to_atmo = true
+    , bool compute_pair_transport = true
 ) ;
 //*****************************************************************************************************
 // Explicit template instantiation
@@ -61,7 +64,8 @@ void compute_auxiliary_quantities<EOS>(                                 \
                            grace::var_array_t&         \
                          , grace::staggered_variable_arrays_t& \
                          , grace::var_array_t& aux             \
-                         , bool clamp_to_atmo )
+                         , bool clamp_to_atmo                         \
+                         , bool compute_pair_transport )
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;

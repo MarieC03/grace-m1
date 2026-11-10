@@ -235,7 +235,13 @@ void evolve_impl() {
         enforce_algebraic_constraints_after_bc(nw) ;
         trace_stage(nw,"explicit-before-aux",explicit_stage,c);
         if ( last ) compute_auxiliary_quantities<eos_t>(nw, snw, aux) ;
-        else        compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false) ;
+        else {
+            // ARS232 R1/R2 feed only the implicit solve. It needs ordinary EAS
+            // and pair material, but builds its own collision kernels. The next
+            // explicit flux and eikonal update use fresh post-implicit opacities.
+            compute_auxiliary_quantities<eos_t>(nw, snw, aux, /*clamp_to_atmo=*/false,
+                                                 /*compute_pair_transport=*/tstepper!="imex232") ;
+        }
         trace_stage(nw,"explicit-after-aux",explicit_stage,c);
     } ;
     // nw = od + c dt G(nw), `hook` on the raw solution.  With no implicit physics
@@ -243,10 +249,10 @@ void evolve_impl() {
     auto imex_implicit = [&] ( double c
                              , var_array_t& nw, var_array_t& od
                              , staggered_variable_arrays_t& snw, staggered_variable_arrays_t& sod
-                             , auto&& hook ) {
+                             , auto&& hook, var_array_t const& leptonic_seed = {} ) {
         ++implicit_stage;
         trace_stage(od,"implicit-input",implicit_stage,c);
-        advance_implicit_substep<eos_t>(t,dt,c,nw,od,snw,sod) ;
+        advance_implicit_substep<eos_t>(t,dt,c,nw,od,snw,sod,leptonic_seed) ;
         trace_stage(nw,"implicit-raw",implicit_stage,c);
         hook() ;
         trace_stage(nw,"implicit-before-aux",implicit_stage,c);
@@ -534,7 +540,7 @@ void evolve_impl() {
         // xi2 -> state_p;  + g dt G(xi2) = xi2 - R2
         imex_implicit(g, state_p, r2, sstate_p, sr2, [&] {
             linop_apply(state, state, state_p, r2, sstate, sstate, sstate_p, sr2, 1.0, 1.0, -1.0) ;
-        }) ;
+        }, s0) ;
         imex_explicit(g, state, state_p, sstate, sstate_p, true, [] {}) ;
     } else if (tstepper == "imex333" or tstepper == "imex343" ) {
         // ARS(3,4,3): 3 implicit solves, 4 explicit evaluations, order 3, L-stable, RK4 stability
@@ -663,6 +669,7 @@ void flag_fofc_cells(
     auto fofc_pars = get_fofc_params() ;
     #ifdef GRACE_ENABLE_M1
     auto m1_atmo  = get_m1_atmo_params() ;   // radiation floor scale for the FOFC positivity test
+    bool const fermi_fofc=get_param<bool>("m1","eas","fermi_fofc");
     #endif
     // Force c2p_is_lenient = true everywhere during the dry-run: a
     // Kokkos::abort would defeat FOFC's purpose, which is precisely to
@@ -860,7 +867,28 @@ void flag_fofc_cells(
                     EXPR( ( fluxes(VEC(i,j,k),iN,0,q)-fluxes(VEC(i+1,j,k),iN,0,q) )*idx(0,q)
                         , + ( fluxes(VEC(i,j,k),iN,1,q)-fluxes(VEC(i,j+1,k),iN,1,q) )*idx(1,q)
                         , + ( fluxes(VEC(i,j,k),iN,2,q)-fluxes(VEC(i,j,k+1),iN,2,q) )*idx(2,q))) ;
-                if (E_tent < E_atmo_cons || N_tent < N_atmo_cons) {
+                bool needs_correction=E_tent < E_atmo_cons || N_tent < N_atmo_cons;
+                #ifdef GRACE_M1_PAIR_KERNELS
+                if(fermi_fofc && !needs_correction) {
+                    m1_prims_array_t predicted{};
+                    predicted[ERADL]=E_tent/metric.sqrtg();
+                    predicted[NRADL]=N_tent/metric.sqrtg();
+                    predicted[ZXL]=aux(VEC(i,j,k),ZVECX_,q);
+                    predicted[ZYL]=aux(VEC(i,j,k),ZVECY_,q);
+                    predicted[ZZL]=aux(VEC(i,j,k),ZVECZ_,q);
+                    for(int component=0;component<3;++component) {
+                        int const field=FRADX1_+s*GRACE_N_M1_VARS+component;
+                        double const flux_update=EXPR(
+                            (fluxes(VEC(i,j,k),field,0,q)-fluxes(VEC(i+1,j,k),field,0,q))*idx(0,q),
+                            +(fluxes(VEC(i,j,k),field,1,q)-fluxes(VEC(i,j+1,k),field,1,q))*idx(1,q),
+                            +(fluxes(VEC(i,j,k),field,2,q)-fluxes(VEC(i,j,k+1),field,2,q))*idx(2,q));
+                        predicted[FXL+component]=(new_state(VEC(i,j,k),field,q)+dt*dtfact*flux_update)/metric.sqrtg();
+                    }
+                    double const multiplicity=GRACE_M1_NU_SPECIES==5 ? (s==4?2:1) : (s==2?4:1);
+                    needs_correction=!pairs::fermi_moments_admissible(predicted,metric,multiplicity);
+                }
+                #endif
+                if (needs_correction) {
                     int const bit = 1 << (s + 1) ;
                     Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), bit) ;
                     Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), bit) ;
@@ -2003,8 +2031,10 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                     , var_array_t& new_state
                     , var_array_t& old_state
                     , staggered_variable_arrays_t & new_stag_state
-                    , staggered_variable_arrays_t & old_stag_state )
+                    , staggered_variable_arrays_t & old_stag_state
+                    , var_array_t const& leptonic_seed )
 {/*to do*/
+    (void)leptonic_seed;
 
     DECLARE_GRID_EXTENTS ;
 
@@ -2051,14 +2081,24 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     #ifdef GRACE_M1_PAIR_KERNELS
     bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
-    bool const coupled_leptons=evolved_pairs && get_muon_decay();
+    bool const coupled_leptons=evolved_pairs && get_spectral_muon_decay();
+    bool const lagged_leptons=get_muon_decay_treatment()==muon_decay_treatment_t::lagged;
+    bool const singlepass_leptons=get_muon_decay_treatment()==muon_decay_treatment_t::singlepass;
     int const pair_order=get_pair_quadrature_order();
     int const decay_order=get_muon_decay_kernel_order();
+    bool const decay_cache=get_muon_decay_kernel_cache();
+    bool const thermal_cache=get_thermal_pair_kernel_cache();
+    bool const block_jacobian=get_leptonic_block_jacobian();
+    bool const grey_decay=get_grey_muon_decay();
     #if GRACE_M1_NU_SPECIES >= 3
     // Separate small-tile launch: do not impose the ordinary 256-thread
     // source kernel's GPU launch bounds on the spectral kernel scratch space.
     if(m1_is_active() && evolved_pairs) {
         m1_eq_system.pair_failures.allocate();
+        #if GRACE_M1_NU_SPECIES >= 5
+        pairs::grid_rule pair_grid_rule{};
+        pair_grid_rule.init(pair_order);
+        #endif
         parallel_for(GRACE_EXECUTION_TAG("evol","m1_pair_sources"),
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>(
                 {VEC(0,0,0),0}, {VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq}, {VEC(4,2,2),1}),
@@ -2071,16 +2111,18 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 if(bits&7) {
                     auto const mat=m1_eq_system.pair_material(q,VEC(i,j,k));
                     double const scale=m1_eq_system.pair_scale(q,VEC(i,j,k),mat.T,coupled_leptons&&(bits&8));
-                    have=shared.init(mat,{bool(bits&1),bool(bits&2),bool(bits&4)},pair_order,scale);
+                    have=pairs::init_thermal_kernel(shared,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},pair_order,scale,
+                                     false,nullptr,&pair_grid_rule,thermal_cache);
                 }
                 pairs::kernel const* kern=have?&shared:nullptr;
                 if(coupled_leptons)
-                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,decay_order,kern);
-                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern);
+                    m1_eq_system.compute_leptonic_implicit_update(q,VEC(i,j,k),_idx,new_state,dt,dtfact,
+                                                                  pair_order,decay_order,kern,leptonic_seed,lagged_leptons,singlepass_leptons,decay_cache,thermal_cache,block_jacobian,grey_decay);
+                else m1_eq_system.compute_pair_implicit_update<2,3>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern,thermal_cache);
                 if(have) shared.symmetrize();
-                m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern);
+                m1_eq_system.compute_pair_implicit_update<4,4,2>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,kern,thermal_cache);
                 #else
-                m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order);
+                m1_eq_system.compute_pair_implicit_update<2,2,4>(q,VEC(i,j,k),_idx,new_state,dt,dtfact,pair_order,nullptr,thermal_cache);
                 #endif
             });
         check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
@@ -2147,6 +2189,32 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     ) ;
     #endif
     Kokkos::fence() ;
+    #if defined(GRACE_LEPTON_PROFILE) && GRACE_M1_NU_SPECIES >= 5
+    source_profile::budget audit;
+    parallel_reduce("source_conservation_audit",
+        MDRangePolicy<Rank<GRACE_NSPACEDIM+1>>({VEC(ngz,ngz,ngz),0},{VEC(nx+ngz,ny+ngz,nz+ngz),nq}),
+        KOKKOS_LAMBDA(VEC(int i,int j,int k),int q,source_profile::budget& sum) {
+            double const volume=1.0/(_idx(0,q)*_idx(1,q)*_idx(2,q));
+            double const dE=new_state(VEC(i,j,k),TAU_,q)-old_state(VEC(i,j,k),TAU_,q);
+            double const dye=new_state(VEC(i,j,k),YESTAR_,q)-old_state(VEC(i,j,k),YESTAR_,q);
+            double const dym=new_state(VEC(i,j,k),YMUSTAR_,q)-old_state(VEC(i,j,k),YMUSTAR_,q);
+            double energy=dE,number[5];
+            for(int s=0;s<5;++s) {
+                int const e=ERAD1_+s*GRACE_N_M1_VARS,n=NRAD1_+s*GRACE_N_M1_VARS;
+                energy+=new_state(VEC(i,j,k),e,q)-old_state(VEC(i,j,k),e,q);
+                number[s]=new_state(VEC(i,j,k),n,q)-old_state(VEC(i,j,k),n,q);
+            }
+            double const defect=coupled_leptons?aux(VEC(i,j,k),PAIR_DECAY_DQ_,q):0;
+            sum.v[0]+=volume*old_state(VEC(i,j,k),DENS_,q);
+            sum.v[1]+=volume*Kokkos::fabs(energy);
+            sum.v[2]+=volume*Kokkos::fabs(dye+number[0]-number[1]);
+            sum.v[3]+=volume*Kokkos::fabs(dym+number[2]-number[3]);
+            sum.v[4]+=volume*defect; sum.v[5]+=volume*Kokkos::fabs(defect);
+            sum.v[6]+=volume*Kokkos::fabs(dE); sum.v[7]+=volume*Kokkos::fabs(dye);
+            sum.v[8]+=volume*Kokkos::fabs(dym); sum.v[9]+=volume*(dye+dym);
+        },audit);
+    source_profile::write_budget(parallel::mpi_comm_rank(),t,dt*dtfact,audit);
+    #endif
 }
 
 
@@ -2317,6 +2385,7 @@ void advance_implicit_substep<EOS>(                                   \
                          , grace::var_array_t&                        \
                          , grace::staggered_variable_arrays_t &       \
                          , grace::staggered_variable_arrays_t &       \
+                         , grace::var_array_t const&                   \
                         ) ;                                           \
 template                                                              \
 void compute_fluxes<EOS>( double const , double const , double const \

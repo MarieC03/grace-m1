@@ -289,6 +289,50 @@ inline bool get_muon_decay()
     try { return get_param<bool>("m1","eas","muon_decay"); } catch(...) { return false; }
 }
 
+// The master switch remains muon_decay. auto preserves the historical choice:
+// standard pairs use the vacuum sink; kernel pair modes use spectral decay.
+// Read the raw pair selector here to avoid recursive setup validation.
+enum class muon_decay_treatment_t : int { none, vacuum, spectral, lagged, singlepass, grey_decay };
+inline muon_decay_treatment_t get_muon_decay_treatment()
+{
+    auto const mode=detail::get_eas_param_or("auto","muon_decay_treatment");
+    if(mode!="auto" && mode!="vacuum" && mode!="spectral" && mode!="lagged" && mode!="singlepass" && mode!="grey_decay")
+        ERROR("m1.eas.muon_decay_treatment must be auto, vacuum, spectral, lagged, singlepass or grey_decay");
+    if(!get_muon_decay()) return muon_decay_treatment_t::none;
+    auto const pairs=detail::get_eas_param_or("standard","pair_treatment");
+    bool const standard=pairs=="standard" || pairs=="legacy";
+    if(mode=="grey_decay") {
+        if(pairs!="evolved") ERROR("grey_decay requires evolved partners for shared reaction counts");
+        return muon_decay_treatment_t::grey_decay;
+    }
+    if(mode=="singlepass") {
+        if(pairs!="evolved") ERROR("muon_decay_treatment: singlepass requires pair_treatment: evolved");
+        return muon_decay_treatment_t::singlepass;
+    }
+    if(mode=="lagged") {
+        if(pairs!="evolved") ERROR("muon_decay_treatment: lagged requires pair_treatment: evolved");
+        return muon_decay_treatment_t::lagged;
+    }
+    if(mode=="spectral" && standard)
+        ERROR("muon_decay_treatment: spectral requires pair_treatment: equilibrium or evolved");
+    return mode=="vacuum" || (mode=="auto" && standard)
+        ? muon_decay_treatment_t::vacuum : muon_decay_treatment_t::spectral;
+}
+inline bool get_spectral_muon_decay()
+{
+    auto const mode=get_muon_decay_treatment();
+    return mode==muon_decay_treatment_t::spectral || mode==muon_decay_treatment_t::lagged
+        || mode==muon_decay_treatment_t::singlepass || mode==muon_decay_treatment_t::grey_decay;
+}
+inline bool get_grey_muon_decay()
+{
+    return get_muon_decay_treatment()==muon_decay_treatment_t::grey_decay;
+}
+inline bool get_vacuum_muon_decay()
+{
+    return get_muon_decay_treatment()==muon_decay_treatment_t::vacuum;
+}
+
 inline int get_muon_decay_kernel_order()
 {
     int n=24;
@@ -297,14 +341,38 @@ inline int get_muon_decay_kernel_order()
     return n;
 }
 
+inline bool get_muon_decay_kernel_cache()
+{
+    bool enabled=false;
+    try { enabled=get_param<bool>("m1","eas","muon_decay_kernel_cache"); } catch(...) {}
+    #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+    if(enabled) ERROR("muon_decay_kernel_cache currently requires a CPU build");
+    #endif
+    return enabled;
+}
+
+inline bool get_leptonic_block_jacobian()
+{
+    try { return get_param<bool>("m1","eas","leptonic_block_jacobian"); } catch(...) { return false; }
+}
+
+inline bool get_thermal_pair_kernel_cache()
+{
+    bool enabled=false;
+    try { enabled=get_param<bool>("m1","eas","thermal_pair_kernel_cache"); } catch(...) {}
+    #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP) || defined(KOKKOS_ENABLE_SYCL)
+    if(enabled) ERROR("thermal_pair_kernel_cache currently requires a CPU build");
+    #endif
+    return enabled;
+}
+
 inline pair_treatment_t get_pair_treatment()
 {
     auto name=detail::get_eas_param_or("standard", "pair_treatment");
     if(name=="legacy") name="standard";
     if(name!="standard" && name!="equilibrium" && name!="evolved")
         ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
-    // With pair_treatment: standard, muon_decay selects the vacuum decay sink of the standard
-    // rates (checked in check_m1_setup); the kernel decay below belongs to the kernel modes.
+    bool const decay=get_spectral_muon_decay();
 #ifndef GRACE_M1_PAIR_KERNELS
     // The spectral kernels are compiled out: this build has the standard grey rates only.
     if(name!="standard")
@@ -313,7 +381,6 @@ inline pair_treatment_t get_pair_treatment()
     return pair_treatment_t::standard;
 #else
     if(name=="standard") return pair_treatment_t::standard;
-    bool const decay=get_muon_decay();
     if(decay) {
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
         ERROR("muon_decay requires five neutrino species and GRACE_ENABLE_MUONS");
@@ -327,6 +394,7 @@ inline pair_treatment_t get_pair_treatment()
            && get_weakhub_table_content()==weakhub_content_t::thermal_decay)
             ERROR("The kernel muon decay needs a Weakhub table without inverse lepton decay (weakhub_table_content thermal+decay)");
         (void)get_muon_decay_kernel_order();
+        (void)get_grey_muon_decay();
     }
 #if GRACE_M1_NU_SPECIES < 3 || !defined(GRACE_HAVE_BNS_NURATES)
     ERROR("New pair treatments require 3/5 neutrino species and the pinned bns_nurates submodule");
@@ -364,12 +432,23 @@ inline int get_pair_quadrature_order()
 
 // Parfile against build, EOS and table, once on both start paths (grace_initialize): what the
 // Weakhub table already carries switches the analytic extras off and forbids a second decay; the
-// standard-path muon decay (the vacuum sink) needs the muonic leptonic EOS.  The kernel modes
+// vacuum muon decay needs the muonic leptonic EOS, with any thermal-pair mode. The kernel modes
 // check themselves in get_pair_treatment().
 inline void check_m1_setup()
 {
+#if !defined(GRACE_ENABLE_FOFC) || !defined(GRACE_M1_PAIR_KERNELS)
+    if(get_param<bool>("m1","eas","fermi_fofc"))
+        ERROR("fermi_fofc requires GRACE_ENABLE_FOFC and GRACE_M1_PAIR_KERNELS");
+#endif
+    if(get_param<bool>("m1","eas","dilute_muon_cc_target")) {
+        if(get_param<std::string>("eos","eos_type")!="leptonic"
+           || !get_eas_selection().contains(eas_kind_t::neutrino_weakhub)
+           || get_weakhub_table_content()!=weakhub_content_t::none
+           || get_betaeq_mode()!=betaeq_mode_t::off)
+            ERROR("dilute_muon_cc_target requires leptonic EOS, noPP WeakHub rates and betaeq_policy=off");
+    }
     bool const decay=get_muon_decay();
-    bool const standard=get_pair_treatment()==pair_treatment_t::standard;
+    (void)get_pair_treatment();
     if(get_eas_selection().contains(eas_kind_t::neutrino_weakhub)) {
         auto const content=get_weakhub_table_content();
         if(content!=weakhub_content_t::none
@@ -383,7 +462,7 @@ inline void check_m1_setup()
             ERROR("m1.eas.muon_decay: the Weakhub table already carries inverse lepton decay "
                   "(weakhub_table_content thermal+decay); set muon_decay: false");
     }
-    if(!decay || !standard) return;
+    if(!get_vacuum_muon_decay()) return;
 #if GRACE_M1_NU_SPECIES < 5 || !defined(GRACE_ENABLE_MUONS)
     ERROR("m1.eas.muon_decay needs five neutrino species with GRACE_ENABLE_MUONS (set muon_decay: false)");
 #endif
@@ -393,7 +472,7 @@ inline void check_m1_setup()
     if(get_param<std::string>("eos","eos_type")!="leptonic")
         ERROR("m1.eas.muon_decay needs eos.eos_type: leptonic (the muon fraction and its chemical potential)");
     if(!get_param<bool>("eos","leptonic","dilute_muon_suppression"))
-        ERROR("m1.eas.muon_decay with pair_treatment: standard needs eos.leptonic.dilute_muon_suppression: true "
+        ERROR("m1.eas.muon_decay vacuum treatment needs eos.leptonic.dilute_muon_suppression: true "
               "(the decaying population is the muon excess over the EOS's dilute band)");
 }
 

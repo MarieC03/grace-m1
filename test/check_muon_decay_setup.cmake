@@ -1,14 +1,18 @@
 # Run the production fatal-error path in a child; verify rejection AND its reason,
 # so an unrelated crash cannot masquerade as successful setup validation.
 # (pair_treatment standard/legacy with muon_decay is the vacuum sink of the standard rates: valid.)
-set(cases eos dilute electrons table betaeq order)
+set(cases eos dilute electrons table betaeq order vacuum_dilute spectral_standard treatment grey_equilibrium )
 set(reasons "muon_decay requires the leptonic EOS"
             "muon_decay requires dilute_muon_suppression=false"
             "muon_decay requires dilute_muon_suppression=false"
             "weakhub_table_content"
             "New pair treatments currently require betaeq_policy: off"
-            "muon_decay_kernel_order must be between")
-foreach(i RANGE 0 5)
+            "muon_decay_kernel_order must be between"
+            "vacuum treatment needs eos.leptonic.dilute_muon_suppression: true"
+            "spectral requires pair_treatment: equilibrium or evolved"
+            "muon_decay_treatment must be auto, vacuum, spectral, lagged, singlepass or grey_decay"
+            "grey_decay requires evolved partners")
+foreach(i RANGE 0 9)
     list(GET cases ${i} case)
     list(GET reasons ${i} reason)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env

@@ -374,7 +374,8 @@ struct neutrinos_eas_op
     // All m1.eas string parameters are parsed and validated host-side in
     // eas_kinds.hh; the op carries only the resulting enums (plain ints
     // underneath, safe on device).
-    neutrinos_eas_op(var_array_t _state, var_array_t _aux)
+    neutrinos_eas_op(var_array_t _state, var_array_t _aux,
+                     [[maybe_unused]] bool compute_pair_transport_for_state=true)
       : eos(eos::get().get_eos<eos_t>()),
         state(_state),
         aux(_aux),
@@ -392,10 +393,16 @@ struct neutrinos_eas_op
         use_weakhub(grace::weakhub::weakhub_enabled_from_params()),
         betaeq_mode(get_betaeq_mode()),
         pair_treatment(get_pair_treatment()),
-        muon_decay(get_muon_decay()),
+        dilute_cc_target(get_param<bool>("m1","eas","dilute_muon_cc_target")),
+        muon_decay(get_spectral_muon_decay()),
+        vacuum_muon_decay(get_vacuum_muon_decay()),
         #ifdef GRACE_M1_PAIR_KERNELS
+        compute_pair_transport(compute_pair_transport_for_state),
         pair_order(get_pair_quadrature_order()),
         decay_order(get_muon_decay_kernel_order()),
+        grey_decay(get_grey_muon_decay()),
+        decay_cache(get_muon_decay_kernel_cache()),
+        thermal_cache(get_thermal_pair_kernel_cache()),
         #endif
         betaeq_e_fallback(grace::get_param<bool>("m1", "eas", "betaeq_partial_e_fallback")),
         betaeq_ymu_floor(grace::get_param<bool>("m1", "eas", "betaeq_fallback_ymu_floor")),
@@ -405,6 +412,13 @@ struct neutrinos_eas_op
         // diagnostics but skip the rates entirely.
         diagnostics_only(!m1_is_active())
     {
+        #ifdef GRACE_M1_PAIR_KERNELS
+        // local_kappa also consumes the previous transport opacity during EAS.
+        if(tau_kind==tau_policy_kind_t::local_kappa) compute_pair_transport=true;
+        if(pair_treatment==pair_treatment_t::equilibrium ||
+           (pair_treatment==pair_treatment_t::evolved && compute_pair_transport))
+            pair_grid_rule.init(pair_order);
+        #endif
         spherical_tau.r_outer_code = grace::get_param<double>("m1", "eas", "tau_outer_radius_code");
         spherical_tau.seed_with_analytic = true;
         if ((tau_kind == tau_policy_kind_t::local_kappa ||
@@ -952,6 +966,7 @@ struct neutrinos_eas_op
 
     GRACE_HOST_DEVICE void prepare_pair_transport(pairs::material const& m,double mumu,
         int active,VEC(const int i,const int j,const int k),int64_t q) const {
+        GRACE_SOURCE_PROFILE(transport);
         #if GRACE_M1_NU_SPECIES >= 3
         if(active==0 && !muon_decay) return;
         #if GRACE_M1_NU_SPECIES >= 5
@@ -973,8 +988,8 @@ struct neutrinos_eas_op
         }
         pairs::kernel thermal; pairs::decay_kernel decay;
         pairs::diagnostic diag;
-        bool ok=thermal.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag);
-        if(ok && muon_decay && !decay.init(thermal.g,m.T,m.mu_e,mumu,decay_order)) {
+        bool ok=pairs::init_thermal_kernel(thermal,m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag,&pair_grid_rule,thermal_cache);
+        if(ok && muon_decay && !pairs::init_decay_kernel(decay,thermal.g,m.T,m.mu_e,mumu,decay_order,decay_cache,grey_decay)) {
             diag.code=pairs::failure_code::decay_kernel;
             ok=false;
         }
@@ -1004,7 +1019,7 @@ struct neutrinos_eas_op
             double n,J; pair_fluid_moments<sp>(VEC(i,j,k),q,multiplicity,n,J);
             double const kscale=n>0?Kokkos::fmax(m.T,Kokkos::sqrt(m.T*J/n/3)):m.T;
             pairs::kernel kpair;
-            if(!kpair.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,kscale,true,&aggregate_diag)
+            if(!pairs::init_thermal_kernel(kpair,m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,kscale,true,&aggregate_diag,&pair_grid_rule,thermal_cache)
                || !pairs::reconstruct(kpair.g,n,J,f,&aggregate_diag)) {
             #endif
                 aggregate_diag.species=sp;
@@ -1027,20 +1042,21 @@ struct neutrinos_eas_op
         aux(VEC(i,j,k),PAIR_MUE_,q)=m.mu_e;
         aux(VEC(i,j,k),PAIR_YN_,q)=m.yn;
         aux(VEC(i,j,k),PAIR_YP_,q)=m.yp;
-        aux(VEC(i,j,k),PAIR_MUMU_,q)=F.mu_mu;
+        double const reaction_mu=F.dilute_cc_target ? F.mu_mu_reaction : F.mu_mu;
+        aux(VEC(i,j,k),PAIR_MUMU_,q)=reaction_mu;
         int const active=int(pair_annihilation)+2*int(bremsstrahlung)+4*int(plasmon_decay);
         if(pair_treatment==pair_treatment_t::evolved) {
             aux(VEC(i,j,k),PAIR_ACTIVE_,q)=active|(muon_decay?8:0);
-            prepare_pair_transport(m,F.mu_mu,active,VEC(i,j,k),q);
+            if(compute_pair_transport) prepare_pair_transport(m,reaction_mu,active,VEC(i,j,k),q);
             return;
         }
         if(active==0 && !muon_decay) return;
-        double const mu=F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp;
+        double const mu=reaction_mu+F.mu_p-F.mu_n-nu_constants::Qnp;
         pairs::kernel kernel;
         double scale=Kokkos::fmax(m.T,Kokkos::fabs(mu)/5);
         if(muon_decay) scale=Kokkos::fmax(scale,Kokkos::fmax(pairs::muon_mass/3,
             Kokkos::fabs(F.eta_nu[NUE])*m.T/5));
-        if(!kernel.init(m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale))
+        if(!pairs::init_thermal_kernel(kernel,m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,nullptr,&pair_grid_rule,thermal_cache))
             Kokkos::abort("Invalid equilibrium pair kernel");
         auto const add=[&](int s, double multiplicity, double eta) {
             // Unclamped eta: cold dilute cells with a muon rest mass in mu_mu reach |eta| ~ 800, where one
@@ -1070,7 +1086,7 @@ struct neutrinos_eas_op
         add(NUX,2,0);
         if(muon_decay) {
             pairs::decay_kernel decay;
-            if(!decay.init(kernel.g,m.T,m.mu_e,F.mu_mu,decay_order))
+            if(!pairs::init_decay_kernel(decay,kernel.g,m.T,m.mu_e,reaction_mu,decay_order,decay_cache,grey_decay))
                 Kokkos::abort("Invalid equilibrium muon decay kernel");
             // Each oriented decay connects a different flavour; NEVER use
             // opposite chemical potentials for these two partners.
@@ -1297,9 +1313,9 @@ struct neutrinos_eas_op
             // standard is always true without the pair kernels: plain flags, gate on.
             bool const standard=pair_treatment==pair_treatment_t::standard;
             #ifdef GRACE_M1_PAIR_KERNELS
-            if(!standard) {
+            if(!standard && !vacuum_muon_decay) {
                 // Both pair and charged-current fixed points must agree.
-                // Keep the historical +/-5 clamp only for the standard rates.
+                // The optional vacuum sink retains the standard +/-5 clamp.
                 F.eta_nu[NUMU]=(F.mu_mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
                 F.eta_nu[NUMUBAR]=-F.eta_nu[NUMU];
                 if(muon_decay) {
@@ -1308,9 +1324,23 @@ struct neutrinos_eas_op
                 }
             }
             #endif
+            if constexpr(std::is_same_v<eos_t,leptonic_eos_4d_t>) {
+                if(dilute_cc_target) {
+                    double const raw=eos.raw_mumu__temp_rho_ye_ymu(T,rho,Ye,Ymu);
+                    double const mu=dilute_muon_cc_potential(raw,F.mu_e,Ymu);
+                    F.dilute_cc_target=true;
+                    F.mu_mu_reaction=mu;
+                    F.eta_cc_mu=(mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
+                    if(muon_decay) {
+                        F.eta_nu[NUMU]=F.eta_cc_mu;
+                        F.eta_nu[NUMUBAR]=-F.eta_cc_mu;
+                    }
+                }
+            }
             bool const apply_muon_gate=standard || !muon_decay;
-            // muon_decay in the standard rates = the vacuum sink; the kernel modes carry their own decay.
-            bool const muon_decay_sink=standard && muon_decay;
+            // Vacuum emission stays in ordinary EAS even with spectral thermal pairs.
+            // The spectral decay, if selected, belongs to the connected source solve.
+            bool const muon_decay_sink=vacuum_muon_decay;
             return (use_weakhub && weakhub.valid)
                 ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt)
                 : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt);
@@ -1623,10 +1653,17 @@ struct neutrinos_eas_op
   bool use_weakhub;
   betaeq_mode_t betaeq_mode;
   pair_treatment_t pair_treatment;   // standard in every build without GRACE_M1_PAIR_KERNELS
-  bool muon_decay;
+  bool dilute_cc_target;
+  bool muon_decay;                 // spectral decay only; controls the connected network
+  bool vacuum_muon_decay;
   #ifdef GRACE_M1_PAIR_KERNELS
+  bool compute_pair_transport;
   int pair_order;
   int decay_order;
+  bool grey_decay;
+  bool decay_cache;
+  bool thermal_cache;
+  pairs::grid_rule pair_grid_rule{};
   #endif
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held
   bool betaeq_ymu_floor;    // ... held at the table floor when the muon equilibrium is below it

@@ -4,6 +4,25 @@ Muon decay and inverse decay in grey M1
 Scope and recommended mode
 --------------------------
 
+The decay prescription can be selected independently of the thermal-pair
+partner treatment with ``m1.eas.muon_decay_treatment``:
+
+* ``auto`` (default) preserves the historical choice: ``standard`` pairs use
+  the vacuum sink; ``equilibrium`` and ``evolved`` pairs use spectral decay.
+* ``vacuum`` selects the existing emission-only approximation even with
+  equilibrium or evolved thermal-pair kernels. It requires
+  ``dilute_muon_suppression: true`` and retains the ordinary-rate muon gate
+  and fugacity clamp. Thermal pairs still use their kernel EOS potentials.
+  No spectral-decay matrix or connected four-flavour decay solve is enabled.
+* ``spectral`` requires an equilibrium/evolved kernel pair mode and the
+  unsuppressed additive EOS described below. Prefer evolved partners.
+
+``muon_decay: false`` remains the master off switch. Kernel pair modes
+continue to require ``betaeq_policy: off`` for either decay prescription.
+Thus switching from Ken's timescale baseline also changes the rate closure;
+it is not a single-process comparison. The optional vacuum/kernel combination
+is a controlled approximation, not a substitute for spectral inverse decay.
+
 This document describes the spectral decay kernel of builds configured with
 ``-DGRACE_M1_PAIR_KERNELS=ON`` (``pair_treatment: equilibrium`` or ``evolved``).
 ``m1.eas.muon_decay: true`` adds both charge-conjugate reactions:
@@ -495,6 +514,118 @@ the normal variable-layout compatibility checks, not assumed interchangeable.
 Code map
 --------
 
+Experimental dilute-target and lagged-partner options
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``m1.eas.dilute_muon_cc_target: true`` regularizes the WeakHub muon CC
+emissivity target toward the electron chemical potential on the demuonizing
+branch, below Ymu=6e-4 with transition width 5e-5. It requires leptonic EOS,
+noPP WeakHub rates, and ``betaeq_policy: off``. The raw EOS chemical potential
+is still available for thermodynamic diagnostics. When spectral decay is
+active, its reaction potential and muon-neutrino target use this same
+regularized value: otherwise CC and decay impose incompatible affinities.
+This is a phenomenological dilute-floor regularization, not a new physical
+EOS. Existing grey absorption averages are retained; exact equivalence to
+reintegrating a spectral WeakHub table is not claimed.
+The new CC target uses the unclamped effective chemical potential. Therefore
+standard-mode cells previously on the legacy +/-5 degeneracy rail can also
+change outside the dilute transition; this option is not merely a change to
+the floor value.
+
+``m1.eas.fermi_fofc: true`` checks the flux cone and necessary continuum Fermi
+bounds in both lab and fluid frames, with per-helicity species multiplicity.
+It limits reconstructed face states toward donor states and triggers existing
+shared-face donor flux correction for inadmissible predicted transport states.
+It requires pair kernels and FOFC. It does not prove full discrete-quadrature
+realizability or positivity of arbitrary IMEX stage right-hand sides. In
+particular, reducing the CFL can remain necessary. Radiation moments are not
+independently clipped to manufacture a reconstructible spectrum.
+
+``m1.eas.muon_decay_treatment: lagged`` requires evolved partners and the
+same EOS setup as ``spectral``. Frozen partner spectra yield four independent
+five-moment solves. Outer iterations update their coefficients, and the
+coupled residual and stoichiometry remain the acceptance criterion. Failure,
+including failed acceptance of a stationary lagged iterate, retries the
+reference coupled solver. This conservative prototype differs from a single
+unconditionally accepted lagged Boltzmann update. It needs no new tables,
+but retains the existing finite-mass kernel quadrature; it does not promise
+a speedup in stiff matter. All three new options are opt-in.
+
+Single-pass decay experiment and profiling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``muon_decay_treatment: singlepass`` freezes the transported partner spectra
+once per implicit stage. Grey opacity weighting also freezes the target
+spectral shape, an extra approximation required by grey M1. Production and
+stimulated absorption are integrated independently from the existing decay
+kernel, without a prescribed equilibrium target. Four-moment energy/flux
+solves and an analytic number update replace the four-species decay solve;
+the existing ten-moment conservative thermal-pair solve remains for muonic
+thermal pairs. Tau transport and thermal-pair physics are unchanged.
+
+There is no outer decay iteration, four-species coupled acceptance, coupled
+fallback, or decay stoichiometric projection. Failure of positivity or FD
+reconstruction stops the run. This is the single-pass lagging idea of Ng
+et al. Sec. III C adapted to the decay channel in grey M1, not a copy of
+their energy-group/angle transport or their treatment of every reaction.
+Both the old ``lagged`` mode and ``spectral`` remain available as controls.
+
+The two decay daughters need not acquire equal number increments in this
+approximation. Matter backreaction still balances radiation energy and each
+flavour lepton number, but the mismatch can spuriously change Ye+Ymu through
+decay. It is therefore necessary to measure both conservation of exchange
+and reaction stoichiometry; the former alone is insufficient.
+
+For CPU diagnostics, compile with ``-DGRACE_LEPTON_PROFILE``. RAII timers
+record inclusive and exclusive per-thread elapsed work, with call counts and
+lagged fallback/iteration counts. Only exclusive categories may be added;
+their sum covers the instrumented microphysics, not total wall time. Run an
+otherwise identical build without this definition for runtime comparisons.
+The profiler additionally writes ``source_budget_rank<N>.dat`` at each
+implicit stage, over interior cells only. After t and diagonal-stage h,
+columns b0--b9 contain baryon integral, L1 energy-exchange defect, L1 electron
+and muon lepton-exchange defects, signed and L1 decay charge defect after
+ordinary-rate removal and shared backreaction acceptance, absolute matter
+energy/electron/muon exchanges, and signed matter charge exchange. Repeated
+IMEX-stage sums are diagnostics, not a time-integrated final conservation
+budget. No atmosphere, boundary-flux or gravitational energy accounting is
+implied. The auxiliary field ``decay_number_increment_defect`` is registered
+in all builds but populated only in diagnostic builds;
+it is reset by rate preparation, so final plane values need not retain the
+source-stage defect. Use the rank-local files for the audit.
+
+Exact CPU decay-kernel reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``m1.eas.muon_decay_kernel_cache: true`` enables bounded, exact memoization
+of the finite-mass decay kernel. The default is false. Source, transport
+and equilibrium-rate preparation use the same process-local cache. It
+does not cache opacities or source solutions: current neutrino spectra,
+blocking, closure and the conservative connected solve are still evaluated.
+
+The key includes bit representations of T, mu_e, the effective reaction
+mu_mu, inner quadrature order, active grid order, mapping scale, energies
+and weights. Every input must match exactly, without rounding, tolerance,
+interpolation or freezing matter. Consequently a changed state misses the
+cache; no cell indices, AMR topology or checkpoint state are involved.
+The cache starts empty after restart. Bounded eviction changes only runtime.
+
+Each MPI rank lazily allocates approximately 70 MiB for at most 4096 entries
+in four-way buckets. Bucket mutexes protect lookup/copy/insertion across
+OpenMP threads. Integration on a miss occurs outside the lock; concurrent
+identical misses may duplicate work but cannot return a partially written
+kernel. Only successfully integrated kernels are stored. GPU builds reject
+this option; the uncached device implementation is unchanged.
+
+``SOURCE_CACHE`` profile records give per-rank hits and misses. The existing
+``decay_kernel`` timer now counts actual integrations, including duplicate
+concurrent misses. Lookup/copy overhead remains in measured timestep runtime.
+The achievable gain depends on exact state repetition and working-set size;
+a symmetric hot-TOV benchmark cannot predict BNS cache hit rates.
+
+Code locations
+~~~~~~~~~~~~~~
+
 * ``neutrino_muon_decay.hh``: inner quadrature, finite-mass kernels, stable
   detailed balance, common-event moments and LTE EAS coefficients.
 * ``neutrino_leptonic_update.hh``: four-species implicit residual, FD spectral
@@ -566,3 +697,70 @@ Scientific boundaries remain:
 
 See ``muon_decay_plan.rst`` for the reviewed implementation sequence and the
 record of actual validation runs.
+
+Reversible lifetime-based grey decay
+====================================
+
+``muon_decay_treatment: grey_decay`` now selects a representative-energy
+reaction, not the 7 November spectral interpolation prototype. No decay
+collision matrix is integrated, cached or refined. ``grey_decay_kernel_nodes``
+is ignored. The full spectral and lagged prescriptions are unchanged.
+
+For each muon charge, a fixed 16-point one-dimensional Fermi-gas moment
+integral supplies density n and mean total energy U. The rest lifetime is
+2.197 microseconds; the lab-frame grey lifetime uses the factor M/U.
+Daughter energies are 0.35 U (same-flavour neutrino), 0.30 U (other-flavour
+antineutrino), and 0.35 U (charged electron). These recover the massless-
+electron Michel means for a nonrelativistic, dilute parent. This is a
+representative-energy and time-dilation approximation, not a finite-mass
+microscopic decay calculation.
+
+With f_mu evaluated at U, f_e at 0.35 U, and holes h=1-f evaluated stably,
+the common amplitude is C=(n/f_mu) M/(U tau). Define P=C f_mu h_e and
+A=C h_mu f_e. All coefficients are evaluated in logarithmic form, so an
+underflowing forward population does not erase a finite inverse rate.
+Their ratio is exp[-(epsilon_0+epsilon_1 - sign*(mu_mu-mu_e))/T].
+The event rate is R=P h_0 h_1 - A f_0 f_1, using the actual M1 populations'
+moment-matched FD fits at the two representative energies. Both daughter
+number sources equal R and their energy sources equal epsilon_s R.
+Thus inverse decay requires both incoming partners, and chemical LTE is
+a fixed point. Charge conjugation uses the opposite matter potentials.
+
+The conservative four-species source solver, radiation-to-matter exchange,
+realizability checks, and source acceptance remain active. Numerical solver
+fallbacks evaluate this SAME cheap reaction; they cannot switch to spectral
+physics. The analytic/block optimization still applies to thermal pairs;
+the cheap grey reaction is evaluated directly during Jacobian probes.
+Initial-data equilibrium rates and transport damping use the same model.
+Profile category ``grey_rates`` measures coefficient preparation; grey
+runs must have zero ``decay_kernel`` calls and zero decay-cache accesses.
+
+This model requires evolved partners and dilute_muon_suppression=false.
+It does not invert the existing vacuum prescription's density floor, gate,
+or finite-timestep saturation. Consequently it agrees with vacuum decay
+only in its dilute, unblocked, nonrelativistic limit, not bitwise in dense
+matter. The existing vacuum option also requires a different EOS suppression
+policy; composition differences in that comparison include this distinction.
+No new external tables are needed. Detailed balance and conservation alone
+do not establish dense-matter accuracy; compare against spectral before use.
+
+The wider-domain Calea validation archived in
+``GRACE_runs/HOTTOV_5spec/grey_domain_20261108/final_sweep`` found this
+prescription unsuitable as a general BNS replacement for spectral decay.
+Among 4831 active non-LTE reaction samples passing a 5-percent spectral
+quadrature convergence screen, 52 percent had net-rate errors exceeding
+10 percent of the reference emission-plus-loss scale; 65 had the wrong
+net reaction sign. These are unweighted test-grid statistics, not BNS
+occurrence frequencies. Matched closed-box evolutions to 10 ms differed
+by up to 0.00910 in Ye/Ymu and 13.69 MeV in temperature, despite relative
+energy conservation better than 5.1e-13 at completed checkpoints.
+Representative energies miss spectral tails and energy-dependent blocking;
+chemical detailed balance does not determine the correct relaxation rate.
+Keep this option experimental. Smaller timesteps do not remove its model
+error. See the archive's ``validation_report.rst`` for coverage, numerical
+convergence checks, incomplete trajectories and coupled hot-TOV results.
+
+The discarded interpolation prototype remains archived under
+``GRACE_runs/HOTTOV_5spec/grey_decay_20261107``. Every grey8 build refined
+there, explaining its 3.015 s step median versus spectral 3.017 s and vacuum
+1.008 s. Those measurements do NOT describe the new lifetime model.

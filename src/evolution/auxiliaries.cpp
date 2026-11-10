@@ -86,7 +86,8 @@ void compute_auxiliary_quantities(
       grace::var_array_t& state
     , grace::staggered_variable_arrays_t& sstate
     , grace::var_array_t& aux
-    , bool clamp_to_atmo )
+    , bool clamp_to_atmo
+    , [[maybe_unused]] bool compute_pair_transport )
 {
     Kokkos::Profiling::pushRegion("Compute auxiliaries") ;
     GRACE_VERBOSE("Computing auxiliary quantities at iteration {}", grace::get_iteration()) ;
@@ -203,7 +204,7 @@ void compute_auxiliary_quantities(
     // GRACE_M1_DIAGNOSTICS it runs in a reduced fugacity-only mode so the
     // chemical potentials keep being written (and the rate slots floored);
     // without it, set_m1_eas returns immediately.
-    set_m1_eas<eos_t>(state,sstate,aux) ;
+    set_m1_eas<eos_t>(state,sstate,aux,compute_pair_transport) ;
     #endif
 
     Kokkos::Profiling::popRegion() ;
@@ -215,7 +216,8 @@ void compute_auxiliary_quantities<EOS>(                                 \
                            grace::var_array_t&         \
                          , grace::staggered_variable_arrays_t& \
                          , grace::var_array_t& aux             \
-                         , bool clamp_to_atmo )
+                         , bool clamp_to_atmo                         \
+                         , bool compute_pair_transport )
 
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::piecewise_polytropic_eos_t>) ;
 INSTANTIATE_TEMPLATE(grace::hybrid_eos_t<grace::tabulated_cold_eos_t>) ;

@@ -28,6 +28,33 @@ resolution, timestep and target-GPU validation.
 
 ## Configuration
 
+`m1.eas.thermal_pair_kernel_cache: true` enables optional exact CPU reuse of
+thermal kernels across source, transport and equilibrium-rate preparation.
+It defaults to false and is independent of `muon_decay_kernel_cache`.
+The key compares the bit representations of temperature, electron chemical
+potential, baryon density, neutron/proton fractions, channel flags, symmetry
+choice, and the complete active energy grid (including its order, scale,
+nodes and weights). A supplied quadrature rule is resolved to that grid
+before lookup. There is no interpolation, rounded matching or frozen matter.
+
+Each MPI rank lazily allocates a bounded four-way cache of at most 4096
+kernels, approximately 38 MiB in addition to any decay cache. Bucket mutexes
+protect concurrent lookups and insertion; integration occurs outside the
+lock. Simultaneous identical misses may duplicate work but cannot expose an
+incomplete entry. Failed builds are not stored, and failure diagnostics
+remain available. Restart begins with an empty cache; AMR/cell identity is
+not part of the key.
+
+Cache hits copy the absorption matrix, active grid and Boltzmann factors
+into caller-owned storage. In-place tau symmetrization therefore cannot
+change a cached muon-neutrino kernel. Current neutrino spectra, pair sources,
+transport opacities and conservative implicit solves are still evaluated.
+The cache is CPU-only; GPU builds reject the option. With
+`GRACE_LEPTON_PROFILE`, `THERMAL_CACHE` reports per-rank hits and misses and
+the `thermal_kernel` timer counts actual builds. Lookup/copy overhead is
+included in whole-step timings. Results depend on exact repetition of all
+matter inputs and the cache working set.
+
 Configure with `-DGRACE_M1_PAIR_KERNELS=ON` (default OFF: production builds
 carry neither the kernels nor the 12 `pair_*` aux slots, and a parfile asking
 for `equilibrium`/`evolved` in such a build stops at startup with a message
@@ -521,3 +548,37 @@ estimates with an opaque-region equilibrium fallback and an angular correction;
 it is not simply an equilibrium-partner treatment. A blanket claim that this
 new grey R0 implementation is more accurate is unwarranted. No unpublished
 criticism attributed to Harry is treated as evidence of a specific error.
+
+## Analytic collision-block Jacobian (opt-in)
+
+`m1.eas.leptonic_block_jacobian: true` accelerates the conservative spectral
+four-flavour solve. It combines analytic derivatives of collision integrals
+with the existing numerical probes of each species' M1 closure and discrete
+Fermi-Dirac reconstruction. It does not change thermal-only, lagged or
+singlepass solves. The default is false.
+
+For one pair of energy nodes, the event source is
+`P(1-f)(1-g) - A f g`. Its occupation derivatives are
+`-P(1-g)-A g` and `-P(1-f)-A f`. The integrated loss derivatives are included
+separately, since momentum sources use loss as well as net emission.
+These responses are accumulated once per Newton iterate. Each Jacobian
+column changes only one species, so the bilinear mixed term vanishes:
+the occupation expansion is exact for that finite probe, up to roundoff.
+After the node-pair accumulation, collision column evaluation is linear in
+the number of energy nodes rather than quadratic. Closure and reconstruction
+remain numerically differentiated; this is a hybrid block Jacobian, not a
+fully analytic twenty-moment Jacobian or a frozen-partner physical model.
+
+Every nonlinear residual, line-search trial and final projected-state check
+still uses the full original collision integrals. Solver tolerances and
+conservation projection are unchanged. A failed accelerated Newton attempt
+falls back to the original numerical Jacobian before the existing seed and
+continuation recovery. Profiling builds print `BLOCK_JACOBIAN` counts of
+attempts, block builds and numerical fallbacks. The work arrays are private
+to the local solve; neither exact thermal nor decay kernel cache is modified.
+
+Validation uses both exact caches, energy quadrature 16 and inner decay
+quadrature 16. New tests cover individual collision blocks for all three
+reactions and both species, dilute/degenerate occupations, moving and stiff
+matter, LTE, vacuum emission and recovery from an inadmissible explicit RHS.
+Calea benchmark results and their scope are recorded in the run archive.

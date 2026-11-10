@@ -242,6 +242,9 @@ int main(int argc, char* argv[])
         #endif
     }
 
+    #ifdef GRACE_LEPTON_PROFILE
+    grace::source_profile::dump(parallel::mpi_comm_rank());
+    #endif
     grace::grace_finalize() ;
     return EXIT_SUCCESS ;
 }

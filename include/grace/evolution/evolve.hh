@@ -226,7 +226,8 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                     , grace::var_array_t& state
                     , grace::var_array_t& state_p
                     , grace::staggered_variable_arrays_t & sstate
-                    , grace::staggered_variable_arrays_t & sstate_p) ;
+                    , grace::staggered_variable_arrays_t & sstate_p
+                    , grace::var_array_t const& leptonic_seed = {}) ;
 //*****************************************************************************************************
 /**
  * @brief Advance all variables by a substep.
@@ -278,6 +279,7 @@ void advance_implicit_substep<EOS>( double const , double const , double const \
                          , grace::var_array_t&       \
                          , grace::staggered_variable_arrays_t & \
                          , grace::staggered_variable_arrays_t & \
+                         , grace::var_array_t const& \
                         ) ; \
 extern template                                                      \
 void compute_fluxes<EOS>( double const , double const , double const \

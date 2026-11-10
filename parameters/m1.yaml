@@ -220,10 +220,12 @@ m1:
       description: >
         Debug only (GRACE_M1_PAIR_KERNELS builds): for this many steps after
         startup/restart, print per-rank, per-species moment summaries around ARS
-        IMEX stages and pair source / backreaction updates. Includes ghost cells.
-        Adds reductions and host synchronization; zero disables it. The reported
-        E/N mean is a lab-frame energy-per-number proxy, not the comoving mean
-        used by pair kernels.
+        IMEX stages and pair source / backreaction updates. Reports the worst
+        continuum Fermi lower-bound ratio separately for interior and ghost
+        cells. A ratio above one indicates too little energy for the number.
+        Raw stages use lab-frame moments. The EAS input uses comoving moments
+        with current fluid primitives. Adds reductions and host synchronization.
+        Zero disables it.
 
     muon_decay:
       type: bool
@@ -244,10 +246,92 @@ m1:
         (1-exp(-Gamma dt))/dt cannot overshoot the excess with imex232; with
         imex333/343 the backreaction hard stop is the backstop.  Needs 5 species,
         the leptonic EOS with dilute_muon_suppression: true, and a Weakhub table
-        without decay.  In GRACE_M1_PAIR_KERNELS builds with pair_treatment
-        equilibrium or evolved it is the spectral decay kernel instead (see
+        without decay. With the default muon_decay_treatment=auto, kernel pair
+        modes equilibrium/evolved select spectral decay instead (see
         muon_decay.rst; needs dilute_muon_suppression: false and
-        add_ele_contribution: true).
+        add_ele_contribution: true). Set muon_decay_treatment=vacuum to retain
+        the simple emission-only sink alongside kernel thermal pairs.
+
+    fermi_fofc:
+      type: bool
+      default: false
+      description: >
+        Trigger conservative shared-face flux correction on lab and comoving
+        continuum Fermi bounds and the flux cone. Requires pair kernels and FOFC.
+
+    dilute_muon_cc_target:
+      type: bool
+      default: false
+      description: >
+        Experimental WeakHub CC target regularization toward mu_e at Ymu=6e-4,
+        with width 5e-5. Spectral decay uses the same effective reaction potential
+        so its chemical affinity agrees with CC. Raw EOS thermodynamics remain
+        available separately. Thermal pair kernels use their own detailed balance.
+        Requires a leptonic EOS, a noPP table and betaeq_policy=off.
+
+    muon_decay_treatment:
+      type: keyword
+      allowed: ["auto", "vacuum", "spectral", "lagged", "singlepass", "grey_decay"]
+      default: "auto"
+      description: >
+        Decay prescription when muon_decay=true. auto preserves the historical
+        choice: vacuum for standard pairs, spectral for equilibrium/evolved
+        pairs. vacuum selects the emission-only sink independently of the
+        thermal pair treatment and requires dilute_muon_suppression=true.
+        spectral includes inverse decay, needs a kernel pair mode and requires
+        dilute_muon_suppression=false. The master muon_decay=false disables
+        all prescriptions. singlepass freezes decay partners and grey weights
+        once per stage without the coupled acceptance solve or projection;
+        thermal pairs retain their conservative solver. Experimental: decay
+        event counts can disagree and change Ye+Ymu spuriously. Requires evolved
+        partners. lagged uses independent moment solves with iterated
+        spectra and a coupled residual acceptance check, falling back to spectral
+        on failure. It requires evolved partners. Kernel pair modes still
+        require betaeq_policy=off. grey_decay uses the vacuum lifetime, representative
+        Michel daughter energies and a detailed-balance inverse reaction. It needs
+        evolved partners and the unsuppressed leptonic EOS; it never builds decay
+        collision kernels. Its dense-matter rate is a grey approximation.
+
+    grey_decay_kernel_nodes:
+      type: int
+      range: "[4,32]"
+      default: 8
+      description: >
+        Deprecated and ignored. Retained only to read old prototype parfiles.
+        grey_decay no longer samples or refines any spectral decay kernel.
+
+    leptonic_block_jacobian:
+      type: bool
+      default: false
+      description: >
+        Accelerate the conservative spectral four-flavour Newton Jacobian with
+        analytic collision occupation blocks. Closure and FD reconstruction
+        retain numerical probes. Full nonlinear residuals, line search and
+        conservation projection remain unchanged. Falls back to the numerical
+        Jacobian if the accelerated solve fails. Does not change lagged,
+        singlepass or thermal-only solves.
+
+    thermal_pair_kernel_cache:
+      type: bool
+      default: false
+      description: >
+        CPU-only bounded exact reuse of thermal neutrino-pair kernels. Matches
+        temperature, electron chemical potential, baryon density, neutron/proton
+        fractions, channel flags, symmetry and the complete active energy grid.
+        No interpolation or frozen matter. Each caller receives a private copy
+        so tau symmetrization cannot alter a cached muon-pair matrix. Holds at
+        most 4096 kernels per MPI rank (approximately 38 MiB), allocated lazily.
+        Independent of muon_decay_kernel_cache. GPU builds reject true.
+
+    muon_decay_kernel_cache:
+      type: bool
+      default: false
+      description: >
+        CPU-only bounded exact decay-kernel reuse across source and transport
+        calls. Matches temperature, charged-lepton chemical potentials, complete
+        active energy grid and inner quadrature order bit for bit. No interpolation,
+        approximate matching or frozen matter. Holds at most 4096 kernels per MPI
+        rank (approximately 70 MiB); allocation is lazy. GPU builds reject true.
 
     muon_decay_kernel_order:
       type: int

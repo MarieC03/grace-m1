@@ -391,7 +391,16 @@ GRACE_HOST_DEVICE static GRACE_ALWAYS_INLINE double get(double eta) {
 // Fugacity/composition state
 // Similar to FIL's Fugacities<T>
 // -----------------------------------------------------------------------------
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double dilute_muon_cc_potential(
+    double raw, double electron, double ymu) {
+    if(raw<electron) return raw;
+    return electron+(raw-electron)*Kokkos::tanh(Kokkos::fmax(ymu-6e-4,0.0)/5e-5);
+}
+
 struct fugacity_state {
+    bool dilute_cc_target = false;
+    double eta_cc_mu = 0.0;
+    double mu_mu_reaction = 0.0;
     double rho_code{0.0};
     double temp_code{0.0};
     double ye{0.0};
@@ -1067,8 +1076,12 @@ nu_rates_all_out compute_all_species_weakhub(
     for (int s = NUE; s <= NUX; ++s) {
         const double Ber_eq = black_body_energy(g_nu[s], F.temp_mev, F.eta_nu[s]);
         const double Bn_eq = black_body_number(g_nu[s], F.temp_mev, F.eta_nu[s]);
-        rates.Q[s] = rates.kappa_a[s] * Ber_eq;
-        rates.R[s] = rates.kappa_n[s] * Bn_eq;
+        double const eta_cc = s==NUMU ? F.eta_cc_mu : -F.eta_cc_mu;
+        bool const regularized = F.dilute_cc_target && (s==NUMU || s==NUMUBAR);
+        rates.Q[s] = rates.kappa_a[s] * (regularized
+            ? black_body_energy(g_nu[s],F.temp_mev,eta_cc) : Ber_eq);
+        rates.R[s] = rates.kappa_n[s] * (regularized
+            ? black_body_number(g_nu[s],F.temp_mev,eta_cc) : Bn_eq);
     }
 
     rates_accum extra{};
