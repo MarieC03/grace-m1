@@ -5,6 +5,7 @@
 #include <grace/physics/eos/leptonic_eos_4d.hh>
 #include <grace/physics/neutrino_leptonic_update.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <grace/physics/eas_optical_depth.hh>
 #include <grace/parallel/mpi_wrappers.hh>
 #include <array>
 #include <chrono>
