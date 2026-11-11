@@ -2,7 +2,7 @@
  * @file resistive_helpers.hh
  * @author Marcel Ruff (ruff@itp.uni-frankfurt.de)
  * @brief Helpers for resistive.
- * @date 2024-06-17
+ * @date 2026-11-10
  *
  * @copyright This file is part of the General Relativistic Astrophysics
  * Code for Exascale.
@@ -27,6 +27,9 @@
 #ifndef GRACE_PHYSICS_RES_HELPERS_HH
 #define GRACE_PHYSICS_RES_HELPERS_HH
 
+#include "Kokkos_MathematicalFunctions.hpp"
+#include "grace/utils/inline.h"
+#include "grace/utils/math.hh"
 #include <grace_config.h>
 #include <grace/config/config_parser.hh>
 /**
@@ -54,5 +57,24 @@ resistive_params_t get_resistive_params()
     resistive_params.lambda = grace::get_param<double>("resistive", "lambda");
 
     return resistive_params;
+}
+
+namespace grace {
+
+/**
+ * @brief Device function for resistivity eta following Tenes2026 v2 eq. 46.
+ * */
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
+compute_eta(double const rho, resistive_params_t const& resistive_params){
+    double const eta0   = resistive_params.eta0;
+    double const eta_f  = resistive_params.eta_f;
+    double const rho_th = resistive_params.rho_th;
+    double const lambda = resistive_params.lambda;
+
+    double const eta    = ((eta0 - eta_f) / 2) * (1 + Kokkos::tanh(Kokkos::log10(rho / rho_th) / lambda));
+
+    return eta;
+}
+
 }
 #endif
