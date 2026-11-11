@@ -2,13 +2,13 @@ resistive:
   type: schema
   description: >
     REGIME resistive correction as given in Tenes2026 v2.
-  eta0:
+  res_0:
     type: double
     range: "[0,*)"
     default: 0.0
     description: >
       Peak Resistivity 
-  eta_f:
+  res_f:
     type: double
     range: "[0,*)"
     default: 0.0
