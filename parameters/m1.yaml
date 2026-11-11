@@ -266,8 +266,9 @@ m1:
         Dilute-muon target of Ng et al. 2026 (arXiv:2610.36486, Eq. 20): the muon
         potential the rates see is blended to mu_e at Ymu=6e-4 (width 5e-5), so
         demuonised matter rests in the neutrinoless equilibrium. The WeakHub muon CC
-        emission uses the unclamped target; the muon-flavour eta of the standard
-        rates and of the beta-equilibrium policy follows it, clamped to +-5.
+        emission and beta-equilibrium moments use the same unclamped target;
+        the muon-flavour eta for standard thermal rates remains clamped to +-5
+        to protect the Kirchhoff inversions.
         Spectral decay uses the same potential, unclamped. EOS thermodynamics are
         unchanged. Requires a leptonic EOS and a noPP table.
 

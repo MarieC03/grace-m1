@@ -610,7 +610,7 @@ struct neutrinos_eas_op
     // 4x in 3-species), as in the reference get_neutrino_density.  The
     // exp(-rho_lim/rho) factor is the reference's low-density cutoff.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double eq_nu_number_fraction(fugacity_state const& Ft, int s) const {
+    static double eq_nu_number_fraction(fugacity_state const& Ft, int s) {
         using namespace nu_constants ;
         const double n_cm3 =
             4.0*pi/(hc_mevcm*hc_mevcm*hc_mevcm) * ipow<3>(Ft.temp_mev)
@@ -619,7 +619,7 @@ struct neutrinos_eas_op
         return mnuc_cgs * n_cm3 / Ft.rho_cgs ;
     }
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double eq_nu_energy_code(fugacity_state const& Ft, int s) const {
+    static double eq_nu_energy_code(fugacity_state const& Ft, int s) {
         using namespace nu_constants ;
         const double z_mev_cm3 =
             4.0*pi/(hc_mevcm*hc_mevcm*hc_mevcm) * ipow<4>(Ft.temp_mev)
@@ -648,6 +648,19 @@ struct neutrinos_eas_op
         double Yle, double Ylmu, double u,
         double* f, beq_mode_t mode = beq_mode_t::FULL) const
     {
+        return betaeq_residuals(eos, mass_scale, dilute_cc_target, rho_code, xyz, tauf,
+                               Ye_t, Ymu_t, T_t, Yle, Ylmu, u, f, mode) ;
+    }
+
+    // Pure residual evaluation, also usable without a grid or runtime EOS singleton.
+    GRACE_HOST_DEVICE
+    static bool betaeq_residuals(
+        eos_t const& eos, double mass_scale, bool dilute_cc_target,
+        double rho_code, const double* xyz, tau_policy_fixed const& tauf,
+        double Ye_t, double Ymu_t, double T_t,
+        double Yle, double Ylmu, double u,
+        double* f, beq_mode_t mode = beq_mode_t::FULL)
+    {
         eos_err_t err{} ;
         double T_loc = T_t, rho_loc = rho_code ;
         double ye_loc = Ye_t, ymu_loc = Ymu_t ;
@@ -658,10 +671,12 @@ struct neutrinos_eas_op
 
         fugacity_state Ft = make_fugacity_state(
             eos, rho_code, T_t, Ye_t, Ymu_t, mass_scale, xyz, tauf) ;
-        // Same muon target as the rates pass, or the equilibrium and the emission would disagree.
+        // Match the UNCLAMPED WeakHub CC emission target. These trapped-gas
+        // moments never divide by B; the +/-5 bound is only needed by the
+        // standard thermal-rate Kirchhoff inversions, not this closure.
         if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
             if ( dilute_cc_target )
-                set_dilute_muon_target(Ft, eos.raw_mumu__temp_rho_ye_ymu(T_t, rho_code, Ye_t, Ymu_t), true, false) ;
+                set_dilute_muon_target(Ft, eos.raw_mumu__temp_rho_ye_ymu(T_t, rho_code, Ye_t, Ymu_t), true, true) ;
         }
 
         f[0] = Ye_t + eq_nu_number_fraction(Ft, NUE)

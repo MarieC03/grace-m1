@@ -25,6 +25,7 @@
 
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
 #include <grace/physics/eas_optical_depth.hh>
+#include <grace/physics/eas_policies.hh>
 
 #include <array>
 #include <cmath>
@@ -425,6 +426,56 @@ TEST_CASE("Charged-current absorption opacity: electron flavors only, "
     add_charged_current_absorption_opacity(empty, out0);
     REQUIRE(out0.kappa_a[NUE]    == 0.0);
     REQUIRE(out0.kappa_a[NUEBAR] == 0.0);
+}
+
+TEST_CASE("Charged-current absorption uses the incident species' nucleon target",
+          "[m1rates][kernels][cc-equilibrium]") {
+    auto F = make_hot_state();
+    rates_accum base{};
+    add_charged_current_absorption_opacity(F, base);
+    for (int target : {int(NUE), int(NUEBAR)}) {
+        for (double factor : {0.0, 2.0}) {
+            INFO("target " << target << " availability factor " << factor);
+            auto G = F;
+            if (target == NUE) G.eta_np *= factor;
+            else G.eta_pn *= factor;
+            rates_accum changed{};
+            add_charged_current_absorption_opacity(G, changed);
+            for (int s : {int(NUE), int(NUEBAR)}) {
+                double const scale = s == target ? factor : 1.0;
+                REQUIRE_THAT(changed.kappa_a[s], WithinAbs(scale * base.kappa_a[s], 1e-12 * base.kappa_a[s]));
+                REQUIRE_THAT(changed.kappa_n[s], WithinAbs(scale * base.kappa_n[s], 1e-12 * base.kappa_n[s]));
+            }
+        }
+    }
+}
+
+TEST_CASE("Analytic charged-current energy and number sources vanish at equilibrium",
+          "[m1rates][integration][cc-equilibrium]") {
+    using namespace nu_constants;
+    for (double eta : {-10.0, -2.0, 0.0, 2.0, 10.0}) {
+        INFO("eta_nue " << eta);
+        auto F = make_hot_state();
+        F.mass_scale = 1.0;
+        F.rho_code = F.rho_cgs * RHOGF;
+        F.eta_nu[NUE] = eta;
+        F.eta_nu[NUEBAR] = -eta;
+        auto const rates = compute_all_species(F, true, false, false, false,
+                                               kXyzOrigin, tau_policy_none{}, false);
+        for (int s : {int(NUE), int(NUEBAR)}) {
+            auto const& r = rates.out[s];
+            double const E = Q_mev_to_code(black_body_energy(1, F.temp_mev, F.eta_nu[s]), 1)
+                           / kappa_to_code(1, 1);
+            double const N = R_to_code(black_body_number(1, F.temp_mev, F.eta_nu[s]), 1)
+                           / kappa_to_code(1, 1);
+            REQUIRE(r.eta_E > 100 * weakhub::kappa_floor_code);
+            REQUIRE(r.eta_N > 100 * weakhub::kappa_floor_code);
+            REQUIRE_THAT(r.eta_E - r.kappa_a * E, WithinAbs(0.0, 1e-12 * r.eta_E));
+            REQUIRE_THAT(r.eta_N - r.kappa_n * N, WithinAbs(0.0, 1e-12 * r.eta_N));
+            REQUIRE(r.eta_E - r.kappa_a * (1.01 * E) < 0.0);
+            REQUIRE(r.eta_N - r.kappa_n * (0.99 * N) > 0.0);
+        }
+    }
 }
 
 TEST_CASE("Pair process: species splits and mean energy", "[m1rates][kernels]") {
@@ -995,6 +1046,111 @@ std::array<double, 5 * NUMSPECIES> weakhub_rates_on_device(
 }  // namespace
 
 #if GRACE_M1_NU_SPECIES >= 5
+namespace {
+// Tiny, constant-potential leptonic EOS: exercises the production residual's
+// leptonic dispatch without external EOS files or the runtime singleton.
+leptonic_eos_4d_t equilibrium_test_eos(double eta) {
+    using E = leptonic_eos_4d_t;
+    using namespace nu_constants;
+    auto axis = [](char const* name, double lo, double hi) {
+        Kokkos::View<double*> a(name, 2);
+        auto h = Kokkos::create_mirror_view(a);
+        h(0) = lo; h(1) = hi; Kokkos::deep_copy(a, h);
+        return a;
+    };
+    auto lr = axis("eq_rho", std::log(1e14 * RHOGF), std::log(1e16 * RHOGF));
+    auto lt = axis("eq_T", std::log(1.0), std::log(4.0));
+    auto ye = axis("eq_Ye", 0.01, 0.5);
+    auto lm = axis("eq_Ymu", std::log(1e-4), std::log(0.1));
+    Kokkos::View<double****> bar("eq_bar", 2, 2, 2, E::N_TAB_VARS_BARYON);
+    Kokkos::View<double****> ele("eq_ele", 2, 2, 2, E::N_TAB_VARS_ELE);
+    Kokkos::View<double****> mu("eq_mu", 2, 2, 2, E::N_TAB_VARS_MUON);
+    Kokkos::View<double**> cold("eq_cold", 2, E::N_CTAB_VARS);
+    auto b = Kokkos::create_mirror_view(bar);
+    auto e = Kokkos::create_mirror_view(ele);
+    auto m = Kokkos::create_mirror_view(mu);
+    Kokkos::deep_copy(b, 0.0); Kokkos::deep_copy(e, 0.0); Kokkos::deep_copy(m, 0.0);
+    for (int i=0; i<2; ++i) for (int j=0; j<2; ++j) for (int k=0; k<2; ++k) {
+        b(i,j,k,E::TABEPS) = std::log(0.02);
+        b(i,j,k,E::TABMUN) = 40.0 - Qnp - 2.0 * eta;
+        b(i,j,k,E::TABXN) = 0.7; b(i,j,k,E::TABXP) = 0.3;
+        b(i,j,k,E::TABABAR) = 1.0; b(i,j,k,E::TABZBAR) = 1.0;
+        e(i,j,k,E::TABMUELE) = 40.0;
+        m(i,j,k,E::TABMUMU) = 40.0;
+    }
+    Kokkos::deep_copy(bar, b); Kokkos::deep_copy(ele, e); Kokkos::deep_copy(mu, m);
+    return E(bar, lr, lt, ye, ele, ye, mu, lm, cold, lr,
+             1e16 * RHOGF, 1e14 * RHOGF, 4.0, 1.0, 0.5, 0.01, 0.1, 1e-4,
+             1.0, 0.0, 0.0, 10.0, 1.0, 10.0, 1.0, 0.1, 1e-4, false, true);
+}
+} // namespace
+
+TEST_CASE("Beta-equilibrium muon target cancels WeakHub charged-current sources",
+          "[m1rates][betaeq][dilute][cc-equilibrium]") {
+    using namespace nu_constants;
+    using Op = neutrinos_eas_op<leptonic_eos_4d_t>;
+    // Both signs beyond the old clamp, its endpoints, and the nondegenerate limit.
+    for (double eta : {-20.0, -10.0, -5.0, 0.0, 5.0, 10.0, 20.0}) {
+        for (bool enabled : {false, true}) {
+            INFO("eta " << eta << " dilute target " << enabled);
+            auto const eos = equilibrium_test_eos(eta);
+            constexpr double rho = 1e15 * RHOGF, T = 2.0, Ye = 0.1, Ymu = 0.01;
+            auto const h = constant_weakhub_handle(std::log(rho), std::log(T), 6);
+            Kokkos::View<double*> result("cc_equilibrium", 12);
+            Kokkos::parallel_for("cc_equilibrium", 1, KOKKOS_LAMBDA(int) {
+                double const xyz[3] = {0,0,0};
+                tau_policy_fixed tau; tau.tau = {{1000,1000,1000,1000,1000}};
+                double const mu_eta = enabled ? eta : Kokkos::fmax(-5.0, Kokkos::fmin(5.0, eta));
+                double const etas[5] = {eta, -eta, mu_eta, -mu_eta, 0.0};
+                double E[5], N[5];
+                // The closure intentionally retains a low-density trapping cutoff.
+                // Conserved targets include it; local CC equilibrium is the FULL
+                // Fermi gas, so do not mistake this cutoff for the eta-clamp bug.
+                double const trapped = Kokkos::exp(-1e11 / 1e15);
+                double u = rho * 1.02;
+                for (int s=0; s<5; ++s) {
+                    N[s] = black_body_number(1, T, etas[s]) / clight * mnuc_cgs * RHOGF;
+                    E[s] = black_body_energy(1, T, etas[s]) / clight * mev_to_erg * EPSGF * RHOGF;
+                    u += trapped * E[s] * (s == NUX ? 2.0 : 1.0);
+                }
+                double const Yle = Ye + trapped * (N[NUE] - N[NUEBAR]) / rho;
+                double const Ylmu = Ymu + trapped * (N[NUMU] - N[NUMUBAR]) / rho;
+                // Solve the production muon-lepton residual at fixed T and Ye.
+                // Constant EOS potentials make the independently specified root Ymu.
+                double lo=0.001, hi=0.03, f[3] = {};
+                bool ok = true;
+                for (int it=0; it<60; ++it) {
+                    double const mid = 0.5 * (lo + hi);
+                    ok = Op::betaeq_residuals(eos, 1.0, enabled, rho, xyz, tau,
+                                              Ye, mid, T, Yle, Ylmu, u, f) && ok;
+                    if (f[1] > 0) hi=mid; else lo=mid;
+                }
+                double const solved = 0.5 * (lo + hi);
+                ok = Op::betaeq_residuals(eos, 1.0, enabled, rho, xyz, tau,
+                                          Ye, solved, T, Yle, Ylmu, u, f) && ok;
+                result(0) = ok ? solved : -1.0;
+                result(1) = f[0]; result(2) = f[1]; result(3) = f[2] / u;
+                auto F = make_fugacity_state(eos, rho, T, Ye, solved, 1.0, xyz, tau);
+                if (enabled) set_dilute_muon_target(F,
+                    eos.raw_mumu__temp_rho_ye_ymu(T, rho, Ye, solved), true, false);
+                auto const rates = compute_all_species_weakhub(h, F, false, false, false,
+                                                               xyz, tau, false, nullptr);
+                for (int s=0; s<4; ++s) {
+                    auto const& r = rates.out[s];
+                    // Normalize by emission: catches nonzero sources even for
+                    // the exponentially small anti-species at |eta| = 20.
+                    result(4+s) = (r.eta_E - r.kappa_a * E[s]) / r.eta_E;
+                    result(8+s) = (r.eta_N - r.kappa_n * N[s]) / r.eta_N;
+                }
+            });
+            auto const r = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), result);
+            REQUIRE_THAT(r(0), WithinAbs(Ymu, 1e-12));
+            for (int n=1; n<4; ++n) REQUIRE_THAT(r(n), WithinAbs(0.0, 1e-12));
+            for (int n=4; n<12; ++n) REQUIRE_THAT(r(n), WithinAbs(0.0, 1e-12));
+        }
+    }
+}
+
 // Ng et al. 2026, Eq. 20 on the fugacity state: at the threshold the muon neutrino takes the electron
 // neutrino's equilibrium degeneracy; above it the table potential returns; eta_nu is clamped unless raw.
 TEST_CASE("Dilute muon target sets the muon-flavour degeneracy", "[m1rates][dilute]") {

@@ -1,0 +1,292 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=2.1cm]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\mueff}{\mu_\mu^{\mathrm{r}}}
+\begin{document}
+\begin{center}
+{\Large\bfseries Pair processes and muon decay in GRACE}\\[4pt]
+{\small Implementation summary, 10 November 2026, commit \code{1b78c044}}
+\end{center}
+This note describes \code{pair_treatment: evolved}, optimized \code{spectral}
+decay, and \code{grey_decay} (the code spelling of ``decay\_grey'').
+Equations are local fluid-frame collision equations unless stated otherwise.
+Energies, temperature and chemical potentials are in MeV, with $k_B=1$.
+Charged-lepton chemical potentials include rest mass. A dot denotes local proper time.
+
+\section{Evolved thermal pair processes}
+The explicit heavy-flavour channels are
+\begin{equation}
+ e^-+e^+\rightleftharpoons\nu_\ell+\bar\nu_\ell,\qquad
+ NN\rightleftharpoons NN+\nu_\ell+\bar\nu_\ell,\qquad
+ \gamma^*\rightleftharpoons\nu_\ell+\bar\nu_\ell .
+\end{equation}
+Here $\ell=\mu,\tau$. The plasmon model is optional. These reactions produce
+neutrino pairs and do not require charged muons. The electron-pair and
+bremsstrahlung kernels come from BNS\_NURATES. The former uses a relativistic,
+massless-electron approximation. The optional plasmon model retains transverse modes.
+
+For one neutrino helicity, let $w_i$ include the quadrature measure
+$d\Pi=\epsilon^2d\epsilon/[2\pi^2(\hbar c)^3]$.
+At every implicit trial, the two evolved moments determine an FD spectral fit:
+\begin{equation}
+ f_{s,i}=\frac{1}{\exp(\epsilon_i/T_{\nu,s}-\eta_s)+1},\qquad
+ n_s=\sum_i w_i f_{s,i},\qquad J_s=\sum_i w_i\epsilon_i f_{s,i}.
+ \label{eq:fit}
+\end{equation}
+$T_{\nu,s}$ and $\eta_s$ are fitted independently for each species. They need
+not equal the matter values. This is a spectral closure of grey M1 moments.
+For production and absorption kernels $R^p,R^a$ in $\mathrm{cm^3\,s^{-1}}$,
+\begin{align}
+ R^p_{ij}&=e^{-(\epsilon_i+\epsilon_j)/T}R^a_{ij},\\
+ I_{ij}&=w_iw_j\left[R^p_{ij}(1-f_i)(1-\bar f_j)-R^a_{ij}f_i\bar f_j\right],\\
+ \dot n_\nu=\dot n_{\bar\nu}&=r=\sum_{ij}I_{ij},\qquad
+ Q_\nu=\sum_{ij}\epsilon_i I_{ij},\qquad
+ Q_{\bar\nu}=\sum_{ij}\epsilon_j I_{ij}.
+ \label{eq:event}
+\end{align}
+Both partners therefore receive the same number increment. Pair reactions
+preserve their lepton-number difference and give no direct change in $Y_\mu$.
+For the tau aggregate, GRACE divides the moments by multiplicity two before
+the fit and restores that factor in the sources.
+
+The damping includes own-species Pauli blocking:
+\begin{equation}
+ j_i=\sum_jw_jR^p_{ij}(1-\bar f_j),\qquad
+ a_i=\sum_jw_jR^a_{ij}\bar f_j,\qquad
+ C_i=j_i-(j_i+a_i)f_i.
+\end{equation}
+With $L_E=\sum_iw_i\epsilon_i(j_i+a_i)f_i$, the isotropic-kernel M1 source is
+\begin{equation}
+ G^\alpha=Q u^\alpha-\lambda_E H^\alpha,\qquad \lambda_E=L_E/J.
+\end{equation}
+$H^\alpha$ is the fluid-frame radiation flux. Thus the transport opacity
+receives $\lambda_E/c$, in addition to ordinary absorption and scattering.
+GRACE stores this pair/decay transport contribution separately to avoid
+counting it again in the ordinary collision source.
+
+\textbf{Equilibrium.} Thermal pairs vanish for FD spectra at the matter
+temperature with $\mu_\nu+\mu_{\bar\nu}=0$. This is a family of equilibria.
+Pairs alone do not select nucleon beta equilibrium.
+
+\newpage
+\section{Muon decay and inverse decay}
+Both charge-conjugate reactions are included:
+\begin{equation}
+ \mu^-\rightleftharpoons e^-+\nu_\mu+\bar\nu_e,\qquad
+ \mu^+\rightleftharpoons e^++\bar\nu_\mu+\nu_e.
+\end{equation}
+Use $\sigma=+1$ for $\mu^-$ and $-1$ for $\mu^+$. Daughter 0 always has muon
+flavour, daughter 1 electron flavour. Define
+\begin{equation}
+ f_{\ell,\sigma}(E)=\left[e^{(E-\sigma\mu_\ell)/T}+1\right]^{-1},\qquad
+ \Delta_\sigma=\sigma(\mueff-\mu_e).
+\end{equation}
+Normally $\mueff=\mu_\mu^{\rm EOS}$. Section 3 gives the optional modification.
+
+\subsection{Optimized spectral approach}
+The finite-mass kernel integrates the tree-level amplitude
+\begin{equation}
+ \overline{|\mathcal M|^2}=64G_F^2(p_e\!\cdot q_0)(p_\mu\!\cdot q_1)
+\end{equation}
+over charged-lepton phase space and neutrino relative angle. Its matter factors are
+$f_\mu(E_e+\epsilon+\epsilon')[1-f_e(E_e)]$ for production and
+$f_e(E_e)[1-f_\mu(E_e+\epsilon+\epsilon')]$ for absorption.
+The positive sum $R^{\rm tot}=R^p+R^a$ is integrated first, then split stably:
+\begin{equation}
+ x=\frac{\epsilon+\epsilon'-\Delta_\sigma}{T},\qquad
+ R^p=\frac{R^{\rm tot}}{1+e^x},\qquad
+ R^a=\frac{R^{\rm tot}}{1+e^{-x}}.
+ \label{eq:balance}
+\end{equation}
+Bounded exponentials avoid overflow and preserve the inverse channel when
+forward decay is extremely small. Equations \eqref{eq:fit} and
+\eqref{eq:event} apply to each cross-flavour daughter pair.
+All four lepton-carrying neutrino species are solved together with ordinary
+rates and muonic thermal pairs.
+
+\textbf{What is optimized?} \code{leptonic_block_jacobian: true} uses analytic
+occupation derivatives during Newton Jacobian probes. For example,
+\begin{equation}
+ \frac{\partial I_{ij}}{\partial f_i}
+ =-w_iw_j\left[R^p_{ij}(1-f_j')+R^a_{ij}f_j'\right].
+\end{equation}
+The M1 closure and FD fit retain numerical probes. Acceptance uses the full
+nonlinear residual, with the original numerical solver as fallback.
+Optional \code{muon_decay_kernel_cache} and \code{thermal_pair_kernel_cache}
+reuse kernels only for exactly matching matter and grid inputs on CPU.
+These optimizations preserve the collision model and equilibrium conditions.
+
+\subsection{Lifetime-based \texttt{grey\_decay} approach}
+A 16-point Fermi-gas integral gives each charged-muon density $n_{\mu,\sigma}$
+and mean total energy $U_\sigma$. With $M=m_\mu$ and
+$\tau_\mu=2.197\,\mu\mathrm{s}$, the representative energies are
+\begin{equation}
+ \epsilon_0=0.35U_\sigma,\quad \epsilon_1=0.30U_\sigma,\quad
+ E_e=0.35U_\sigma,\qquad
+ A_0=\frac{n_{\mu,\sigma}}{f_{\mu,\sigma}(U_\sigma)}\frac{M}{U_\sigma\tau_\mu}.
+\end{equation}
+Writing $h=1-f$, the forward and inverse coefficients and event rate are
+\begin{align}
+ P&=A_0 f_\mu(U_\sigma)h_e(E_e),&
+ A&=A_0 h_\mu(U_\sigma)f_e(E_e),\\
+ r_\sigma&=P h_0(\epsilon_0)h_1(\epsilon_1)-A f_0(\epsilon_0)f_1(\epsilon_1),&
+ Q_a&=\epsilon_a r_\sigma.
+\end{align}
+Coefficients are computed logarithmically. The daughters use the actual fitted
+radiation spectra. $P/A=e^{-(\epsilon_0+\epsilon_1-\Delta_\sigma)/T}$ ensures
+chemical detailed balance. No spectral decay matrix or spectral fallback is used.
+The common-event solve and conservative feedback remain active. This is an
+experimental representative-energy approximation. Archived wider-domain tests
+found substantial rate errors and some wrong reaction signs relative to spectral
+decay, despite good energy conservation. Detailed balance does not establish
+the correct relaxation rate. The old spectral-interpolation prototype is obsolete.
+
+\newpage
+\section{Low \texorpdfstring{$Y_\mu$}{Ymu}, atmosphere and chemical potentials}
+\subsection{Thermodynamic consistency of reversible decay}
+Spectral and grey decay require the additive leptonic EOS with
+\code{dilute_muon_suppression: false}. In this configuration,
+\begin{equation}
+ P=P_b(\rho,T,Y_e+Y_\mu)+P_e(\rho,T,Y_e)+P_\mu(\rho,T,Y_\mu),
+\end{equation}
+with analogous sums for energy and entropy. The charged-lepton tables supply
+the chemical potentials. A small \emph{net} $Y_\mu$ does not imply that both
+thermal muon populations vanish.
+
+The historical suppression option instead sets muon thermodynamic contributions
+to zero at $Y_\mu\leq6\times10^{-4}$ and ramps $\mu_\mu$ from zero over
+$\Delta Y_\mu=5\times10^{-5}$. It belongs to the older vacuum-decay setup.
+Combining that suppressed bath with reversible spectral/grey decay is rejected.
+The old charged-muon rate gate is also disabled for these reversible modes.
+Thermal neutrino-pair kernels always bypass that abundance gate.
+
+\subsection{Optional dilute charged-current target correction}
+The current opt-in fix is \code{m1.eas.dilute_muon_cc_target: true}.
+Let $\mu_\mu^{\rm raw}$ denote the unsuppressed table value, $Y_0=6\times10^{-4}$,
+and $dY=5\times10^{-5}$. The implemented reaction potential is exactly
+\begin{equation}
+ \boxed{\mueff=\begin{cases}
+ \mu_\mu^{\rm raw},&\mu_\mu^{\rm raw}<\mu_e,\\[2pt]
+ \mu_e+(\mu_\mu^{\rm raw}-\mu_e)
+ \tanh\!\left[\dfrac{\max(Y_\mu-Y_0,0)}{dY}\right],
+ &\mu_\mu^{\rm raw}\geq\mu_e.
+ \end{cases}}
+\end{equation}
+On the demuonizing branch this approaches $\mu_e$ at the dilute floor, removing
+the positive offset $\mu_\mu-\mu_e$ there. It modifies the WeakHub muonic
+charged-current emissivity target while retaining the existing grey absorption
+averages. The \emph{same} $\mueff$ enters spectral and grey decay and their
+muon-neutrino equilibrium target. Otherwise charged-current reactions and decay
+would impose inconsistent chemical affinities.
+
+This is a phenomenological reaction-target regularization. It does not replace
+the EOS pressure or energy, and it is not an exact spectral reintegration of
+the WeakHub table. It requires a leptonic EOS, a noPP WeakHub table and
+\code{betaeq_policy: off}. It defaults to false. There is no explicit density
+factor in this formula, and it does not guarantee zero muon production at low
+$\rho,Y_\mu$. Inverse decay remains possible when both incoming neutrino
+partners are present. The branch $\mu_\mu^{\rm raw}<\mu_e$ is unchanged.
+
+\subsection{Atmosphere and numerical safeguards}
+For
+\begin{equation}
+ \rho<\rho_{\rm fl}(1+\mathrm{atmo\_tol}),
+\end{equation}
+EAS preparation skips the EOS and rate calculation, clears pair/decay activation
+and transport additions, and writes the ordinary numerical rate floors.
+This prevents active pair/decay microphysics in the designated atmosphere.
+It does not impose an additional cutoff throughout all low-density matter.
+
+Reversible modes restore the unclamped matter-based neutrino chemical potentials.
+They do not use the historical muon-neutrino degeneracy clamp to $\pm5$ or
+optical-depth suppression of those potentials. Stable logistic splitting,
+direct evaluation of Fermi holes and scaled dilute LTE ratios address numerical
+underflow without independently clipping the chemical affinities.
+EOS composition floors remain. A shared acceptance factor limits radiation and
+matter increments together when a composition or energy bound is reached.
+Optional \code{fermi_fofc} limits inadmissible transported radiation states. It
+is a realizability safeguard, not a switch suppressing muonization.
+
+\newpage
+\section{Beta equilibrium and conservative source update}
+\subsection{Which equilibrium is imposed?}
+All kernel pair modes require \code{m1.eas.betaeq_policy: off}.
+The chemical, timescale and Gieg-style beta-equilibrium remappings are therefore
+not applied. Physical equilibration proceeds through the ordinary charged-current
+sources and the pair/decay sources with matter backreaction.
+
+In GRACE's EOS convention, the equilibrium targets are
+\begin{align}
+ \mu_{\nu_e}^{\rm eq}&=\mu_e+\mu_p-\mu_n-Q_{np},\\
+ \mu_{\nu_\mu}^{\rm eq}&=\mueff+\mu_p-\mu_n-Q_{np},\qquad
+ \mu_{\bar\nu_\ell}^{\rm eq}=-\mu_{\nu_\ell}^{\rm eq}.
+\end{align}
+$Q_{np}$ is the neutron--proton mass difference in the code's table convention.
+These are ordinary-rate equilibrium targets, not prescribed chemical potentials
+for the evolving FD fits. The targets obey
+\begin{equation}
+ \mu_{\nu_\mu}^{\rm eq}+\mu_{\bar\nu_e}^{\rm eq}=\mueff-\mu_e,
+ \qquad
+ \mu_{\bar\nu_\mu}^{\rm eq}+\mu_{\nu_e}^{\rm eq}=-(\mueff-\mu_e),
+\end{equation}
+which are precisely the decay balance conditions in both spectral and grey
+decay. With the dilute correction enabled, equilibrium refers to this modified
+reaction potential. At transparent beta equilibrium the neutrino potentials
+vanish. In trapped matter they can be nonzero and depend on conserved lepton
+content. Decay alone enforces its cross-flavour chemical relation and does
+not determine nucleon beta equilibrium.
+
+\subsection{How the source step approaches equilibrium}
+The four species each carry $(E,F_x,F_y,F_z,N)$, giving the connected equation
+\begin{equation}
+ U^{+}-U^*=h\left[S_{\rm ordinary}(U^{+})+
+ S_{\rm thermal}(U^{+})+S_{\rm decay}(U^{+})\right].
+\end{equation}
+$h$ is the diagonal IMEX stage coefficient times the timestep. Matter and
+kernel inputs are fixed within this solve. Thermal tau pairs are updated
+separately. Without decay, each resolved thermal pair uses a ten-variable solve.
+Full residual checks, positivity, flux-cone and FD reconstruction checks remain
+active in the optimized implementation. Small number defects are projected onto
+reaction stoichiometry after removing the ordinary contribution, followed by
+another full residual check.
+
+For decay alone, its common rates imply
+\begin{equation}
+ n_b\dot Y_e=r_- -r_+,\qquad
+ n_b\dot Y_\mu=-r_-+r_+,\qquad \dot Y_e+\dot Y_\mu=0.
+\end{equation}
+In the code, feedback uses the actual radiation increments, including ordinary
+reactions. With $\Delta$ denoting new minus old densitized quantities,
+\begin{align}
+ \Delta\tau_{\rm matter}&=-\sum_s\Delta E_s,&
+ \Delta S_{i,\rm matter}&=-\sum_s\Delta F_{i,s},\\
+ \Delta(DY_e)&=-\Delta N_{\nu_e}+\Delta N_{\bar\nu_e},&
+ \Delta(DY_\mu)&=-\Delta N_{\nu_\mu}+\Delta N_{\bar\nu_\mu}.
+\end{align}
+$D$ is conserved baryon mass density and GRACE's $N$ includes the baryon-mass
+normalization. One common $0\leq\theta\leq1$ scales the connected matter and
+radiation increments at bounds. No separate $(m_\mu-m_e)r$ heating term is added,
+because the leptonic EOS already contains the charged-lepton rest energy.
+At $\theta<1$, exchange remains conservative but the accepted step is limited.
+This fixed-matter stage is not a simultaneous matter--radiation equilibrium solve
+at arbitrarily large stiffness.
+
+\vfill
+{\footnotesize\raggedright\textbf{Source map and scope.}
+Checked against the local code at the commit on page 1, not an inferred run
+configuration. Under \code{include/grace/physics/}: \code{neutrino_pair_collision.hh},
+\code{neutrino_muon_decay.hh}, \code{neutrino_grey_decay.hh},
+\code{neutrino_leptonic_update.hh}, \code{eas_policies.hh},
+\code{eas_neutrino_rates_analytic.hh}, \code{eas_kinds.hh}, \code{m1.hh}
+and \code{eos/leptonic_eos_4d.hh}. Defaults: \code{parameters/m1.yaml}.
+Further derivations: \code{doc/developer_guide/pair_processes.md} and
+\code{muon_decay.rst}. Grey-model comparison:
+\code{calea_hottov_comparison/grey_domain_status.rst} in the parent workspace.
+No simulation or new rate validation was performed for this note.\par}
+\end{document}
