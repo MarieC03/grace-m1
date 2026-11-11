@@ -519,8 +519,12 @@ Experimental dilute-target and lagged-partner options
 
 ``m1.eas.dilute_muon_cc_target: true`` regularizes the WeakHub muon CC
 emissivity target toward the electron chemical potential on the demuonizing
-branch, below Ymu=6e-4 with transition width 5e-5. It requires leptonic EOS,
-noPP WeakHub rates, and ``betaeq_policy: off``. The raw EOS chemical potential
+branch, below Ymu=6e-4 with transition width 5e-5 (Ng et al. 2026,
+arXiv:2610.36486, Eq. 20). It requires leptonic EOS and noPP WeakHub rates.
+With the standard rates the muon-flavour degeneracy used for blocking, for
+the Kirchhoff inversions and by the beta-equilibrium policy follows the same
+target, clamped to +/-5, so the option also runs with ``betaeq_policy:
+timescale``. The raw EOS chemical potential
 is still available for thermodynamic diagnostics. When spectral decay is
 active, its reaction potential and muon-neutrino target use this same
 regularized value: otherwise CC and decay impose incompatible affinities.

@@ -443,9 +443,8 @@ inline void check_m1_setup()
     if(get_param<bool>("m1","eas","dilute_muon_cc_target")) {
         if(get_param<std::string>("eos","eos_type")!="leptonic"
            || !get_eas_selection().contains(eas_kind_t::neutrino_weakhub)
-           || get_weakhub_table_content()!=weakhub_content_t::none
-           || get_betaeq_mode()!=betaeq_mode_t::off)
-            ERROR("dilute_muon_cc_target requires leptonic EOS, noPP WeakHub rates and betaeq_policy=off");
+           || get_weakhub_table_content()!=weakhub_content_t::none)
+            ERROR("dilute_muon_cc_target requires leptonic EOS and noPP WeakHub rates");
     }
     bool const decay=get_muon_decay();
     (void)get_pair_treatment();

@@ -995,6 +995,30 @@ std::array<double, 5 * NUMSPECIES> weakhub_rates_on_device(
 }  // namespace
 
 #if GRACE_M1_NU_SPECIES >= 5
+// Ng et al. 2026, Eq. 20 on the fugacity state: at the threshold the muon neutrino takes the electron
+// neutrino's equilibrium degeneracy; above it the table potential returns; eta_nu is clamped unless raw.
+TEST_CASE("Dilute muon target sets the muon-flavour degeneracy", "[m1rates][dilute]") {
+    using namespace nu_constants;
+    fugacity_state F; F.temp_mev=2.0; F.mu_e=20.0; F.mu_p=-30.0; F.mu_n=-12.0; F.eta_nu[NUMU]=-5; F.eta_nu[NUMUBAR]=5;
+    double const eta_e=(F.mu_e+F.mu_p-F.mu_n-Qnp)/F.temp_mev;
+    for(double ymu:{5.0e-4,6.0e-4}) {                       // floor and threshold: mu_mu = mu_e
+        F.ymu=ymu; set_dilute_muon_target(F,100.0,true,false);
+        REQUIRE(F.dilute_cc_target); REQUIRE(F.mu_mu_reaction==F.mu_e);
+        REQUIRE_THAT(F.eta_cc_mu,Catch::Matchers::WithinRel(eta_e,1e-14));
+        REQUIRE_THAT(F.eta_nu[NUMU],Catch::Matchers::WithinRel(eta_e,1e-14)); REQUIRE(F.eta_nu[NUMUBAR]==-F.eta_nu[NUMU]);
+    }
+    F.ymu=0.01; set_dilute_muon_target(F,100.0,true,false);  // resolved muons: table value, eta on the clamp
+    REQUIRE_THAT(F.mu_mu_reaction,Catch::Matchers::WithinRel(100.0,1e-12));
+    REQUIRE_THAT(F.eta_cc_mu,Catch::Matchers::WithinRel((100.0-18.0-Qnp)/2.0,1e-12));
+    REQUIRE(F.eta_nu[NUMU]==5.0); REQUIRE(F.eta_nu[NUMUBAR]==-5.0);
+    set_dilute_muon_target(F,100.0,true,true);               // raw: no clamp
+    REQUIRE(F.eta_nu[NUMU]==F.eta_cc_mu); REQUIRE(F.eta_nu[NUMUBAR]==-F.eta_cc_mu);
+    F.ymu=5.0e-4; set_dilute_muon_target(F,3.0,true,false);  // hot branch, table value below mu_e: unchanged
+    REQUIRE(F.mu_mu_reaction==3.0);
+    F.eta_nu[NUMU]=1.25; F.eta_nu[NUMUBAR]=-1.25; set_dilute_muon_target(F,100.0,false,false);
+    REQUIRE(F.eta_nu[NUMU]==1.25); REQUIRE(F.eta_nu[NUMUBAR]==-1.25);   // set_eta false leaves eta_nu alone
+}
+
 TEST_CASE("Dilute WeakHub CC target changes emission without removing absorption", "[m1rates][weakhub][dilute]") {
     using namespace nu_constants;
     mock_eos_t eos; tau_policy_analytic_density tau;

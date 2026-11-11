@@ -628,6 +628,19 @@ fugacity_state make_fugacity_state(
     return F;
     }
 
+// Dilute-muon target (Ng et al. 2026, arXiv:2610.36486, Eq. 20) on a fugacity state: the muon potential the
+// rates see goes to mu_e at the Ymu threshold.  eta_cc_mu (unclamped) is the charged-current emission target;
+// eta_nu of the muon flavours follows it, clamped to +-5 unless `raw` (the grey Kirchhoff inversions need a bound).
+GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
+void set_dilute_muon_target(fugacity_state& F, double raw_mumu, bool set_eta, bool raw) {
+    F.dilute_cc_target = true ;
+    F.mu_mu_reaction = dilute_muon_cc_potential(raw_mumu, F.mu_e, F.ymu) ;
+    F.eta_cc_mu = (F.mu_mu_reaction + F.mu_p - F.mu_n - nu_constants::Qnp) / F.temp_mev ;
+    if ( !set_eta ) return ;
+    double const eta = raw ? F.eta_cc_mu : Kokkos::fmin(Kokkos::fmax(F.eta_cc_mu, -5.0), 5.0) ;
+    F.eta_nu[NUMU] = eta ; F.eta_nu[NUMUBAR] = -eta ;
+}
+
 // -----------------------------------------------------------------------------
 // Microphysics kernels (analytic rates)
 // All rates are returned in units:

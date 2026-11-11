@@ -656,8 +656,13 @@ struct neutrinos_eas_op
         if (!::isfinite(eps)) return false ;
         const double e = rho_code * (1.0 + eps) ;
 
-        fugacity_state const Ft = make_fugacity_state(
+        fugacity_state Ft = make_fugacity_state(
             eos, rho_code, T_t, Ye_t, Ymu_t, mass_scale, xyz, tauf) ;
+        // Same muon target as the rates pass, or the equilibrium and the emission would disagree.
+        if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
+            if ( dilute_cc_target )
+                set_dilute_muon_target(Ft, eos.raw_mumu__temp_rho_ye_ymu(T_t, rho_code, Ye_t, Ymu_t), true, false) ;
+        }
 
         f[0] = Ye_t + eq_nu_number_fraction(Ft, NUE)
                     - eq_nu_number_fraction(Ft, NUEBAR) - Yle ;
@@ -1344,15 +1349,10 @@ struct neutrinos_eas_op
             #endif
             if constexpr(std::is_same_v<eos_t,leptonic_eos_4d_t>) {
                 if(dilute_cc_target) {
-                    double const raw=eos.raw_mumu__temp_rho_ye_ymu(T,rho,Ye,Ymu);
-                    double const mu=dilute_muon_cc_potential(raw,F.mu_e,Ymu);
-                    F.dilute_cc_target=true;
-                    F.mu_mu_reaction=mu;
-                    F.eta_cc_mu=(mu+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
-                    if(muon_decay) {
-                        F.eta_nu[NUMU]=F.eta_cc_mu;
-                        F.eta_nu[NUMUBAR]=-F.eta_cc_mu;
-                    }
+                    // Spectral decay: raw eta.  Standard rates (also under the vacuum sink): clamped eta.
+                    // Kernel pairs without decay keep their own eta.
+                    set_dilute_muon_target(F, eos.raw_mumu__temp_rho_ye_ymu(T,rho,Ye,Ymu),
+                                           muon_decay || standard || vacuum_muon_decay, muon_decay);
                 }
             }
             bool const apply_muon_gate=standard || !muon_decay;

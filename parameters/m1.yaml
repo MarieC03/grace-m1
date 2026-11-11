@@ -263,11 +263,13 @@ m1:
       type: bool
       default: false
       description: >
-        Experimental WeakHub CC target regularization toward mu_e at Ymu=6e-4,
-        with width 5e-5. Spectral decay uses the same effective reaction potential
-        so its chemical affinity agrees with CC. Raw EOS thermodynamics remain
-        available separately. Thermal pair kernels use their own detailed balance.
-        Requires a leptonic EOS, a noPP table and betaeq_policy=off.
+        Dilute-muon target of Ng et al. 2026 (arXiv:2610.36486, Eq. 20): the muon
+        potential the rates see is blended to mu_e at Ymu=6e-4 (width 5e-5), so
+        demuonised matter rests in the neutrinoless equilibrium. The WeakHub muon CC
+        emission uses the unclamped target; the muon-flavour eta of the standard
+        rates and of the beta-equilibrium policy follows it, clamped to +-5.
+        Spectral decay uses the same potential, unclamped. EOS thermodynamics are
+        unchanged. Requires a leptonic EOS and a noPP table.
 
     muon_decay_treatment:
       type: keyword
