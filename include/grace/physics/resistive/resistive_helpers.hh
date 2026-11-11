@@ -38,8 +38,8 @@
  * Follows Tenet2026 v2.
  * */
 struct resistive_params_t {
-    double eta0;     //!< Peak Resistivity
-    double eta_f;    //!< Lowest resistivity value
+    double res_0;     //!< Peak Resistivity
+    double res_f;    //!< Lowest resistivity value
     double rho_th;   //!< Critical transition density (see Tenet2026 v2 fig. 4)
     double lambda;   //!< Logaritmic width for the resistivity profile
 } ;
@@ -51,8 +51,8 @@ resistive_params_t get_resistive_params()
 {
     resistive_params_t resistive_params;
 
-    resistive_params.eta0   = grace::get_param<double>("resistive", "eta0");
-    resistive_params.eta_f  = grace::get_param<double>("resistive", "eta_f");
+    resistive_params.res_0   = grace::get_param<double>("resistive", "res_0");
+    resistive_params.res_f  = grace::get_param<double>("resistive", "res_f");
     resistive_params.rho_th = grace::get_param<double>("resistive", "rho_th");
     resistive_params.lambda = grace::get_param<double>("resistive", "lambda");
 
@@ -66,12 +66,12 @@ namespace grace {
  * */
 GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
 compute_eta(double const rho, resistive_params_t const& resistive_params){
-    double const eta0   = resistive_params.eta0;
-    double const eta_f  = resistive_params.eta_f;
+    double const res_0   = resistive_params.res_0;
+    double const res_f  = resistive_params.res_f;
     double const rho_th = resistive_params.rho_th;
     double const lambda = resistive_params.lambda;
 
-    double const eta    = ((eta0 - eta_f) / 2) * (1 + Kokkos::tanh(Kokkos::log10(rho / rho_th) / lambda));
+    double const eta    = ((res_0 - res_f) / 2) * (1 + Kokkos::tanh(Kokkos::log10(rho / rho_th) / lambda));
 
     return eta;
 }
