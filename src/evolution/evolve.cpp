@@ -25,6 +25,8 @@
  *
  */
 
+#include "grace/data_structures/variables.hh"
+#include "grace/utils/metric_utils.hh"
 #include <grace_config.h>
 
 #include <limits>
@@ -1790,9 +1792,14 @@ void update_CT(
     DECLARE_GRID_EXTENTS ;
     //**************************************************************************************************/
     // fetch some stuff
-    auto& idx     = grace::variable_list::get().getinvspacings() ;
-    auto& emf  = grace::variable_list::get().getemfarray() ;
+    auto& idx   = grace::variable_list::get().getinvspacings() ;
+    auto& emf   = grace::variable_list::get().getemfarray() ;
+#ifdef GRACE_ENABLE_RESISTIVE
+    auto& aux   = grace::variable_list::get().getaux();
+    auto& state = grace::variable_list::get().getstate();
+#endif //GRACE_ENABLE_RESISTIVE
     //**************************************************************************************************/
+    //
     // loop ranges
     auto advance_stag_policy_x =
         MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> (
@@ -1814,12 +1821,43 @@ void update_CT(
                 , advance_stag_policy_x
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
+#ifdef GRACE_ENABLE_RESISTIVE
+        metric_array_t  g     = FILL_METRIC_ARRAY(g, state, q, VEC(i,j,k)); // cell centred metric
+
+        auto const Bu_NW   = { 0.0,
+                            aux(VEC(i,j,k), BX_, q),
+                            aux(VEC(i,j,k), BY_, q),
+                            aux(VEC(i,j,k), BZ_, q)
+                           }; // B^mu
+        auto const Bu_NE   = { 0.0,
+                            aux(VEC(i,j,k), BX_, q),
+                            aux(VEC(i,j,k), BY_, q),
+                            aux(VEC(i,j,k), BZ_, q)
+                           }; // B^mu
+        auto const Bu_SE   = { 0.0,
+                            aux(VEC(i,j,k), BX_, q),
+                            aux(VEC(i,j,k), BY_, q),
+                            aux(VEC(i,j,k), BZ_, q)
+                           }; // B^mu
+        auto const Bu_SW   = { 0.0,
+                            aux(VEC(i,j,k), BX_, q),
+                            aux(VEC(i,j,k), BY_, q),
+                            aux(VEC(i,j,k), BZ_, q)
+                           }; // B^mu
+#endif //GRACE_ENABLE_RESISTIVE
         // d/dt B^x_i-1/2,j,k = d/dz E^y - d/dy E^z
         //                    = 1/dz (E^y_{i-1/2,j,k+1/2}-E^y_{i-1/2,j,k-1/2})
         //                    + 1/dy (E^z_{i-1/2,j-1/2,k}-E^z_{i-1/2,j+1/2,k})
         new_stag_state.face_staggered_fields_x(VEC(i,j,k),BSX_,q) += dt * dtfact * (
             (emf(VEC(i,j,k+1),1,q)-emf(VEC(i,j,k),1,q)) * idx(2,q)
           + (emf(VEC(i,j,k),2,q)-emf(VEC(i,j+1,k),2,q)) * idx(1,q)
+#ifdef GRACE_ENABLE_RESISTIVE
+        //                    + alp * res * (
+        //                                  1/dz (E1^y_{i-1/2,j,k+1/2}-E1^y_{i-1/2,j,k-1/2})
+        //                                  + 1/dy (E1^z_{i-1/2,j-1/2,k}-E1^z_{i-1/2,j+1/2,k})
+        //                                  )
+)
+#endif //GRACE_ENABLE_RESISTIVE
         )  ;
     } ) ;
     //**************************************************************************************************/
