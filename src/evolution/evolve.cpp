@@ -629,6 +629,10 @@ void evolve_impl() {
  * the geometry compute_fluxes used.
  */
 #ifdef GRACE_ENABLE_FOFC
+// M1 atmosphere skip in flag_fofc_cells: 0 off, 1 neighbour at the floor, 2 whole stencil at the floor.
+#ifndef GRACE_FOFC_M1_SKIP
+#define GRACE_FOFC_M1_SKIP 0
+#endif
 template< typename eos_t >
 void flag_fofc_cells(
     double const t, double const dt, double const dtfact
@@ -681,6 +685,8 @@ void flag_fofc_cells(
     // above any realistic lapse triggers the lenient branch unconditionally.
     c2p_pars.alp_bh_thresh = 1e30 ;
     auto dcoords  = grace::coordinate_system::get().get_device_coord_system() ;
+    // Density below which c2p resets a cell to atmosphere (same test as conservs_to_prims).
+    double const rho_atmo_thr = atmo.rho_fl * (1.0 + atmo.atmo_tol) ;
 
     // Per-substep reset of the face/edge tag views.
     Kokkos::deep_copy(fofc_faces,    int{0}) ;
@@ -795,6 +801,8 @@ void flag_fofc_cells(
         double rtp[3] ;
         dcoords.get_physical_coordinates_sph(i,j,k,q,rtp) ;
 
+        double const D_tent = cons[DENSL] / metric.sqrtg() ;   // the dry run rescales cons in place
+
         grmhd_prims_array_t prims{} ;
         c2p_err_t c2p_errors ;
         bool const floored = conservs_to_prims<eos_t>(
@@ -814,13 +822,20 @@ void flag_fofc_cells(
             uint64_t prev_err = static_cast<uint64_t>(aux(VEC(i,j,k), C2P_ERR_, q)) ;
             aux(VEC(i,j,k), C2P_ERR_, q) = static_cast<double>(prev_err | fofc_bits) ;
 
-            // 6 faces touching cell (i,j,k):
-            Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), int8_t{1});  // -x face
-            Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), int8_t{1});  // +x face
-            Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 1, q), int8_t{1});  // -y
-            Kokkos::atomic_or(&fofc_faces(VEC(i,  j+1,k  ), 1, q), int8_t{1});  // +y
-            Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 2, q), int8_t{1});  // -z
-            Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k+1), 2, q), int8_t{1});  // +z
+            // Quiet cell: atmosphere before and after the substep, it is reset whatever its fluxes.
+            // It tags only the faces it shares with matter; any other cell tags all 6 faces.
+            bool const quiet = !dmp_violated && D_tent < rho_atmo_thr
+                && new_state(VEC(i,j,k),DENS_,q) < rho_atmo_thr * metric.sqrtg() ;
+            auto const tag = [&] (VEC(int fi,int fj,int fk), int dir, VEC(int ni,int nj,int nk)) {
+                if ( !quiet || aux(VEC(ni,nj,nk),RHO_,q) >= rho_atmo_thr )
+                    Kokkos::atomic_or(&fofc_faces(VEC(fi,fj,fk), dir, q), int8_t{1}) ;
+            } ;
+            tag(VEC(i,  j,  k  ), 0, VEC(i-1,j,  k  )) ;  // -x face, neighbour across it
+            tag(VEC(i+1,j,  k  ), 0, VEC(i+1,j,  k  )) ;  // +x face
+            tag(VEC(i,  j,  k  ), 1, VEC(i,  j-1,k  )) ;  // -y
+            tag(VEC(i,  j+1,k  ), 1, VEC(i,  j+1,k  )) ;  // +y
+            tag(VEC(i,  j,  k  ), 2, VEC(i,  j,  k-1)) ;  // -z
+            tag(VEC(i,  j,  k+1), 2, VEC(i,  j,  k+1)) ;  // +z
 
 #ifdef GRACE_FOFC_CORRECT_EMF
             // 12 edges touching cell (i,j,k):  only flagged when the CT edge-EMF
@@ -871,7 +886,8 @@ void flag_fofc_cells(
                     EXPR( ( fluxes(VEC(i,j,k),iN,0,q)-fluxes(VEC(i+1,j,k),iN,0,q) )*idx(0,q)
                         , + ( fluxes(VEC(i,j,k),iN,1,q)-fluxes(VEC(i,j+1,k),iN,1,q) )*idx(1,q)
                         , + ( fluxes(VEC(i,j,k),iN,2,q)-fluxes(VEC(i,j,k+1),iN,2,q) )*idx(2,q))) ;
-                bool needs_correction=E_tent < E_atmo_cons || N_tent < N_atmo_cons;
+                bool const below_floor=E_tent < E_atmo_cons || N_tent < N_atmo_cons;
+                bool needs_correction=below_floor;
                 #ifdef GRACE_M1_PAIR_KERNELS
                 if(fermi_fofc && !needs_correction) {
                     m1_prims_array_t predicted{};
@@ -894,12 +910,29 @@ void flag_fofc_cells(
                 #endif
                 if (needs_correction) {
                     int const bit = 1 << (s + 1) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 0, q), bit) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i+1,j,  k  ), 0, q), bit) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 1, q), bit) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j+1,k  ), 1, q), bit) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k  ), 2, q), bit) ;
-                    Kokkos::atomic_or(&fofc_faces(VEC(i,  j,  k+1), 2, q), bit) ;
+                    // Quiet cell: at the radiation floor before and after, it is reset whatever its fluxes.
+                    // It skips a face whose other cells are at the floor too (2x covers the radial floor slope):
+                    // the neighbour (GRACE_FOFC_M1_SKIP 1) or all cells the reconstruction reads, 3 a side (2).
+                    bool const quiet = (GRACE_FOFC_M1_SKIP > 0) && below_floor
+                        && new_state(VEC(i,j,k),iE,q) <= E_atmo_cons && new_state(VEC(i,j,k),iN,q) <= N_atmo_cons ;
+                    auto const at_floor = [&] (VEC(int ni,int nj,int nk)) {
+                        return new_state(VEC(ni,nj,nk),iE,q) <= 2.0*E_atmo_cons
+                            && new_state(VEC(ni,nj,nk),iN,q) <= 2.0*N_atmo_cons ;
+                    } ;
+                    auto const tag = [&] (VEC(int fi,int fj,int fk), int dir, int sgn) {
+                        bool skip = quiet ;
+                        for ( int m = (GRACE_FOFC_M1_SKIP == 2 ? -2 : 1); skip && m <= (GRACE_FOFC_M1_SKIP == 2 ? 3 : 1); ++m )
+                            if ( m != 0 ) skip = at_floor(VEC( i + sgn*m*utils::delta(0,dir)
+                                                             , j + sgn*m*utils::delta(1,dir)
+                                                             , k + sgn*m*utils::delta(2,dir) )) ;
+                        if ( !skip ) Kokkos::atomic_or(&fofc_faces(VEC(fi,fj,fk), dir, q), bit) ;
+                    } ;
+                    tag(VEC(i,  j,  k  ), 0, -1) ;   // face on the -x side of the cell
+                    tag(VEC(i+1,j,  k  ), 0, +1) ;
+                    tag(VEC(i,  j,  k  ), 1, -1) ;
+                    tag(VEC(i,  j+1,k  ), 1, +1) ;
+                    tag(VEC(i,  j,  k  ), 2, -1) ;
+                    tag(VEC(i,  j,  k+1), 2, +1) ;
                 }
             }
         }
