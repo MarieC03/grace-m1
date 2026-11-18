@@ -211,7 +211,7 @@ struct grid_interpolator_t<poly_kind::lagrange, Order> {
         auto iweights   = interp_weights;
         auto istencils  = interp_stencils;
 
-        MDRangePolicy<Rank<2>> policy({0,0}, {npoints, static_cast<long>(nvars)});
+        MDRangePolicy<Rank<2>> policy({0,0}, {static_cast<long>(npoints), static_cast<long>(nvars)});
         parallel_for(
             GRACE_EXECUTION_TAG("IO", "interp_to_sphere"),
             policy,
@@ -655,7 +655,7 @@ struct grid_interpolator_t<poly_kind::hermite, Degree> {
         auto qs_d   = query_states;
         bool const grad_flag = want_grad;
 
-        MDRangePolicy<Rank<2>> policy({0,0}, {npoints, static_cast<long>(nvars)});
+        MDRangePolicy<Rank<2>> policy({0,0}, {static_cast<long>(npoints), static_cast<long>(nvars)});
         parallel_for(
             GRACE_EXECUTION_TAG("IO", "interp_hermite_to_sphere"),
             policy,

@@ -248,9 +248,9 @@ gpu_task_t make_copy(
         { static_cast<long>(0),
           static_cast<long>(0),
           static_cast<long>(0),
-          0,
-          0
-        }, 
+          0L,
+          0L
+        },
         { static_cast<long>(nx+s[0]+2*ngz),
           static_cast<long>(ny+s[1]+2*ngz),
           static_cast<long>(nz+s[2]+2*ngz),
