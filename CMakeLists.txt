@@ -105,6 +105,11 @@ endif()
 
 include(setup_mpi)
 find_package(OpenMP REQUIRED)
+# CMake <= 4.4 cannot parse the split "-l omp" of ROCm 10.1's clang -> no OpenMP library found.
+# Then link through the compiler driver, which adds its own matching libomp.
+if(OpenMP_CXX_FLAGS AND NOT OpenMP_CXX_LIBRARIES)
+    set_property(TARGET OpenMP::OpenMP_CXX APPEND PROPERTY INTERFACE_LINK_OPTIONS "SHELL:${OpenMP_CXX_FLAGS}")
+endif()
 include(setup_p4est)
 # P4_TO_P8 is added HERE, AFTER the (potentially-bundled) p4est subdirectory
 # is consumed, so its 2D source files compile cleanly.  Targets registered
