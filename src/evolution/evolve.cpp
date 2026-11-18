@@ -631,7 +631,7 @@ void evolve_impl() {
 #ifdef GRACE_ENABLE_FOFC
 // M1 atmosphere skip in flag_fofc_cells: 0 off, 1 neighbour at the floor, 2 whole stencil at the floor.
 #ifndef GRACE_FOFC_M1_SKIP
-#define GRACE_FOFC_M1_SKIP 0
+#define GRACE_FOFC_M1_SKIP 2
 #endif
 template< typename eos_t >
 void flag_fofc_cells(
