@@ -243,9 +243,10 @@ message(STATUS "Reconstructor: ${GRACE_RECONSTRUCTION} (${GRACE_RECONSTRUCTION_T
 
 # M1 (radiation) reconstructor, chosen independently of the GRMHD one; same choices.
 # MC2 (default): TVD, keeps a beam's face flux factor at 1, clips the smooth extrema that sit on
-# reflection planes (first cell layer starved of free-streaming radiation).  MP5 / WENOZ keep those
-# extrema but can leave the face states unrealizable (|F| > E, E < 0 at smooth extrema: NaN seen in
-# the moving-fluid beam, curved-beam and shadow tests); no face guard is applied -- use with care.
+# reflection planes (first cell layer starved of free-streaming radiation).  WENOZ keeps those extrema
+# (more accurate on smooth problems; smears 2-cell beams, leaks into shadows).  MP5 can leave the face
+# states unrealizable (|F| > E, E < 0: NaN in the moving-fluid beam, curved-beam and shadow tests);
+# no face guard is applied -- use MP5 with care.
 set(GRACE_M1_RECONSTRUCTION "MC2" CACHE STRING
     "Spatial reconstructor of the M1 radiation fluxes (MC2|MP5|WENOZ|MINMOD|DONOR_CELL)")
 set_property(CACHE GRACE_M1_RECONSTRUCTION PROPERTY STRINGS
