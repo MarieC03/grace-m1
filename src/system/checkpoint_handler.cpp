@@ -40,7 +40,7 @@
 #include <grace/IO/hdf5_output.hh>
 #include <grace/coordinates/coordinate_systems.hh>
 #include <grace/coordinates/coordinates.hh>
-#include <grace/profiling/profiling_runtime.hh>
+#include <grace/profiling/profiling.hh>
 #include <grace/data_structures/variables.hh>
 #include <grace/system/grace_runtime.hh>
 #include <grace/system/runtime_functions.hh>

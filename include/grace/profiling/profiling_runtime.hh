@@ -29,6 +29,8 @@
 
 #include <grace_config.h>
 
+#ifdef GRACE_ENABLE_PROFILING
+
 #include <grace/utils/grace_utils.hh>
 #include <grace/profiling/profiling.hh>
 #include <grace/parallel/mpi_wrappers.hh>
@@ -282,5 +284,6 @@ using profiling_runtime = utils::singleton_holder<profiling_runtime_impl_t, memo
 //*********************************************************************************************************************
 } /* namespace grace */
 
+#endif /* GRACE_ENABLE_PROFILING */
 
 #endif /* GRACE_PROFILING_PROFILING_RUNTIME_HH */

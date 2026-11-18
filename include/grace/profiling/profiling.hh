@@ -29,13 +29,13 @@
 
 #include <grace_config.h>
 #include <grace/utils/grace_utils.hh>
-#include <grace/profiling/gpu_profiling.hh>
-#include <grace/profiling/profiling_runtime.hh>
 
 #include <Kokkos_Core.hpp>
 //*********************************************************************************************************************
 //*********************************************************************************************************************
 #ifdef GRACE_ENABLE_PROFILING
+#include <grace/profiling/gpu_profiling.hh>
+#include <grace/profiling/profiling_runtime.hh>
 //*********************************************************************************************************************
 #define GRACE_KOKKOS_PROFILING_PUSH_REGION(name) Kokkos::Profiling::pushRegion(name)
 //*********************************************************************************************************************
