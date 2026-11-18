@@ -2039,6 +2039,8 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                     , var_array_t const& leptonic_seed )
 {/*to do*/
     (void)leptonic_seed;
+    // Profiling region: the implicit M1 step (collisions, pairs, backreaction); popped at the end.
+    Kokkos::Profiling::pushRegion("M1") ;
 
     DECLARE_GRID_EXTENTS ;
 
@@ -2098,6 +2100,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     // Separate small-tile launch: do not impose the ordinary 256-thread
     // source kernel's GPU launch bounds on the spectral kernel scratch space.
     if(m1_is_active() && evolved_pairs) {
+        Kokkos::Profiling::pushRegion("pair") ;
         m1_eq_system.pair_failures.allocate();
         #if GRACE_M1_NU_SPECIES >= 5
         pairs::grid_rule pair_grid_rule{};
@@ -2131,6 +2134,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
             });
         check_pair_failures(m1_eq_system.pair_failures,old_state,aux,"implicit",dt*dtfact);
         trace_pair_moments(new_state,"source-after-pairs",0,dtfact);
+        Kokkos::Profiling::popRegion() ;   // "pair"
     }
     #endif
     #else
@@ -2219,6 +2223,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
         },audit);
     source_profile::write_budget(parallel::mpi_comm_rank(),t,dt*dtfact,audit);
     #endif
+    Kokkos::Profiling::popRegion() ;   // "M1"
 }
 
 
@@ -2273,7 +2278,10 @@ void advance_substep( double const t, double const dt, double const dtfact
     // (tau -> ghost exchange -> kappa, as in Cactus frankfurt_m1).
     if ( m1_is_active() && get_tau_policy_kind() == tau_policy_kind_t::eikonal ) {
         auto& aux = grace::variable_list::get().getaux() ;
+        // Profiling region; the ghost exchange of tau happens later, outside it.
+        Kokkos::Profiling::pushRegion("optical_depth") ;
         update_m1_optical_depth(old_state, new_state, aux) ;
+        Kokkos::Profiling::popRegion() ;   // "optical_depth"
     }
     #endif
     //**************************************************************************************************/

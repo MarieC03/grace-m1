@@ -510,6 +510,8 @@ void set_m1_eas(
     using namespace Kokkos ;
 
     DECLARE_GRID_EXTENTS ;
+    // Profiling region, popped before the idle return and at the end.
+    Kokkos::Profiling::pushRegion("eas") ;
 
     // M1 idle (trigger not fired): no EOS, no rates.  A store-only pass gives every
     // EAS field its transparent-cell floor, so the output is not stale memory.
@@ -527,6 +529,7 @@ void set_m1_eas(
                 aux(VEC(i,j,k),KAPPASPH_,q) = f ;
                 #endif
             });
+        Kokkos::Profiling::popRegion() ;   // "eas"
         return ;
     }
 
@@ -616,11 +619,13 @@ void set_m1_eas(
             };
         #ifdef GRACE_M1_PAIR_KERNELS
         if(pair_mode!=pair_treatment_t::standard) {
+            Kokkos::Profiling::pushRegion("pair") ;
             // Small tiles: the spectral kernel scratch must not inherit the EAS launch bounds.
             MDRangePolicy<Rank<GRACE_NSPACEDIM+1>> pair_policy(
                 {VEC(0,0,0),0},{VEC(nx+2*ngz,ny+2*ngz,nz+2*ngz),nq},{VEC(4,2,2),1});
             parallel_for(GRACE_EXECUTION_TAG("EVOL","compute_pair_eas"),pair_policy,evaluate);
             check_pair_failures(op.pair_failures,state,aux,"transport");
+            Kokkos::Profiling::popRegion() ;   // "pair"
             break ;
         }
         #else
@@ -644,6 +649,7 @@ void set_m1_eas(
     }
     // No default: get_eas_kind() validates the string, and -Wswitch flags
     // any enumerator added without a case here.
+    Kokkos::Profiling::popRegion() ;   // "eas"
 }
 
 // Straight beam (also the shadow's driver) with the m1.straight_beam_test geometry.
