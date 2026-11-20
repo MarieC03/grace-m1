@@ -241,6 +241,14 @@ if(GRACE_M1_NU_SPECIES EQUAL 5)
 endif()
 endif()
 
+if ( GRACE_ENABLE_RESISTIVE )
+    # edge_interp_2
+    add_kokkos_test(resistive_helpers_test test_resistive_helpers.cpp)
+    add_test(NAME resistive_helpers_test COMMAND mpirun -n 1 ./resistive_helpers_test)
+    set_tests_properties(resistive_helpers_test PROPERTIES LABELS "fast"
+        ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
+endif()
+
 # All four kokkos_tests_main-using binaries link MPI (via grace_parallel /
 # grace_singleton transitive deps) and call `parallel::mpi_init` at
 # startup; launch via `mpirun -n 1` so the OpenMPI runtime is set up

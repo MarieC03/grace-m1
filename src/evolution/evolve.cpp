@@ -1794,10 +1794,12 @@ void update_CT(
     // fetch some stuff
     auto& idx   = grace::variable_list::get().getinvspacings() ;
     auto& emf   = grace::variable_list::get().getemfarray() ;
-#ifdef GRACE_ENABLE_RESISTIVE
+
+//#ifdef GRACE_ENABLE_RESISTIVE
     auto& aux   = grace::variable_list::get().getaux();
     auto& state = grace::variable_list::get().getstate();
-#endif //GRACE_ENABLE_RESISTIVE
+//#endif //GRACE_ENABLE_RESISTIVE
+
     //**************************************************************************************************/
     //
     // loop ranges
@@ -1821,7 +1823,7 @@ void update_CT(
                 , advance_stag_policy_x
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
-#ifdef GRACE_ENABLE_RESISTIVE
+//#ifdef GRACE_ENABLE_RESISTIVE
         metric_array_t  g     = FILL_METRIC_ARRAY(g, state, q, VEC(i,j,k)); // cell centred metric
 
         auto const Bu_NW   = { 0.0,
@@ -1844,7 +1846,14 @@ void update_CT(
                             aux(VEC(i,j,k), BY_, q),
                             aux(VEC(i,j,k), BZ_, q)
                            }; // B^mu
-#endif //GRACE_ENABLE_RESISTIVE
+
+        /* Need to supply following on edges:
+	double alp,
+	const double Bd[4],
+	const double wd[4],
+	double (*sqrtgF)[6]
+        */
+//#endif //GRACE_ENABLE_RESISTIVE
         // d/dt B^x_i-1/2,j,k = d/dz E^y - d/dy E^z
         //                    = 1/dz (E^y_{i-1/2,j,k+1/2}-E^y_{i-1/2,j,k-1/2})
         //                    + 1/dy (E^z_{i-1/2,j-1/2,k}-E^z_{i-1/2,j+1/2,k})
@@ -1856,7 +1865,6 @@ void update_CT(
         //                                  1/dz (E1^y_{i-1/2,j,k+1/2}-E1^y_{i-1/2,j,k-1/2})
         //                                  + 1/dy (E1^z_{i-1/2,j-1/2,k}-E1^z_{i-1/2,j+1/2,k})
         //                                  )
-)
 #endif //GRACE_ENABLE_RESISTIVE
         )  ;
     } ) ;

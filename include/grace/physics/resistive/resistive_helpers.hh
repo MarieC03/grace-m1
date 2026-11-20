@@ -28,6 +28,7 @@
 #define GRACE_PHYSICS_RES_HELPERS_HH
 
 #include "Kokkos_MathematicalFunctions.hpp"
+#include "grace/utils/grace_utils.hh"
 #include "grace/utils/inline.h"
 #include "grace/utils/math.hh"
 #include <grace_config.h>
@@ -62,18 +63,47 @@ resistive_params_t get_resistive_params()
 namespace grace {
 
 /**
- * @brief Device function for resistivity eta following Tenes2026 v2 eq. 46.
+ * @brief Device function for resistivity res following Tenes2026 v2 eq. 46.
  * */
 GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
-compute_eta(double const rho, resistive_params_t const& resistive_params){
+compute_res(double const rho, resistive_params_t const& resistive_params){
     double const res_0   = resistive_params.res_0;
     double const res_f  = resistive_params.res_f;
     double const rho_th = resistive_params.rho_th;
     double const lambda = resistive_params.lambda;
 
-    double const eta    = ((res_0 - res_f) / 2) * (1 + Kokkos::tanh(Kokkos::log10(rho / rho_th) / lambda));
+    double const res    = ((res_0 - res_f) / 2) * (1 + Kokkos::tanh(Kokkos::log10(rho / rho_th) / lambda));
 
-    return eta;
+    return res;
+}
+
+/**
+ * @brief Device function for second oder averaging onto edges 
+ * using 4 cell centred values along direction idir. 
+ * Returns following:
+ * idir = 0 (i): lower edge along j
+ * idir = 1 (j): lower edge along k
+ * idir = 2 (k): lower edge along i
+ * */
+template <typename View>
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
+edge_interp_2(View const& view,
+               VEC(int const i, int const j, int const k),
+               int const ivar, int const q, int const idir) {
+    int const di = utils::delta(0, idir);
+    int const dj = utils::delta(1, idir);
+#ifdef GRACE_3D
+    int const dk = utils::delta(2, idir);
+#elif 
+    int const dk = 0;
+#endif
+
+    double const view_1 = view(VEC(i , j, k), ivar, q);
+    double const view_2 = view(VEC(i - di, j - dj, k - dk), ivar, q);
+    double const view_3 = view(VEC(i - di - dj, j - dj - dk, k - dk - di), ivar, q);
+    double const view_4 = view(VEC(i - dj, j - dk, k - di), ivar, q);
+
+    return 0.25 * (view_1 + view_2 + view_3 + view_4);
 }
 
 }
