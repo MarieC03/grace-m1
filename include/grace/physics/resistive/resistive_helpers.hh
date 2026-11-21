@@ -95,7 +95,7 @@ edge_interp_2(View const& view,
 #ifdef GRACE_3D
     int const dk = utils::delta(2, idir);
 #elif 
-    int const dk = 0;
+    int constexpr dk = 0;
 #endif
 
     double const view_1 = view(VEC(i , j, k), ivar, q);
