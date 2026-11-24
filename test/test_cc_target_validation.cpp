@@ -37,11 +37,11 @@ void spectrum(grid const& g,double T,double eta,double* f,double* shape) {
     shape[0]=-eta;shape[1]=1/T;
     for(int i=0;i<g.n;++i) f[i]=occupation(g.e[i]/T-eta);
 }
-std::vector<state> states() {
+std::vector<state> states(double ymu_floor) {
     std::vector<state> v;
     for(double rho:{1e8,1e9,1e10,1e11,1e12,1e13,1e14,1e15})
     for(double T:{.5,1.,3.,5.,10.,20.,40.,80.})
-    for(double ym:{.0005,.00055,.0006,.000625,.00065,.0008,.001,.01,.05,.1})
+    for(double ym:{ymu_floor,.00055,.0006,.000625,.00065,.0008,.001,.01,.05,.1})
     for(double ye:{.05,.15,.3}) v.push_back({rho*nu_constants::RHOGF,T,ye,ym});
     return v;
 }
@@ -84,15 +84,17 @@ TEST_CASE("Dilute CC target coupled closed-box evolution", "[.][cc_boxes]") {
     auto e=eos::get().get_eos<leptonic_eos_4d_t>();
     std::vector<state> all;
     for(double rho:{1e10,1e12,1e14,1e15}) for(double T:{1.,10.,50.})
-    for(double ym:{.0005,.0006,.00065,.001,.05}) all.push_back({rho*nu_constants::RHOGF,T,.1,ym});
+    for(double ym:{e.get_c2p_ymu_min(),.0006,.00065,.001,.05}) all.push_back({rho*nu_constants::RHOGF,T,.1,ym});
     int const rank=parallel::mpi_comm_rank(),ranks=parallel::mpi_comm_size();
     int const total=int(all.size())*2*6;std::vector<std::string> lines(total);
+    bool const floor_only=std::getenv("GRACE_CC_FLOOR_ONLY")!=nullptr;
     std::ofstream out_file(output("boxes"));
     out_file<<"id,rho,T0,Ymu0,radiation,recipe,target_seconds,time_seconds,status,steps,rejections,T,Ye,Ymu,energy_error,Le_error,Lmu_error,residual,wall_seconds,last_rejection_reason\n";
     out_file.flush();
     #pragma omp parallel for schedule(dynamic)
     for(int task=rank;task<total;task+=ranks) {
         int const recipe=task%6,rad=(task/6)%2,id=task/12;
+        if(floor_only && id%5!=0) continue;
         state s=all[id],initial=s;auto row=stream();double mue,mumu;
         int status=potentials(e,s,mue,mumu)?(table_inside(s)?0:7):1,steps=0,rejected=0,last_failure=0;
         bool const regularize=recipe%2;
@@ -180,7 +182,7 @@ TEST_CASE("Dilute CC target coupled closed-box evolution", "[.][cc_boxes]") {
 TEST_CASE("Dilute CC target EOS-domain rate audit", "[.][cc_rates]") {
     auto e=eos::get().get_eos<leptonic_eos_4d_t>();
     REQUIRE(weakhub::get_device_handle().valid);
-    auto all=states();std::vector<std::string> lines(all.size());
+    auto all=states(e.get_c2p_ymu_min());std::vector<std::string> lines(all.size());
     int const rank=parallel::mpi_comm_rank(),ranks=parallel::mpi_comm_size();
     #pragma omp parallel for schedule(dynamic)
     for(int id=rank;id<int(all.size());id+=ranks) {

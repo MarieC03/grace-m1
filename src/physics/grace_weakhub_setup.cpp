@@ -26,6 +26,8 @@
  */
 
 #include "grace/physics/grace_weakhub_table.hh"
+#include <grace/physics/harry_spectral_table.hh>
+#include <grace/physics/guo_nnbrem.hh>
 
 #include <stdexcept>
 #include <string>
@@ -38,7 +40,25 @@
 #define H5_USE_16_API 1
 #include <hdf5.h>
 
-namespace grace { namespace weakhub {
+namespace grace {
+bool get_harry_table_mode() {
+    if(!get_eas_selection().contains(eas_kind_t::neutrino_weakhub)) return false;
+    auto const format=detail::get_eas_param_or("auto","weakhub_format");
+    if(format=="grey") return false;
+    if(format=="harry") return true;
+    if(format!="auto") ERROR("weakhub_format must be auto, grey or harry");
+    auto const path=detail::get_eas_param_or("","weakhub_table");
+    if(path.empty()) return false;
+    // Setup-only validation may intentionally supply no readable table yet.
+    // The selected loader reports missing files at initialization, as before.
+    std::ifstream available(path,std::ios::binary);
+    if(!available) return false;
+    static std::string previous;
+    static bool result=false;
+    if(previous!=path) { result=harry::is_harry_table(path); previous=path; }
+    return result;
+}
+namespace weakhub {
 namespace {
     device_handle g_handle;
     bool g_initialized = false;
@@ -63,6 +83,17 @@ bool weakhub_enabled_from_params() {
 void initialize_weakhub_from_params() {
     if (g_initialized || !weakhub_enabled_from_params()) return;
     const auto path = get_param<std::string>("m1","eas","weakhub_table");
+
+    if(get_harry_table_mode()) {
+        Kokkos::push_finalize_hook([](){ finalize_weakhub(); });
+        harry::initialize_harry_table(path,get_spectral_muon_decay()
+            && detail::get_eas_param_or("table","harry_decay_source")=="table");
+        GRACE_WARN("Harry e+e- kernels hold eta_e below the table minimum at the boundary: detailed balance uses the actual temperature and preserves the LTE fixed point, but the rate magnitude is a boundary approximation.");
+        if(get_param<bool>("m1","eas","bremsstrahlung"))
+            guo_nnbrem::initialize(get_param<std::string>("m1","eas","guo_response_table"));
+        g_initialized=true;
+        return;
+    }
 
     GRACE_INFO("Reading Weakhub opacity table {}", path);
 
@@ -177,6 +208,8 @@ const device_handle& get_device_handle() { return g_handle; }
 bool is_initialized() { return g_initialized && g_handle.valid; }
 
 void finalize_weakhub() {
+    harry::finalize_harry_table();
+    guo_nnbrem::finalize();
     if (!g_initialized) return;
     g_handle.kappa_a_en_table  = Kokkos::View<double*>();
     g_handle.kappa_a_num_table = Kokkos::View<double*>();

@@ -3,14 +3,16 @@
 #define GRACE_NEUTRINO_PAIR_UPDATE_HH
 #include <grace/physics/neutrino_pair_collision.hh>
 #include <grace/physics/m1_helpers.hh>
+#include <grace/physics/harry_spectral_table.hh>
 #include <cstdint>
 
 namespace grace::pairs {
 
-// Necessary continuum bounds in both frames. Discrete quadrature support
-// remains a separate reconstruction check.
+// Continuum checks in both frames plus the actual comoving fixed-grid
+// envelope, when evolved partner spectra use a tabulated collision grid.
 KOKKOS_INLINE_FUNCTION bool fermi_moments_admissible(
-    m1_prims_array_t const& p,metric_array_t const& metric,double multiplicity) {
+    m1_prims_array_t const& p,metric_array_t const& metric,double multiplicity,
+    harry::moment_envelope const& envelope={}) {
     double const E=p[ERADL], N=p[NRADL];
     if(!(E>=0 && N>=0) || !Kokkos::isfinite(E) || !Kokkos::isfinite(N)) return false;
     if(metric.square_covec({p[FXL],p[FYL],p[FZL]})>E*E*(1+1e-12)) return false;
@@ -19,13 +21,20 @@ KOKKOS_INLINE_FUNCTION bool fermi_moments_admissible(
     if(E/(energy_unit*multiplicity)<minimum_fermi_energy_density(nlab)*(1-1e-12)) return false;
     m1_closure_t cl{p,metric}; cl.update_closure(0);
     double const n=nlab/cl.Gamma;
-    return Kokkos::isfinite(cl.J) && cl.J/(energy_unit*multiplicity)>=minimum_fermi_energy_density(n)*(1-1e-12);
+    double const J=cl.J/(energy_unit*multiplicity);
+    return Kokkos::isfinite(J) && J>=minimum_fermi_energy_density(n)*(1-1e-12)
+        && envelope.contains(n/phase,J/phase);
 }
 
 // Residual tolerances are relative to max(1,|x|): floor radiation relaxing onto a hot LTE puts the
 // scaled unknowns at ~1e4, where roundoff in the stiff source (h*kappa ~ 1e3) floors the residual
 // near 1e-9 and an absolute 2e-10 target can never be met.
 constexpr double newton_target=2e-10, newton_accept=2e-8;
+struct newton_diagnostic {
+    // stage: 0 success, 1 residual, 2 Jacobian probe, 3 singular pivot,
+    // 4 stalled line search, 5 iteration limit.
+    int stage=0, iteration=0, column=-1;
+};
 template<int N>
 KOKKOS_INLINE_FUNCTION double residual_scale(double const (&x)[N]) {
     double m=1; for(int i=0;i<N;++i) m=Kokkos::fmax(m,Kokkos::fabs(x[i])); return m;
@@ -34,15 +43,18 @@ KOKKOS_INLINE_FUNCTION double residual_scale(double const (&x)[N]) {
 // Small, scaled, damped Newton solve; no allocation, exceptions, or vendor API.
 template<int N, class Function, class Prepare, class Probe>
 KOKKOS_INLINE_FUNCTION bool newton_blocks(Function const& fun, Prepare const& prepare,
-    Probe const& probe, double (&x)[N], double& norm) {
-    for(int it=0;it<60;++it) {
+    Probe const& probe, double (&x)[N], double& norm,newton_diagnostic* trace=nullptr,int iteration_limit=60) {
+    if(trace) *trace={};
+    for(int it=0;it<iteration_limit;++it) {
+        if(trace) { trace->iteration=it;trace->stage=1; }
         double r[N], a[N][N], d[N];
         if(!fun(x,r)) return false;
         norm=0;
         for(int i=0;i<N;++i) norm=Kokkos::fmax(norm,Kokkos::fabs(r[i]));
-        if(norm<newton_target*residual_scale(x)) return true;
+        if(norm<newton_target*residual_scale(x)) { if(trace)trace->stage=0;return true; }
         prepare();
         for(int j=0;j<N;++j) {
+            if(trace) {trace->stage=2;trace->column=j;}
             double h=1e-5*Kokkos::fmax(Kokkos::fabs(x[j]),1e-4), rp[N];
             bool ok=false;
             double const save=x[j];
@@ -57,6 +69,7 @@ KOKKOS_INLINE_FUNCTION bool newton_blocks(Function const& fun, Prepare const& pr
         }
         for(int i=0;i<N;++i) d[i]=-r[i];
         for(int j=0;j<N;++j) {
+            if(trace) {trace->stage=3;trace->column=j;}
             int p=j;
             for(int i=j+1;i<N;++i) if(Kokkos::fabs(a[i][j])>Kokkos::fabs(a[p][j])) p=i;
             if(!(Kokkos::fabs(a[p][j])>1e-25)) return false;
@@ -83,14 +96,33 @@ KOKKOS_INLINE_FUNCTION bool newton_blocks(Function const& fun, Prepare const& pr
             if(np<norm) { for(int i=0;i<N;++i) x[i]=xp[i]; ok=true; break; }
         }
         // A stalled line search below the acceptance tolerance is convergence to the roundoff floor.
-        if(!ok) return norm<newton_accept*residual_scale(x);
+        if(!ok) {
+            bool const accepted=norm<newton_accept*residual_scale(x);
+            if(trace)trace->stage=accepted?0:4;
+            return accepted;
+        }
     }
-    return false;
+    // A valid iterate may reach the same roundoff floor accepted by a
+    // stalled line search without ever meeting the stricter target. Recheck
+    // the FINAL state (the last line search changed x) with the full residual.
+    // The acceptance tolerance is unchanged, and callers still project and
+    // recheck reaction conservation before accepting the physical update.
+    if(trace)trace->stage=5;
+    double r[N];
+    if(!fun(x,r)) return false;
+    norm=0;
+    for(int i=0;i<N;++i) {
+        if(!Kokkos::isfinite(r[i])) return false;
+        norm=Kokkos::fmax(norm,Kokkos::fabs(r[i]));
+    }
+    bool const accepted=norm<newton_accept*residual_scale(x);
+    if(accepted && trace)trace->stage=0;
+    return accepted;
 }
 
 template<int N, class Function>
-KOKKOS_INLINE_FUNCTION bool newton(Function const& fun,double (&x)[N],double& norm) {
-    return newton_blocks<N>(fun,[](){},fun,x,norm);
+KOKKOS_INLINE_FUNCTION bool newton(Function const& fun,double (&x)[N],double& norm,newton_diagnostic* trace=nullptr,int iteration_limit=60) {
+    return newton_blocks<N>(fun,[](){},fun,x,norm,trace,iteration_limit);
 }
 
 // Per-species trial data for one local solve. Grid, metric, base and EAS
@@ -105,7 +137,7 @@ struct species_trial_cache {
 
     KOKKOS_INLINE_FUNCTION bool update(
         grid const& g, metric_array_t const& metric, m1_prims_array_t const& base,
-        m1_eas_array_t const& eas, double const* u) {
+        m1_eas_array_t const& eas, double const* u,diagnostic* trace=nullptr) {
         bool same=valid;
         for(int v=0;v<5 && same;++v)
             same=moments[v]==Kokkos::bit_cast<std::uint64_t>(u[v]);
@@ -115,12 +147,15 @@ struct species_trial_cache {
         // before attempting it, so no subsequent probe sees stale data.
         valid=false;
         if(!(u[0]>=0 && u[4]>=0)
-           || metric.square_covec({u[1],u[2],u[3]})>u[0]*u[0]*(1+1e-12)) return false;
+           || metric.square_covec({u[1],u[2],u[3]})>u[0]*u[0]*(1+1e-12)) {
+            if(trace)trace->code=failure_code::moment_input;
+            return false;
+        }
         m1_closure_t closure{base,metric};
         closure.update_closure(u[0],{u[1],u[2],u[3]},0,true);
         J=closure.J;
         double const n=u[4]/closure.Gamma;
-        if(!reconstruct(g,n/number_unit,J/energy_unit,f,nullptr,shape)) return false;
+        if(!reconstruct(g,n/number_unit,J/energy_unit,f,trace,shape)) return false;
         double energy_momentum[4];
         closure.get_implicit_sources(eas,energy_momentum);
         for(int v=0;v<4;++v) ordinary[v]=energy_momentum[v];

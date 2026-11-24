@@ -194,10 +194,11 @@ m1:
 
     pair_treatment:
       type: keyword
-      allowed: ["standard", "legacy", "equilibrium", "evolved"]
-      default: "standard"
+      allowed: ["auto", "standard", "legacy", "equilibrium", "evolved"]
+      default: "auto"
       description: >
-        Heavy-flavour thermal pairs. standard = the table/analytic grey rates
+        auto selects evolved partners for Harry spectral tables and standard
+        for historical providers. standard = the table/analytic grey rates
         ("legacy" is an accepted alias). The other modes use blocked isotropic
         spectral kernels; equilibrium freezes the partner at matter LTE, evolved
         couples the two M1 source updates. They exist only in builds configured
@@ -257,7 +258,10 @@ m1:
       default: false
       description: >
         Trigger conservative shared-face flux correction on lab and comoving
-        continuum Fermi bounds and the flux cone. Requires pair kernels and FOFC.
+        continuum Fermi bounds and the flux cone. With Harry's fixed energy
+        grid it also checks the comoving moments against the number capacity,
+        the filled-bin minimum energy and the constant-occupation maximum
+        mean energy. Requires pair kernels and FOFC.
 
     dilute_muon_cc_target:
       type: bool
@@ -488,6 +492,30 @@ m1:
         REQUIRES the build flag -DGRACE_M1_OPTICAL_DEPTH=ON (OFF by default);
         selecting it without that flag is a startup error, since the OPTD*
         evolved fields it relaxes do not exist otherwise.
+
+    guo_response_table:
+      type: string
+      default: ""
+      description: >
+        Path to Guo2019 S_Table_Tv.dat. Required for NN bremsstrahlung with
+        Harry spectral tables; no response data are embedded in the rate file.
+
+    harry_decay_source:
+      type: keyword
+      allowed: ["table", "spectral"]
+      default: "table"
+      description: >
+        Harry provider only: table uses the supplied ILD kernels and rejects
+        missing or malformed data. spectral explicitly uses GRACE's existing
+        analytic conservative decay kernels for controlled mixed-provider tests.
+
+    weakhub_format:
+      type: keyword
+      allowed: ["auto", "grey", "harry"]
+      default: "auto"
+      description: >
+        auto detects Harry energy-dependent tables; grey retains the historical
+        pre-averaged reader. harry requires the validated spectral schema.
 
     weakhub_table:
       type: string

@@ -92,6 +92,7 @@
 
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 
 namespace grace {
 
@@ -177,9 +178,8 @@ class leptonic_eos_4d_t
      *
      * The baryon-table 4D view, axes and energy_shift come from the
      * GRACE read_eos_table() pipeline; the lepton views and Y_e/Y_mu
-     * axes come from the leptonic HDF5.  rho and T axes are *always*
-     * those of the baryon table (the reader asserts the leptonic file
-     * lives on the same (rho,T) grid).
+     * axes come from the leptonic HDF5. The optional lepton rho/T axes
+     * are in the same physical units as the baryon axes.
      */
     leptonic_eos_4d_t(
         // baryon table (shape and layout of tabulated_eos_t::tables)
@@ -216,7 +216,9 @@ class leptonic_eos_4d_t
         bool   add_ele_contribution_ = false,
         // true: TABPRESS already holds ln(P_b + P_e(Y_e=Y_q)), see
         // convert_baryon_press_to_log.  false: signed linear P_b.
-        bool   log_baryon_press_ = false
+        bool   log_baryon_press_ = false,
+        Kokkos::View<double*, grace::default_space> lep_logrho = {},
+        Kokkos::View<double*, grace::default_space> lep_logT = {}
     )
     : base_t( rhomax, rhomin,
               tempmax, tempmin,
@@ -230,8 +232,10 @@ class leptonic_eos_4d_t
               c2p_ymu_atm,
               atmo_is_beta_eq )
     , baryon_table(tab_baryon, bar_logrho, bar_logT, bar_ye)
-    , ele_table   (tab_ele,    bar_logrho, bar_logT, ele_yle)
-    , muon_table  (tab_muon,   bar_logrho, bar_logT, mu_ymu)
+    , ele_table(tab_ele, lep_logrho.data()?lep_logrho:bar_logrho,
+                lep_logT.data()?lep_logT:bar_logT, ele_yle)
+    , muon_table(tab_muon, lep_logrho.data()?lep_logrho:bar_logrho,
+                 lep_logT.data()?lep_logT:bar_logT, mu_ymu)
     , cold_table  (cold_tab,   cold_logrho)
     , nrho(bar_logrho.size()), nT(bar_logT.size())
     , nye(ele_yle.size()),     nymu(mu_ymu.size())
@@ -243,6 +247,16 @@ class leptonic_eos_4d_t
         lrhomin  = detail::host_read(bar_logrho, 0) ; lrhomax  = detail::host_read(bar_logrho, nrho - 1) ;
         ltempmin = detail::host_read(bar_logT,   0) ; ltempmax = detail::host_read(bar_logT,   nT - 1) ;
         ltemp_step_ = ( nT > 1 ) ? detail::host_read(bar_logT, 1) - ltempmin : 1.0 ;
+        yp_min_ = detail::host_read(bar_ye, 0) ;
+        yp_max_ = detail::host_read(bar_ye, bar_ye.size()-1) ;
+        // Ye and Yp are different coordinates. Restrict Ye only to its own
+        // axis and to values for which at least one allowed Ymu exists.
+        this->eos_yemin = Kokkos::fmax(this->eos_yemin,
+            Kokkos::fmax(detail::host_read(ele_yle,0),yp_min_-this->eos_ymumax)) ;
+        this->eos_yemax = Kokkos::fmin(this->eos_yemax,
+            Kokkos::fmin(detail::host_read(ele_yle,ele_yle.size()-1),yp_max_-this->eos_ymumin)) ;
+        if (this->eos_yemin > this->eos_yemax)
+            throw std::runtime_error("Leptonic EOS composition domains have no common charge-neutral state") ;
         // Default until the loader resolves the requested floor; never the
         // bare table boundary (see limit_temp).
         set_temperature_floor(-1.) ;
@@ -272,6 +286,13 @@ class leptonic_eos_4d_t
     }
 
     double GRACE_HOST_DEVICE temperature_floor() const { return temp_floor_ ; }
+    double GRACE_HOST_DEVICE get_c2p_yp_min() const { return yp_min_ ; }
+    double GRACE_HOST_DEVICE get_c2p_yp_max() const { return yp_max_ ; }
+    bool GRACE_HOST_DEVICE composition_in_domain(double ye, double ymu) const {
+        return ye >= this->eos_yemin && ye <= this->eos_yemax
+            && ymu >= this->eos_ymumin && ymu <= this->eos_ymumax
+            && ye+ymu >= yp_min_ && ye+ymu <= yp_max_ ;
+    }
 
     // eos.tabulated_eos.interpolation = "hermite_free_energy": P, eps, s, T and cs2 from the
     // sum of per-component free energies (baryon at yp, electrons at Y_le, muons at ln Y_mu),
@@ -680,7 +701,7 @@ class leptonic_eos_4d_t
         // the yp-saturation corner, where the leptonic mu_e itself becomes
         // unreliable (Margherita's convention) and mumu_core already reported
         // mu_mu as its rest mass, so fall back to the baryon table there too.
-        if (!add_ele_contribution || (dilute_muon_suppression && raw_yp(ye, ymu) >= this->eos_yemax)) {
+        if (!add_ele_contribution || (dilute_muon_suppression && raw_yp(ye, ymu) >= yp_max_)) {
             return baryon_table.interp(lrho,ltemp,yp,TABMUE)  ;
         }
         return ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABMUELE) ;
@@ -761,10 +782,14 @@ class leptonic_eos_4d_t
         double const ltemp = Kokkos::log(temp) ;
         double const ye_lo = this->eos_yemin ;
         double const ye_hi = this->eos_yemax ;
+        auto validate_composition = [&]() {
+            if (!composition_in_domain(ye,ymu))
+                Kokkos::abort("Beta-equilibrium composition exceeds the joint electron/muon/baryonic EOS domain");
+        } ;
 
         auto mue = [&](double y){ return ele_table.interp(lrho, ltemp, y, ELE_VIDX::TABMUELE) ; } ;
         auto dnp = [&](double yp){   // mu_n - mu_p at clamped charge fraction
-            double const yc = Kokkos::fmin(ye_hi, Kokkos::fmax(ye_lo, yp)) ;
+            double const yc = clamp_yp(yp) ;
             return baryon_table.interp(lrho, ltemp, yc, TABMUN)
                  - baryon_table.interp(lrho, ltemp, yc, TABMUP) ;
         } ;
@@ -799,9 +824,8 @@ class leptonic_eos_4d_t
         // mumu_core needs ye (for its own saturation branch), but ye here is
         // an OUTPUT of find_ye(mm) -- chicken-and-egg.  Apply block_mumu
         // directly to the raw table lookup instead; the saturation branch is
-        // for the ye+ymu>=yemax corner, unreachable from this solve since ye
-        // is bounded by [ye_lo,ye_hi]=[yemin,yemax] and ymu by [ymumin,ymumax]
-        // with the outer root only ever queried inside those brackets.
+        // for charge saturation. Separate Ye and Ymu brackets do not imply
+        // an admissible Yp; validate the returned state explicitly below.
         auto outer = [&](double lym){
             double const ymu_loc = Kokkos::exp(lym) ;
             double const mm_raw  = muon_table.interp(lrho, ltemp, lym, MUON_VIDX::TABMUMU) ;
@@ -813,16 +837,19 @@ class leptonic_eos_4d_t
 
         if ( outer(lym_lo) * outer(lym_hi) > 0.0 ) {
             solve_npe() ;
+            validate_composition() ;
             return ;
         }
         double const lym = utils::brent(outer, lym_lo, lym_hi, 1e-12) ;
         ymu = Kokkos::exp(lym) ;
         if ( dilute_muon_suppression && ymu <= dilute_ymu0_ ) {
             solve_npe() ;
+            validate_composition() ;
             return ;
         }
         double const mm_raw = muon_table.interp(lrho, ltemp, lym, MUON_VIDX::TABMUMU) ;
         ye = find_ye( block_mumu(ymu, mm_raw) ) ;
+        validate_composition() ;
     }
     double GRACE_HOST_DEVICE
     rho__press_cold_impl(double& press_cold, err_t& err) const
@@ -897,6 +924,7 @@ class leptonic_eos_4d_t
     double lrhomin, lrhomax ;
     double ltempmin, ltempmax ;
     double ltemp_step_ = 1.0 ;   ///< log-T grid spacing: first probe of the seeded inversion
+    double yp_min_ = 0., yp_max_ = 1. ; ///< independent baryonic charge axis
     // If true, add electronic pressure/eps/entropy on top of the
     // baryon table.  Keep false when the baryon table already
     // contains the electron contribution (the usual case for SFHo,
@@ -917,6 +945,10 @@ class leptonic_eos_4d_t
     static GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
     ele_press(tabeos_linterp_t const& ele, double lrho, double ltemp, double yle)
     {
+        // P_e(Yp) is only an auxiliary positive pressure shift. Hold this
+        // shift at its endpoint if the baryon axis extends beyond the
+        // electron axis; use the identical shift when adding and removing it.
+        yle = Kokkos::fmax(ele._ye(0),Kokkos::fmin(yle,ele._ye(ele._ye.size()-1))) ;
         std::array<int,2> const idx{ TABPRESS_E_MINUS, TABPRESS_E_PLUS } ;
         std::array<double,2> p ;
         ele.interp<2>(lrho, ltemp, yle, idx, p) ;
@@ -929,8 +961,8 @@ class leptonic_eos_4d_t
     //  Clamp a charge fraction into the baryon table's range.
     // ----------------------------------------------------------
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double clamp_yp(double yp_raw) const {
-        if (yp_raw < this->eos_yemin) return this->eos_yemin ;
-        if (yp_raw > this->eos_yemax) return this->eos_yemax ;
+        if (yp_raw < yp_min_) return yp_min_ ;
+        if (yp_raw > yp_max_) return yp_max_ ;
         return yp_raw ;
     }
 
@@ -1020,7 +1052,7 @@ class leptonic_eos_4d_t
     // enough negative for the Kirchhoff FD denominators to underflow.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     mumu_core(double lrho, double ltemp, double ye, double ymu) const {
-        double const mm_raw = ( dilute_muon_suppression && raw_yp(ye, ymu) >= this->eos_yemax )
+        double const mm_raw = ( dilute_muon_suppression && raw_yp(ye, ymu) >= yp_max_ )
             ? 105.6583755              // atmosphere / saturation corner
             : muon_table.interp(lrho, ltemp, Kokkos::log(ymu), MUON_VIDX::TABMUMU) ;
         return block_mumu(ymu, mm_raw) ;
@@ -1187,9 +1219,11 @@ class leptonic_eos_4d_t
         if ( ye > this->eos_yemax ) { ye = this->eos_yemax ; err.set(EOS_YE_TOO_HIGH) ; }
     }
     // ye must already be limited (every call site runs limit_ye immediately
-    // before this).  Besides the axis clamp, this also enforces the charge
-    // budget yp = ye + ymu <= eos_yemax: cap ymu to the remaining budget
-    // (yemax - ye), floored at ymumin, so yp saturates exactly at yemax while
+    // before this). Besides the axis clamp, enforce the baryonic charge
+    // domain yp_min_ <= ye + ymu <= yp_max_. The constructor restricts Ye
+    // to the feasible interval, so a positive muon floor also fits at the
+    // upper electron corner. Every correction sets an error flag.
+    // Cap ymu to the remaining budget, so yp saturates at yp_max_ while
     // the muon keeps as much of the budget as fits -- instead of dropping
     // straight to its floor (Margherita's fix_ymu_for_too_high_yp does the
     // latter; we deliberately diverge here, see [[leptonic-yp-axis-convention]]).
@@ -1204,29 +1238,29 @@ class leptonic_eos_4d_t
     // reconcile).  Applies for every table type: yp = ye + ymu unconditionally
     // (see raw_yp), so the muon always consumes part of the axis' budget.
     KOKKOS_INLINE_FUNCTION void limit_ymu(double const ye, double& ymu, err_t& err) const {
-        if ( ymu < this->eos_ymumin ) {
-            ymu = this->eos_ymumin ;
+        double lo = this->eos_ymumin, hi = this->eos_ymumax ;
+        #ifdef GRACE_ENABLE_MUONS
+        lo = Kokkos::fmin(hi,Kokkos::fmax(lo,yp_min_-ye)) ;
+        hi = Kokkos::fmax(this->eos_ymumin,Kokkos::fmin(hi,yp_max_-ye)) ;
+        #else
+        (void) ye ;
+        #endif
+        if ( ymu < lo ) {
+            ymu = lo ;
             #ifdef GRACE_ENABLE_MUONS
             err.set(EOS_YMU_TOO_LOW) ;
             #else
             err.set(EOS_YE_TOO_LOW) ;
             #endif
         }
-        if ( ymu > this->eos_ymumax ) {
-            ymu = this->eos_ymumax ;
+        if ( ymu > hi ) {
+            ymu = hi ;
             #ifdef GRACE_ENABLE_MUONS
             err.set(EOS_YMU_TOO_HIGH) ;
             #else
             err.set(EOS_YE_TOO_HIGH) ;
             #endif
         }
-        #ifdef GRACE_ENABLE_MUONS
-        if ( raw_yp(ye, ymu) > this->eos_yemax ) {
-            ymu = Kokkos::fmax(this->eos_yemax - ye, this->eos_ymumin) ;
-        }
-        #else
-        (void) ye ;
-        #endif
     }
     // Clamp to the working temperature range.  By default these ARE the table
     // bounds (FIL parity, leptonic_eos_implementation.hh:133); an explicit

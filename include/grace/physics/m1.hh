@@ -50,6 +50,8 @@
 #ifdef GRACE_M1_PAIR_KERNELS
 #include <grace/physics/neutrino_pair_update.hh>
 #include <grace/physics/neutrino_leptonic_update.hh>
+#include <grace/physics/harry_pair_kernels.hh>
+#include <grace/physics/eas_kinds.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>   // rho/T conversions for pair_material
 #endif
 #include "fd_subexpressions.hh"
@@ -90,6 +92,16 @@ struct m1_equations_system_t
 
     #ifdef GRACE_M1_PAIR_KERNELS
     pairs::failure_buffer pair_failures;
+    // Auxiliary/flux system objects are constructed before the first EAS
+    // evaluation. Load on the host before capturing any table Views.
+    static harry::device_handle initialized_harry_table() {
+        if(!get_harry_table_mode()) return {};
+        weakhub::initialize_weakhub_from_params();
+        return harry::get_harry_device_handle();
+    }
+    harry::device_handle harry_table = initialized_harry_table();
+    guo_nnbrem::device_handle harry_guo = get_harry_table_mode()?guo_nnbrem::get_device_handle():guo_nnbrem::device_handle{};
+    bool harry_spectral_decay = get_harry_spectral_decay();
     #endif
 
     m1_equations_system_t(grace::var_array_t state_
@@ -756,6 +768,7 @@ struct m1_equations_system_t
         pairs::kernel const* kernel=prebuilt;
         pairs::diagnostic diag;
         auto const fail=[&]() {
+            if(diag.code==pairs::failure_code::none) diag.code=pairs::failure_code::kernel_input;
             auto r=pairs::make_failure_record(mat,diag,q,VEC(i,j,k));
             r.mu_mu=this->_aux(VEC(i,j,k),PAIR_MUMU_,q);
             r.active=bits; r.scale=kernel?kernel->g.scale:scale; r.order=order;
@@ -763,7 +776,7 @@ struct m1_equations_system_t
             pair_failures.save(r);
         };
         if(!kernel) {
-            if(!pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag,nullptr,thermal_cache)) {
+            if(!(harry_table.n_groups?pairs::init_harry_thermal(local,harry_table,harry_guo,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},sa,sa==sb):pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,sa==sb,&diag,nullptr,thermal_cache))) {
                 fail();
                 return;
             }
@@ -795,8 +808,11 @@ struct m1_equations_system_t
         pairs::kernel const* prebuilt=nullptr,var_array_t const& seed_state={},bool lagged=false,bool singlepass=false,
         bool decay_cache=false,bool thermal_cache=false,bool block_jacobian=false,bool grey_decay=0) const {
         if(!(int(this->_aux(VEC(i,j,k),PAIR_ACTIVE_,q))&8)) {   // no decay in this cell
+            if(harry_table.n_groups) compute_pair_implicit_update<0,1>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order,nullptr,false);
+            else {
             compute_implicit_update<0>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
             compute_implicit_update<1>(q,VEC(i,j,k),idx,state_new,dt,dtfact);
+            }
             compute_pair_implicit_update<2,3>(q,VEC(i,j,k),idx,state_new,dt,dtfact,order,prebuilt,thermal_cache);
             return;
         }
@@ -826,12 +842,17 @@ struct m1_equations_system_t
         pairs::kernel local; pairs::decay_kernel decay;
         pairs::kernel const* thermal=prebuilt;
         if(!thermal) {
-            if(!pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,false,nullptr,nullptr,thermal_cache))
+            if(!(harry_table.n_groups?pairs::init_harry_thermal(local,harry_table,harry_guo,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},2):pairs::init_thermal_kernel(local,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},order,scale,false,nullptr,nullptr,thermal_cache)))
                 Kokkos::abort("Invalid four-species leptonic kernel");
             thermal=&local;
         }
-        if(!pairs::init_decay_kernel(decay,thermal->g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order,decay_cache,grey_decay))
+        if(!(harry_table.n_groups && !harry_spectral_decay?pairs::init_harry_decay_kernel(decay,harry_table,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),0.5):pairs::init_decay_kernel(decay,thermal->g,mat.T,mat.mu_e,this->_aux(VEC(i,j,k),PAIR_MUMU_,q),decay_order,decay_cache,grey_decay)))
             Kokkos::abort("Invalid four-species leptonic kernel");
+        pairs::kernel electron; pairs::kernel const* ep=nullptr;
+        if(harry_table.n_groups && bits!=0) {
+            if(!pairs::init_harry_thermal(electron,harry_table,harry_guo,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},0)) Kokkos::abort("Invalid Harry electron pair kernel");
+            ep=&electron;
+        }
         double seed[20];
         bool const have_seed=seed_state.data()!=nullptr;
         if(have_seed) {
@@ -847,12 +868,23 @@ struct m1_equations_system_t
         }
         double residual=0;
         bool const solved=singlepass
-            ? pairs::leptonic_singlepass_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr)
+            ? pairs::leptonic_singlepass_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,ep)
             : lagged
-            ? pairs::leptonic_lagged_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,nullptr,nullptr,block_jacobian)
-            : pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,false,block_jacobian);
-        if(!solved)
+            ? pairs::leptonic_lagged_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,nullptr,nullptr,block_jacobian,ep)
+            : pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,out,dt*dtfact,residual,have_seed?seed:nullptr,false,block_jacobian,ep);
+        if(!solved) {
+            if(!singlepass && !lagged) {
+                pairs::leptonic_diagnostic trace;
+                double ignored[20],diagnostic_residual=0;
+                pairs::leptonic_implicit_update(*thermal,decay,bits!=0,metric,p,eas,old,ignored,
+                    dt*dtfact,diagnostic_residual,have_seed?seed:nullptr,false,block_jacobian,ep,&trace);
+                Kokkos::printf("Leptonic implicit failure q=%d dt=%.17g T=%.17g phase=%d continuation=%d species=%d fit=%d Newton=%d iteration=%d n=%.17g J=%.17g residual=%.17g\n",
+                    int(q),dt*dtfact,mat.T,trace.phase,trace.continuation,trace.species,
+                    int(trace.reconstruction.code),trace.nonlinear.stage,trace.nonlinear.iteration,
+                    trace.reconstruction.n,trace.reconstruction.J,diagnostic_residual);
+            }
             Kokkos::abort("Coupled leptonic source solve failed: check timestep and quadrature");
+        }
         // Signed number-increment defect of decay after ordinary sources are
         // subtracted. Conservative same-flavour thermal pairs cancel here.
         #ifdef GRACE_LEPTON_PROFILE
@@ -906,7 +938,7 @@ struct m1_equations_system_t
         };
         bound(ye,dye,eos.get_c2p_ye_min(),eos.get_c2p_ye_max());
         bound(ym,dym,eos.get_c2p_ymu_min(),eos.get_c2p_ymu_max());
-        bound(ye+ym,dye+dym,0,eos.get_c2p_ye_max());
+        bound(ye+ym,dye+dym,eos.get_c2p_yp_min(),eos.get_c2p_yp_max());
         if(!(tau>0)) theta=0;
         if(dE<0 && tau+dE<=0) theta=Kokkos::fmin(theta,tau/(-dE)*(1-1e-10));
         theta=Kokkos::fmax(0.0,theta);
@@ -1585,8 +1617,10 @@ struct m1_equations_system_t
         if constexpr(normalized_input && ispec<GRACE_M1_NU_SPECIES) {
             if(fermi_fofc) {
                 constexpr double multiplicity=GRACE_M1_NU_SPECIES==5 ? (ispec==4?2:1) : (ispec==2?4:1);
-                if(!pairs::fermi_moments_admissible(primL,metric_face,multiplicity)
-                   || !pairs::fermi_moments_admissible(primR,metric_face,multiplicity)) {
+                auto const admissible=[&](m1_prims_array_t const& moment) {
+                    return pairs::fermi_moments_admissible(moment,metric_face,multiplicity,harry_table.envelope);
+                };
+                if(!admissible(primL) || !admissible(primR)) {
                     m1_prims_array_t donorL{},donorR{};
                     donor_cell_reconstructor_t donor;
                     for(int v=0;v<5;++v) {
@@ -1599,16 +1633,16 @@ struct m1_equations_system_t
                     }
                     to_physical(donorL,donorR);
                     auto const limit=[&](m1_prims_array_t& face,m1_prims_array_t const& cell) {
-                        if(pairs::fermi_moments_admissible(face,metric_face,multiplicity)) return;
+                        if(admissible(face)) return;
                         auto const original=face;
                         face=cell;
-                        if(!pairs::fermi_moments_admissible(cell,metric_face,multiplicity)) return;
+                        if(!admissible(cell)) return;
                         double lo=0,hi=1;
                         for(int iter=0;iter<24;++iter) {
                             double const theta=0.5*(lo+hi);
                             m1_prims_array_t trial;
                             for(int v=0;v<N_M1_VARS;++v) trial[v]=cell[v]+theta*(original[v]-cell[v]);
-                            if(pairs::fermi_moments_admissible(trial,metric_face,multiplicity)) {lo=theta; face=trial;}
+                            if(admissible(trial)) {lo=theta; face=trial;}
                             else hi=theta;
                         }
                     };

@@ -26,6 +26,7 @@
  */
 
 #include <grace/system/checkpoint_handler.hh>
+#include <grace/system/checkpoint_schedule.hh>
 #include <cstring>
 
 #include <grace_config.h>
@@ -1271,7 +1272,7 @@ bool checkpoint_handler_impl_t::need_checkpoint()  {
     } else if ( checkpoint_interval_type == "time" ) {
         return grace::get_simulation_time() > next_checkpoint_time ;
     } else {
-        return grace::get_total_runtime() > next_checkpoint_wtime ;
+        return checkpoint_walltime_due(grace::get_total_runtime(), next_checkpoint_wtime);
     }
 }
 

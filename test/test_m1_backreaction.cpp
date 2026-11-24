@@ -59,6 +59,7 @@ constexpr int kNSpec =
 struct mock_bounds_eos_t {
     double yemin  = 0.01,   yemax  = 0.50;
     double ymumin = 5.0e-4, ymumax = 0.20;
+    double ypmin = 0., ypmax = 0.50;
     // Negative eps_min, as for a real tabulated EOS (SFHo+leptons reaches
     // ~-8.5e-4 at the cold surface, and can go to -energy_shift).  The
     // backreaction's invertibility guard is only meaningful when this can
@@ -67,6 +68,8 @@ struct mock_bounds_eos_t {
     double epsmin = -8.5e-4, epsmax = 1.0e4;
     KOKKOS_INLINE_FUNCTION double get_c2p_ye_max()  const { return yemax;  }
     KOKKOS_INLINE_FUNCTION double get_c2p_ye_min()  const { return yemin;  }
+    KOKKOS_INLINE_FUNCTION double get_c2p_yp_min()  const { return ypmin;  }
+    KOKKOS_INLINE_FUNCTION double get_c2p_yp_max()  const { return ypmax;  }
     KOKKOS_INLINE_FUNCTION double get_c2p_ymu_max() const { return ymumax; }
     KOKKOS_INLINE_FUNCTION double get_c2p_ymu_min() const { return ymumin; }
     KOKKOS_INLINE_FUNCTION void eps_range__rho_ye_ymu(
@@ -2081,6 +2084,32 @@ TEST_CASE("Decay backreaction respects the combined baryonic charge axis",
     REQUIRE(c.get_new(NRAD1_)>0);
     require_lepton_identity(c,NRAD1_,NRAD2_,YESTAR_,0.48);
     require_em_conserved(c,1,0,0,0);
+}
+
+TEST_CASE("Decay backreaction uses independent proton bounds conservatively",
+          "[m1][backreaction][decay]")
+{
+    for (int scenario : {0,1,2}) {
+        cell_t c; mock_bounds_eos_t eos;
+        eos.ypmin=0.1; eos.ypmax=0.6;
+        double const ye0=scenario==2?0.02:0.48;
+        double const ym0=scenario==2?0.081:(scenario==1?0.119:0.05);
+        c.set_aux(PAIR_ACTIVE_,8); c.set_new(TAU_,1);
+        c.set_new(YESTAR_,ye0); c.set_new(YMUSTAR_,ym0);
+        // Pure CC exchange in a connected network: the same factor must
+        // limit matter and radiation number and energy changes.
+        c.set_old(NRAD1_,scenario==2?0.:0.01);
+        c.set_new(NRAD1_,scenario==2?0.01:0.);
+        c.set_old(ERAD1_,0.02); c.set_new(ERAD1_,0.01);
+        c.run(eos);
+        double const yp=c.get_new(YESTAR_)+c.get_new(YMUSTAR_);
+        REQUIRE(yp>=eos.ypmin); REQUIRE(yp<=eos.ypmax);
+        if(scenario==0) REQUIRE(c.get_new(NRAD1_)==0.);
+        else if(scenario==1) REQUIRE(c.get_new(NRAD1_)>0.);
+        else REQUIRE(c.get_new(NRAD1_)<0.01);
+        require_lepton_identity(c,NRAD1_,NRAD2_,YESTAR_,ye0);
+        require_em_conserved(c,1,0,0,0);
+    }
 }
 #endif
 

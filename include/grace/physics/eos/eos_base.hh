@@ -589,6 +589,12 @@ class eos_base_t {
      */
     double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
     get_c2p_ye_min() const { return eos_yemin ; }
+    // Charge bounds for EOSs without a separate baryonic composition axis.
+    // The additive leptonic EOS overrides these with its actual Yp axis.
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    get_c2p_yp_min() const { return 0.0 ; }
+    double GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE
+    get_c2p_yp_max() const { return eos_yemax ; }
     /**
      * @brief Get maximum allowed epsilon, might differ from table bound.
      */

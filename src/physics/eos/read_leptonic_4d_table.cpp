@@ -88,13 +88,23 @@ namespace grace {
 namespace {
 
 template <typename T>
-inline void h5_read(hid_t file, const char* name, T* out, hid_t type)
+inline void h5_read(hid_t file, const char* name, T* out, hid_t type,
+                    std::vector<hsize_t> const& shape={})
 {
     hid_t ds = H5Dopen(file, name, H5P_DEFAULT) ;
-    ASSERT(ds >= 0, "Could not open HDF5 dataset '" << name << "'") ;
+    if(ds<0) ERROR("Could not open HDF5 dataset '" << name << "'");
+    hid_t space=H5Dget_space(ds);
+    if(space<0) { H5Dclose(ds); ERROR("Could not inspect leptonic HDF5 dataset " << name); }
+    int const rank=H5Sget_simple_extent_ndims(space);
+    if(rank<0) { H5Sclose(space); H5Dclose(ds); ERROR("Could not read HDF5 rank for " << name); }
+    std::vector<hsize_t> dims(rank);
+    H5Sget_simple_extent_dims(space,dims.data(),nullptr);
+    bool const matches=shape.empty()?H5Sget_simple_extent_npoints(space)==1:dims==shape;
+    H5Sclose(space);
+    if(!matches) { H5Dclose(ds); ERROR("Leptonic HDF5 dimensions disagree with EOS metadata for " << name); }
     herr_t e = H5Dread(ds, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, out) ;
-    ASSERT(e >= 0, "Failed to read HDF5 dataset '" << name << "'") ;
     H5Dclose(ds) ;
+    if(e<0) ERROR("Failed to read HDF5 dataset '" << name << "'");
 }
 
 } // anonymous
@@ -687,31 +697,19 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     GRACE_INFO("Leptonic file: nrho={} nT={} nyle={} nymu={}",
                nrho, ntemp, nyle, nymu) ;
 
-    // The lepton tables must live on exactly the same (rho, T) grid as
-    // the baryon table (the additive sum is pointwise).  The Y_le axis
-    // of the electronic table is independent of the baryon Y_e axis --
-    // only the physical bounds need to agree, not the grid size.
-    ASSERT(nrho  == nrho_b,
-           "Leptonic and baryon tables disagree on nrho ("
-           << nrho << " vs " << nrho_b << ")") ;
-    ASSERT(ntemp == ntemp_b,
-           "Leptonic and baryon tables disagree on ntemp ("
-           << ntemp << " vs " << ntemp_b << ")") ;
+    if (nrho<2 || ntemp<2 || nyle<2 || nymu<2)
+        ERROR("The leptonic EOS needs at least two samples on each axis.");
+    bool const native_lepton_grid = nrho!=nrho_b || ntemp!=ntemp_b;
 
-    // Axes.  yle and ymu are read in as the linear-valued axes used
-    // by the lepton interpolators.  logrho_table / logtemp_table are
-    // read in only to verify that the leptonic file lives on the
-    // same physical (rho, T) grid as the baryon table (in either of
-    // the two log conventions, see below) -- they're
-    // *not* used as axes downstream (the lepton interpolators reuse
-    // the baryon table's already-unit-converted natural-log axes).
+    // The lepton file has its own linear electron fraction and logarithmic
+    // muon fraction. Convert its rho/T labels to the baryon unit system below.
     std::vector<double> yle(nyle), ymu(nymu) ;
     std::vector<double> logrho10(nrho), logtemp10(ntemp) ;
     double ylemin_f, ylemax_f, ymumin_f, ymumax_f ;
-    h5_read(file, "logrho_table",  logrho10 .data(), H5T_NATIVE_DOUBLE) ;
-    h5_read(file, "logtemp_table", logtemp10.data(), H5T_NATIVE_DOUBLE) ;
-    h5_read(file, "yle_table",     yle      .data(), H5T_NATIVE_DOUBLE) ;
-    h5_read(file, "ymu_table",     ymu      .data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "logrho_table",  logrho10 .data(), H5T_NATIVE_DOUBLE,{hsize_t(nrho)}) ;
+    h5_read(file, "logtemp_table", logtemp10.data(), H5T_NATIVE_DOUBLE,{hsize_t(ntemp)}) ;
+    h5_read(file, "yle_table",     yle      .data(), H5T_NATIVE_DOUBLE,{hsize_t(nyle)}) ;
+    h5_read(file, "ymu_table",     ymu      .data(), H5T_NATIVE_DOUBLE,{hsize_t(nymu)}) ;
     h5_read(file, "eos_ylemin",    &ylemin_f,        H5T_NATIVE_DOUBLE) ;
     h5_read(file, "eos_ylemax",    &ylemax_f,        H5T_NATIVE_DOUBLE) ;
     h5_read(file, "eos_ymumin",    &ymumin_f,        H5T_NATIVE_DOUBLE) ;
@@ -732,7 +730,59 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     //  unit system), harmless for row alignment.  Only a difference that
     //  VARIES along the axis means the grids really differ.
     // -------------------------------------------------------
-    {
+    using axis_view = Kokkos::View<double*, grace::default_space>;
+    axis_view native_rho, native_T;
+    if (native_lepton_grid) {
+        // Preserve the actual HDF5 knots. Only accept a unit convention
+        // that covers the full baryonic domain in both physical coordinates.
+        auto grid_covers = [](std::vector<double> const& grid, auto const& baryon) {
+            double const step=(grid.back()-grid.front())/(grid.size()-1);
+            if (!(step>0)) return false;
+            for (std::size_t i=0;i<grid.size();++i)
+                if (!std::isfinite(grid[i]) || std::abs(grid[i]-(grid.front()+i*step))>1e-8)
+                    return false;
+            return grid.front()<=detail::host_read(baryon,0)+1e-8 &&
+                grid.back()>=detail::host_read(baryon,baryon.extent(0)-1)-1e-8;
+        };
+        auto converted_rho=logrho10, converted_T=logtemp10;
+        auto const units=CGS_units / GEOM_units;
+        for(auto& x:converted_rho) x=std::log(10.)*x+std::log(units.mass_density);
+        for(auto& x:converted_T) x*=std::log(10.);
+        if(nrho==nrho_b) {
+            // The older lepton generators label the same n_b rows with a
+            // different baryon mass. Preserve their pointwise registration
+            // when only the temperature resolution differs.
+            auto baryon=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),bt._logrho);
+            auto align=[&](std::vector<double>& axis) {
+                double const offset=axis.front()-baryon(0);
+                for(int i=0;i<nrho;++i)
+                    if(std::abs(axis[i]-baryon(i)-offset)>1e-8 || !std::isfinite(axis[i]))
+                        return;
+                for(int i=0;i<nrho;++i) axis[i]=baryon(i);
+            };
+            align(logrho10);
+            align(converted_rho);
+        }
+        bool const natural=grid_covers(logrho10,bt._logrho) && grid_covers(logtemp10,bt._logT);
+        bool const decimal=grid_covers(converted_rho,bt._logrho) && grid_covers(converted_T,bt._logT);
+        if(natural==decimal)
+            ERROR("Cannot identify unique regular leptonic rho/T axes covering the baryon EOS in geometric or CGS units.");
+        if(decimal) {
+            logrho10.swap(converted_rho);
+            logtemp10.swap(converted_T);
+        }
+        auto copy_axis=[](char const* label,std::vector<double> const& values) {
+            axis_view v(std::string(label),values.size());
+            auto host=Kokkos::create_mirror_view(v);
+            for(std::size_t i=0;i<values.size();++i) host(i)=values[i];
+            Kokkos::deep_copy(v,host);
+            return v;
+        };
+        native_rho=copy_axis("eos4d_lepton_logrho",logrho10);
+        native_T=copy_axis("eos4d_lepton_logT",logtemp10);
+        GRACE_INFO("Leptonic EOS uses its native {} by {} density/temperature grid, baryon grid {} by {}.",
+                   nrho,ntemp,nrho_b,ntemp_b);
+    } else {
         auto const uconv = CGS_units / GEOM_units ;  // for log(RHOGF) == log(uconv.mass_density)
         double const lnRHOGF = std::log(uconv.mass_density) ;
         double const ln10    = std::log(10.) ;
@@ -776,12 +826,17 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         double const off_T = 0.5 * (fT.lo + fT.hi) ;
 
         constexpr double axis_tol = 1e-8 ;  // log-axis spacing is typically ~1e-2
+        if (std::abs(off_T) > axis_tol) {
+            ERROR("Leptonic temperature axis differs from the baryonic MeV axis by log offset "
+                  << off_T << ". A density-unit relabel cannot change temperature; "
+                  "supply matched tables or explicitly convert their temperature units.") ;
+        }
         if (spread(fr) > axis_tol || spread(fT) > axis_tol) {
-            GRACE_WARN("Leptonic axes (read as {}) do NOT lie on the baryon grid: "
-                       "the offset varies by {:.3g} of a rho cell and {:.3g} of a T cell "
-                       "along the axes.  The lepton data are used row-aligned with the "
-                       "baryon table, so they are evaluated at the wrong states.",
-                       conv, spread(fr)/dlrho, spread(fT)/dlT) ;
+            ERROR("Leptonic rho/T axes do not match the baryon grid ("
+                  << conv << "; varying offsets " << spread(fr)/dlrho
+                  << " rho cells, " << spread(fT)/dlT << " T cells). "
+                  "Row-aligned interpolation would evaluate the wrong states. "
+                  "Supply matched tables; implicit regridding is not supported.") ;
         } else if (std::abs(off_r) > axis_tol || std::abs(off_T) > axis_tol) {
             GRACE_INFO("Leptonic axes read as {}; they label the baryon rows with a "
                        "constant factor of {:.7f} in rho and {:.7f} in T (a different "
@@ -797,15 +852,14 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         }
     }
 
-    // Sanity-check Y_le bounds against the baryon Y_e bounds.
+    // Electron and baryonic charge coordinates need not have identical axes.
     {
         double const baryon_yemax = baryon_eos.get_c2p_ye_max() ;
         double const baryon_yemin = baryon_eos.get_c2p_ye_min() ;
         if (std::abs(ylemax_f - baryon_yemax) > 1e-10 ||
             std::abs(ylemin_f - baryon_yemin) > 1e-10) {
-            GRACE_WARN("Leptonic ylemin/max = [{}, {}] differs from baryon "
-                       "yemin/max = [{}, {}]; this is required to be equal "
-                       "by Margherita.  Continuing but expect inconsistencies.",
+            GRACE_INFO("Electron Ye bounds [{}, {}] and baryonic Yp bounds "
+                       "[{}, {}] differ; enforce both with Yp = Ye + Ymu.",
                        ylemin_f, ylemax_f, baryon_yemin, baryon_yemax) ;
         }
     }
@@ -819,8 +873,10 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     std::vector<double> buf_ele (static_cast<size_t>(NVAR_ELE)*nyle*ntemp*nrho) ;
     std::vector<double> buf_muon(static_cast<size_t>(NVAR_MUON)*nymu*ntemp*nrho) ;
 
-    h5_read(file, "electronic_eos_tables", buf_ele .data(), H5T_NATIVE_DOUBLE) ;
-    h5_read(file, "muonic_eos_tables",     buf_muon.data(), H5T_NATIVE_DOUBLE) ;
+    h5_read(file, "electronic_eos_tables", buf_ele .data(), H5T_NATIVE_DOUBLE,
+            {NVAR_ELE,hsize_t(nyle),hsize_t(ntemp),hsize_t(nrho)}) ;
+    h5_read(file, "muonic_eos_tables",     buf_muon.data(), H5T_NATIVE_DOUBLE,
+            {NVAR_MUON,hsize_t(nymu),hsize_t(ntemp),hsize_t(nrho)}) ;
 
     H5Fclose(file) ;
 
@@ -837,8 +893,7 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     Kokkos::deep_copy(v_muon, h_muon) ;
 
     // -------------------------------------------------------
-    //  4) Axis Kokkos views.  rho and T axes are shared with the
-    //     baryon table (we pass bt._logrho / bt._logT below).
+    //  4) Axis Kokkos views for the independent electronic and muonic fractions.
     //     yle stores linear Y_le values (Margherita convention).
     //     ymu stores log(Y_mu) values — the HDF5 ymu_table is
     //     log-spaced; queries must pass log(ymu) to muon_table.
@@ -868,8 +923,8 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     double const rhomin  = baryon_eos.density_minimum() ;
     double const tempmax = baryon_eos.temperature_maximum() ;
     double const tempmin = baryon_eos.temperature_minimum() ;
-    double const yemax   = baryon_eos.get_c2p_ye_max() ;
-    double const yemin   = baryon_eos.get_c2p_ye_min() ;
+    double const yemax   = std::min(ylemax_f, yle.back()) ;
+    double const yemin   = std::max(ylemin_f, yle.front()) ;
 
     // ymu_table stores log(Ymu) (Margherita convention: "Ymu is in log
     // scale just like rho, temp").  eos_ymumin/max are the linear Ymu
@@ -955,7 +1010,7 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         ye_atm, ymu_atm,
         atm_beta_eq,
         add_ele,
-        log_press
+        log_press, native_rho, native_T
     ) ;
 
     // -------------------------------------------------------
@@ -984,9 +1039,11 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
         // lepton tables: (minus + plus) sums; the electron table is only used with add_ele
         auto const lepton_fe = [&] (std::string const& label, auto const& hv,
                                     std::vector<double> const& axis, int P0, int E0, int S0) {
-            return build_free_energy_table(label, lr, lt, axis, mb_MeV,
+            auto const& lepton_lr=native_lepton_grid?logrho10:lr;
+            auto const& lepton_lt=native_lepton_grid?logtemp10:lt;
+            return build_free_energy_table(label, lepton_lr, lepton_lt, axis, mb_MeV,
                 [&] (int i, int j, int k) { return hv(i,j,k,E0) + hv(i,j,k,E0+1) ; },
-                [&] (int i, int j, int k) { return (hv(i,j,k,P0) + hv(i,j,k,P0+1)) / std::exp(lr[i]) ; },
+                [&] (int i, int j, int k) { return (hv(i,j,k,P0) + hv(i,j,k,P0+1)) / std::exp(lepton_lr[i]) ; },
                 [&] (int i, int j, int k) { return hv(i,j,k,S0) + hv(i,j,k,S0+1) ; }) ;
         } ;
         tabeos_free_energy_t fe_e ;
