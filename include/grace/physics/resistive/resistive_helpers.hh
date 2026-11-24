@@ -94,7 +94,7 @@ edge_interp_2(View const& view,
     int const dj = utils::delta(1, idir);
 #ifdef GRACE_3D
     int const dk = utils::delta(2, idir);
-#elif 
+#else 
     int constexpr dk = 0;
 #endif
 

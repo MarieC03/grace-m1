@@ -244,7 +244,7 @@ endif()
 if ( GRACE_ENABLE_RESISTIVE )
     # edge_interp_2
     add_grace_test(resistive_helpers_test test_resistive_helpers.cpp)
-    add_test(NAME resistive_helpers_test COMMAND mpirun -n 1 ./resistive_helpers_test)
+    add_test(NAME resistive_helpers_test COMMAND mpirun -n 1 ./resistive_helpers_test --grace-parfile ./configs/resistive.yaml)
     set_tests_properties(resistive_helpers_test PROPERTIES LABELS "fast"
         ENVIRONMENT "OMP_NUM_THREADS=1;OMP_PROC_BIND=false")
 endif()
