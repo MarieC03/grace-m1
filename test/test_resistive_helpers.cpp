@@ -88,14 +88,14 @@ TEST_CASE("edge_interp_2 function","[resistive][grid_interpolator]") {
     // Here valid_gz = ngz.
     fill_state_with_polynomial_and_nan_fence(ivar, ngz, test_func);
 
+    // Set host state
+    auto state_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, state);
+
     // Interpolate edges at the physical domain corner.
     const unsigned long i = ngz, j = ngz, k = ngz;
     constexpr int idir_y = 0; // 0 => interp lower edge along y
     constexpr int idir_x = 2; // 2 => interp lower edge along x
     constexpr int idir_z = 1; // 1 => interp lower edge along z
-
-    // Set host state
-    auto state_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, state);
 
     // Set interp'd edges
     const double edge_y = edge_interp_2(state_h, i, j, k, ivar, q, idir_y);
@@ -103,7 +103,6 @@ TEST_CASE("edge_interp_2 function","[resistive][grid_interpolator]") {
     const double edge_x = edge_interp_2(state_h, i, j, k, ivar, q, idir_x);
 
     // Calculate expected (_c) edge values.
-    // Along y
     const auto pc_edge_y = get_physical_coordinates(
             {i, j, k}, q, 
             {0.0, 0.5, 0.0} // coord at y edge
