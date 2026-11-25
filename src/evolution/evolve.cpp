@@ -25,8 +25,12 @@
  *
  */
 
+#include "Kokkos_MathematicalFunctions.hpp"
+#include "grace/data_structures/variable_indices.hh"
 #include "grace/data_structures/variables.hh"
+#include "grace/physics/grmhd_helpers.hh"
 #include "grace/utils/metric_utils.hh"
+#include <array>
 #include <grace_config.h>
 
 #include <limits>
@@ -75,6 +79,11 @@
 
 #ifdef GRACE_ENABLE_PARTICLES
 #include <grace/particles/particles_module.hh>
+#endif
+
+#ifdef GRACE_ENABLE_RESISTIVE
+#include <grace/physics/resistive/resistive_helpers.hh>
+#include <grace/physics/resistive/resistive_subexpressions.hh>
 #endif
 
 #include <string>
@@ -1824,36 +1833,48 @@ void update_CT(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
 //#ifdef GRACE_ENABLE_RESISTIVE
-        metric_array_t  g     = FILL_METRIC_ARRAY(g, state, q, VEC(i,j,k)); // cell centred metric
+        // It seems like at least some of the code below should become subexpressions.
 
-        auto const Bu_NW   = { 0.0,
-                            aux(VEC(i,j,k), BX_, q),
-                            aux(VEC(i,j,k), BY_, q),
-                            aux(VEC(i,j,k), BZ_, q)
-                           }; // B^mu
-        auto const Bu_NE   = { 0.0,
-                            aux(VEC(i,j,k), BX_, q),
-                            aux(VEC(i,j,k), BY_, q),
-                            aux(VEC(i,j,k), BZ_, q)
-                           }; // B^mu
-        auto const Bu_SE   = { 0.0,
-                            aux(VEC(i,j,k), BX_, q),
-                            aux(VEC(i,j,k), BY_, q),
-                            aux(VEC(i,j,k), BZ_, q)
-                           }; // B^mu
-        auto const Bu_SW   = { 0.0,
-                            aux(VEC(i,j,k), BX_, q),
-                            aux(VEC(i,j,k), BY_, q),
-                            aux(VEC(i,j,k), BZ_, q)
-                           }; // B^mu
+        // Spatial metrics on edges.
+        metric_array_t gdd_N = compute_edge_metric(state, VEC(i, j, k+1), q, Y_EDGE_INTERP_);
+        metric_array_t gdd_W = compute_edge_metric(state, VEC(i, j, k), q, Z_EDGE_INTERP_);
+        metric_array_t gdd_S = compute_edge_metric(state, VEC(i, j, k), q, Y_EDGE_INTERP_);
+        metric_array_t gdd_E = compute_edge_metric(state, VEC(i, j+1, k), q, Z_EDGE_INTERP_);
 
-        /* Need to supply following on edges:
-	double alp,
-	const double Bd[4],
-	const double wd[4],
-	double (*sqrtgF)[6]
-        */
+        double Bu_N[4], Bu_W[4], Bu_S[4], Bu_E[4];
+        get_x_face_edges(aux, VEC(i, j, k), BX_, BY_, BZ_, q, &Bu_N, &Bu_W, &Bu_S, &Bu_E);
+        
+        const std::array<double, 4> Bd_N = gdd_N.lower_4vec(std::to_array(Bu_N));
+        const std::array<double, 4> Bd_W = gdd_N.lower_4vec(std::to_array(Bu_W));
+        const std::array<double, 4> Bd_S = gdd_N.lower_4vec(std::to_array(Bu_S));
+        const std::array<double, 4> Bd_E = gdd_N.lower_4vec(std::to_array(Bu_E));
+
+        double zvec_u_N[3], zvec_u_W[3], zvec_u_S[3], zvec_u_E[3];
+        get_x_face_edges(state, VEC(i, j, k), ZVECX_, ZVECY_, ZVECZ_, q, &zvec_u_N, &zvec_u_W, &zvec_u_S, &zvec_u_E);
+        const std::array<double, 3> zvec_d_N = gdd_N.lower(std::to_array(zvec_u_N));
+        const std::array<double, 3> zvec_d_W = gdd_W.lower(std::to_array(zvec_u_W));
+        const std::array<double, 3> zvec_d_S = gdd_S.lower(std::to_array(zvec_u_S));
+        const std::array<double, 3> zvec_d_E = gdd_E.lower(std::to_array(zvec_u_E));
+
+        const double W_N_inv = Kokkos::sqrt(gdd_N.square_vec(std::to_array(zvec_u_N)) + 1);
+        const double W_W_inv = Kokkos::sqrt(gdd_W.square_vec(std::to_array(zvec_u_W)) + 1);
+        const double W_S_inv = Kokkos::sqrt(gdd_S.square_vec(std::to_array(zvec_u_S)) + 1);
+        const double W_E_inv = Kokkos::sqrt(gdd_E.square_vec(std::to_array(zvec_u_E)) + 1);
+
+        const double wd_N[4] = {gdd_N._alp, zvec_d_N[0] * W_N_inv, zvec_d_N[1] * W_N_inv, zvec_d_N[2] * W_N_inv};
+        const double wd_W[4] = {gdd_W._alp, zvec_d_W[0] * W_W_inv, zvec_d_W[1] * W_W_inv, zvec_d_W[2] * W_W_inv};
+        const double wd_S[4] = {gdd_S._alp, zvec_d_S[0] * W_S_inv, zvec_d_S[1] * W_S_inv, zvec_d_S[2] * W_S_inv};
+        const double wd_E[4] = {gdd_E._alp, zvec_d_E[0] * W_E_inv, zvec_d_E[1] * W_E_inv, zvec_d_E[2] * W_E_inv};
+
+        double sqrtgF_N[6], sqrtgF_W[6], sqrtgF_S[6], sqrtgF_E[6];
+        resistive_get_sqrtgF(gdd_N._alp, Bd_N.data(), wd_N, &sqrtgF_N);
+        resistive_get_sqrtgF(gdd_W._alp, Bd_W.data(), wd_W, &sqrtgF_W);
+        resistive_get_sqrtgF(gdd_S._alp, Bd_S.data(), wd_S, &sqrtgF_S);
+        resistive_get_sqrtgF(gdd_E._alp, Bd_E.data(), wd_E, &sqrtgF_E);
+
+        // resistive_get_divF(double sqrtg, const double *dsqrtgF_dx, double (*divF)[4])
 //#endif //GRACE_ENABLE_RESISTIVE
+
         // d/dt B^x_i-1/2,j,k = d/dz E^y - d/dy E^z
         //                    = 1/dz (E^y_{i-1/2,j,k+1/2}-E^y_{i-1/2,j,k-1/2})
         //                    + 1/dy (E^z_{i-1/2,j-1/2,k}-E^z_{i-1/2,j+1/2,k})
@@ -1861,10 +1882,8 @@ void update_CT(
             (emf(VEC(i,j,k+1),1,q)-emf(VEC(i,j,k),1,q)) * idx(2,q)
           + (emf(VEC(i,j,k),2,q)-emf(VEC(i,j+1,k),2,q)) * idx(1,q)
 #ifdef GRACE_ENABLE_RESISTIVE
-        //                    + alp * res * (
-        //                                  1/dz (E1^y_{i-1/2,j,k+1/2}-E1^y_{i-1/2,j,k-1/2})
-        //                                  + 1/dy (E1^z_{i-1/2,j-1/2,k}-E1^z_{i-1/2,j+1/2,k})
-        //                                  )
+        //                    - 1/dz (E1t^y_{i-1/2,j,k+1/2}-E1t^y_{i-1/2,j,k-1/2})
+        //                    + 1/dy (E1t^z_{i-1/2,j-1/2,k}-E1t^z_{i-1/2,j+1/2,k})
 #endif //GRACE_ENABLE_RESISTIVE
         )  ;
     } ) ;

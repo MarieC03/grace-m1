@@ -8,6 +8,7 @@
 #include "grace/amr/amr_functions.hh"
 #include "grace/coordinates/coordinate_systems.hh"
 #include "grace/data_structures/variables.hh"
+#include <grace/data_structures/variable_indices.hh>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -93,14 +94,11 @@ TEST_CASE("edge_interp_2 function","[resistive][grid_interpolator]") {
 
     // Interpolate edges at the physical domain corner.
     const unsigned long i = ngz, j = ngz, k = ngz;
-    constexpr int idir_y = 0; // 0 => interp lower edge along y
-    constexpr int idir_x = 2; // 2 => interp lower edge along x
-    constexpr int idir_z = 1; // 1 => interp lower edge along z
 
     // Set interp'd edges
-    const double edge_y = edge_interp_2(state_h, i, j, k, ivar, q, idir_y);
-    const double edge_z = edge_interp_2(state_h, i, j, k, ivar, q, idir_z);
-    const double edge_x = edge_interp_2(state_h, i, j, k, ivar, q, idir_x);
+    const double edge_y = edge_interp_2(state_h, i, j, k, ivar, q, Y_EDGE_INTERP_);
+    const double edge_z = edge_interp_2(state_h, i, j, k, ivar, q, Z_EDGE_INTERP_);
+    const double edge_x = edge_interp_2(state_h, i, j, k, ivar, q, X_EDGE_INTERP_);
 
     // Calculate expected (_c) edge values.
     const auto pc_edge_y = get_physical_coordinates(

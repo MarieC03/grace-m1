@@ -544,4 +544,13 @@ enum z4c_curv_scratch_idx : int {
 } ;
 #endif
 
+//#ifdef GRACE_ENABLE_RESISTIVE
+// Helper enum indices for edge_interp_2
+enum edge_interp_direction_idx : int {
+    X_EDGE_INTERP_ = 2,
+    Y_EDGE_INTERP_ = 0,
+    Z_EDGE_INTERP_ = 1
+};
+//#endif // GRACE_ENABLE_RESISTIVE
+
 #endif /* INCLUDE_GRACE_DATA_STRUCTURES_VARIABLE_INDICES */

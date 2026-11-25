@@ -28,9 +28,11 @@
 #define GRACE_PHYSICS_RES_HELPERS_HH
 
 #include "Kokkos_MathematicalFunctions.hpp"
+#include "grace/data_structures/variable_indices.hh"
 #include "grace/utils/grace_utils.hh"
 #include "grace/utils/inline.h"
 #include "grace/utils/math.hh"
+#include "grace/utils/metric_utils.hh"
 #include <grace_config.h>
 #include <grace/config/config_parser.hh>
 /**
@@ -80,10 +82,7 @@ compute_res(double const rho, resistive_params_t const& resistive_params){
 /**
  * @brief Device function for second oder averaging onto edges 
  * using 4 cell centred values along direction idir. 
- * Returns following:
- * idir = 0 (i): lower edge along j
- * idir = 1 (j): lower edge along k
- * idir = 2 (k): lower edge along i
+ * Use the enums X_EDGE_INTERP_ etc. for idir.
  * */
 template <typename View>
 GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE double
@@ -104,6 +103,116 @@ edge_interp_2(View const& view,
     double const view_4 = view(VEC(i - dj, j - dk, k - di), ivar, q);
 
     return 0.25 * (view_1 + view_2 + view_3 + view_4);
+}
+
+/**
+ * @brief Interp three metric onto edges.
+ * */
+template<typename View>
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE grace::metric_array_t
+compute_edge_metric(View const& state,
+                    VEC(int const i, int const j, int const k),
+                    int const q, int const idir) {
+    auto interp = [&](int const ivar) {
+        return edge_interp_2(state, VEC(i, j, k), ivar, q, idir);
+    };
+
+#if GRACE_METRIC_EVOL == GRACE_METRIC_EVOL_COWLING
+    return grace::metric_array_t(
+            {interp(GXX_), interp(GXY_), interp(GXZ_), interp(GYY_), interp(GYZ_), interp(GZZ_)}, 
+            {interp(BETAX_), interp(BETAY_), interp(BETAZ_)}, 
+            interp(ALP_));
+#else
+    // Resistivity currently only implemented for Cowling, but the option for Z4c is here anyway.
+    return grace::metric_array_t(
+            {interp(GTXX_), interp(GTXY_), interp(GTXZ_), interp(GTYY_), interp(GTYZ_), interp(GTZZ_)}, 
+            interp(CHI_),
+            {interp(BETAX_), interp(BETAY_), interp(BETAZ_)}, 
+            interp(ALP_));
+#endif
+}
+
+/** 
+ * @brief C-like wrapper to interp spatial four vectors onto face edges.
+ * */
+template<typename View>
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
+get_x_face_edges(View const& view,
+                VEC(int const i, int const j, int const k),
+                int const ivar_x, int const ivar_y, int const ivar_z,
+                int const q,
+                double (*edge_N)[4],
+                double (*edge_W)[4],
+                double (*edge_S)[4],
+                double (*edge_E)[4]) {
+        (*edge_N)[0] = 0.0;
+        (*edge_N)[1] = edge_interp_2(view, i, j, k+1, ivar_x, q, Y_EDGE_INTERP_);
+        (*edge_N)[2] = edge_interp_2(view, i, j, k+1, ivar_y, q, Y_EDGE_INTERP_);
+        (*edge_N)[3] = edge_interp_2(view, i, j, k+1, ivar_z, q, Y_EDGE_INTERP_);
+
+        (*edge_W)[0] = 0.0;
+        (*edge_W)[1] = edge_interp_2(view, i, j, k, ivar_x, q, Z_EDGE_INTERP_);
+        (*edge_W)[2] = edge_interp_2(view, i, j, k, ivar_y, q, Z_EDGE_INTERP_);
+        (*edge_W)[3] = edge_interp_2(view, i, j, k, ivar_z, q, Z_EDGE_INTERP_);
+
+        (*edge_S)[0] = 0.0;
+        (*edge_S)[1] = edge_interp_2(view, i, j, k, ivar_x, q, Y_EDGE_INTERP_);
+        (*edge_S)[2] = edge_interp_2(view, i, j, k, ivar_y, q, Y_EDGE_INTERP_);
+        (*edge_S)[3] = edge_interp_2(view, i, j, k, ivar_z, q, Y_EDGE_INTERP_);
+
+        (*edge_E)[0] = 0.0;
+        (*edge_E)[1] = edge_interp_2(view, i, j+1, k, ivar_x, q, Z_EDGE_INTERP_);
+        (*edge_E)[2] = edge_interp_2(view, i, j+1, k, ivar_y, q, Z_EDGE_INTERP_);
+        (*edge_E)[3] = edge_interp_2(view, i, j+1, k, ivar_z, q, Z_EDGE_INTERP_);
+}
+
+/** 
+ * @brief C-like wrapper to interp scalars onto face edges.
+ * */
+template<typename View>
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
+get_x_face_edges(View const& view,
+                VEC(int const i, int const j, int const k),
+                int const ivar,
+                int const q,
+                double (*edge_N),
+                double (*edge_W),
+                double (*edge_S),
+                double (*edge_E)) {
+        (*edge_N) = edge_interp_2(view, i, j, k+1, ivar, q, Y_EDGE_INTERP_);
+        (*edge_W) = edge_interp_2(view, i, j, k, ivar, q, Z_EDGE_INTERP_);
+        (*edge_S) = edge_interp_2(view, i, j, k, ivar, q, Y_EDGE_INTERP_);
+        (*edge_E) = edge_interp_2(view, i, j+1, k, ivar, q, Z_EDGE_INTERP_);
+}
+
+/** 
+ * @brief C-like wrapper to interp three vectors onto face edges.
+ * */
+template<typename View>
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
+get_x_face_edges(View const& view,
+                VEC(int const i, int const j, int const k),
+                int const ivar_x, int const ivar_y, int const ivar_z,
+                int const q,
+                double (*edge_N)[3],
+                double (*edge_W)[3],
+                double (*edge_S)[3],
+                double (*edge_E)[3]) {
+        (*edge_N)[0] = edge_interp_2(view, i, j, k+1, ivar_x, q, Y_EDGE_INTERP_);
+        (*edge_N)[1] = edge_interp_2(view, i, j, k+1, ivar_y, q, Y_EDGE_INTERP_);
+        (*edge_N)[2] = edge_interp_2(view, i, j, k+1, ivar_z, q, Y_EDGE_INTERP_);
+
+        (*edge_W)[0] = edge_interp_2(view, i, j, k, ivar_x, q, Z_EDGE_INTERP_);
+        (*edge_W)[1] = edge_interp_2(view, i, j, k, ivar_y, q, Z_EDGE_INTERP_);
+        (*edge_W)[2] = edge_interp_2(view, i, j, k, ivar_z, q, Z_EDGE_INTERP_);
+
+        (*edge_S)[0] = edge_interp_2(view, i, j, k, ivar_x, q, Y_EDGE_INTERP_);
+        (*edge_S)[1] = edge_interp_2(view, i, j, k, ivar_y, q, Y_EDGE_INTERP_);
+        (*edge_S)[2] = edge_interp_2(view, i, j, k, ivar_z, q, Y_EDGE_INTERP_);
+
+        (*edge_E)[0] = edge_interp_2(view, i, j+1, k, ivar_x, q, Z_EDGE_INTERP_);
+        (*edge_E)[1] = edge_interp_2(view, i, j+1, k, ivar_y, q, Z_EDGE_INTERP_);
+        (*edge_E)[2] = edge_interp_2(view, i, j+1, k, ivar_z, q, Z_EDGE_INTERP_);
 }
 
 }

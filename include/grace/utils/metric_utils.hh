@@ -240,10 +240,10 @@ lower(std::array<double,3> const& v ) const {
     } ; 
 }
 /**
- * @brief Lower the index of a 3-vector.
+ * @brief Lower the index of a 4-vector.
  * 
- * @param v Components of the 3-vector.
- * @return std::array<double,3> The 3-covector 
+ * @param v Components of the 4-vector.
+ * @return std::array<double,4> The 4-covector 
  *         obtained as \f$\gamma_{i j} v^j\f$.
  */
 std::array<double,4> GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE 
