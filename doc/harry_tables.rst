@@ -10,7 +10,9 @@ Provider selection
 ------------------
 
 ``m1.eas.weakhub_format: auto`` detects spectral versus historical grey HDF5
-schemas. ``pair_treatment: auto`` chooses evolved partners for spectral tables
+schemas during setup. Each MPI rank retains its selection until the tables
+are finalized. An unreadable file during automatic selection is an error.
+``pair_treatment: auto`` chooses evolved partners for spectral tables
 and the historical standard treatment otherwise. Explicit historical modes
 remain available with the historical providers. Harry tables require a
 five-species pair-kernel build, leptonic EOS, ``dilute_muon_cc_target: true``,
@@ -36,7 +38,7 @@ bremsstrahlung; it is not included in the WeakHub HDF5 files.
 Physics conventions
 -------------------
 
-The reader preserves natural-log opacities and Phi0 and the Phi1/Phi0 ratio.
+The reader interpolates opacities and Phi0 in their stored natural-log units.
 Charged-current raw absorption is converted to stimulated absorption before
 grey averaging, using stable logarithmic factors. Emission is reconstructed
 from the charged-current equilibrium chemical potential. The dilute-muon
@@ -61,7 +63,8 @@ Thermal pairs include electron, muon and tau flavours. Pair kernels enter the
 existing conservative reaction contraction with Phi0/2 (the angular-average
 convention of WeakHub Eq.45). The tau field represents nu_tau+antinu_tau;
 opacities are averaged rather than multiplied by the species count twice.
-Phi1 is read but not used by the current isotropic pair collision model.
+The current isotropic pair and decay models use Phi0. The reader checks the
+shapes of their companion Phi1 datasets without allocating their values.
 The four raw absorption arrays supply only charged-current reactions.
 Elastic scattering uses six energy spectra at (rho, T, Ye+Ymu). The tau
 opacity is the arithmetic mean of its two spectra. Guo's response supplies
@@ -91,6 +94,12 @@ closed-box runtimes are source-update timings, not full GRACE/BNS step costs.
 The follow-up EOS/source/independent-CC audit is archived under
 GRACE_runs/HOTTOV_5spec/cc_boundary_solver_20261118. Numerical fixes do not
 extend the thermodynamic coverage of the supplied EOS or interaction tables.
+
+To validate the November 23 files, configure a test build with
+``-DGRACE_HARRY_RELEASE_DIR=/path/to/releases`` and run
+``ctest --output-on-failure -R harry_release`` in the build directory. Both
+files must be present with their published campaign checksums. The ordinary
+synthetic reader tests run independently of the availability of these files.
 
 Pair and atmosphere boundary policy
 ----------------------------------

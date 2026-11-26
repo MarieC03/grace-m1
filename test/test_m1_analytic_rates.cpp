@@ -1525,6 +1525,7 @@ struct setup_config_guard {
         c["m1"]["eas"]["kind"] = "neutrino_weakhub";
         c["m1"]["eas"]["kinds"] = std::vector<std::string>{};
         c["m1"]["eas"]["weakhub_table"] = table;
+        c["m1"]["eas"]["weakhub_format"] = "grey"; // This fixture supplies the historical sidecar only.
         c["m1"]["eas"]["weakhub_table_content"] = "auto";
         c["m1"]["eas"]["pair_treatment"] = "standard";
         c["m1"]["eas"]["muon_decay"] = true;

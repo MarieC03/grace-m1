@@ -53,6 +53,17 @@ TEST_CASE("Malformed ILD cannot be enabled","[harry][hdf5]") {
  REQUIRE_THROWS_WITH(initialize_harry_table(p,true),"Harry ILD table is malformed: expected full energy-pair and three thermodynamic dimensions; cannot use tabulated muon decay");
  std::filesystem::remove(p);
 }
+TEST_CASE("Unused pair moment still requires the full energy and matter axes","[harry][hdf5]") {
+ const char* path="harry-reader-invalid-pair.h5";
+ fixture(path,true);
+ auto file=H5Fopen(path,H5F_ACC_RDWR,H5P_DEFAULT);
+ REQUIRE(file>=0);
+ REQUIRE(H5Ldelete(file,"PP_Phi1_ann_table",H5P_DEFAULT)>=0);
+ put(file,"PP_Phi1_ann_table",{2},{0.,1.});
+ H5Fclose(file);
+ REQUIRE_THROWS_WITH(initialize_harry_table(path,true),"Harry table: invalid shape for PP_Phi1_ann_table");
+ std::filesystem::remove(path);
+}
 TEST_CASE("Finite-grid FOFC bounds use number capacity and positive-temperature spectra","[harry][transport]") {
  char const* p="harry-moment-fixture.h5";fixture(p,true);initialize_harry_table(p,true);
  auto bound=get_harry_device_handle().envelope;

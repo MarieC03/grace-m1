@@ -32,6 +32,7 @@
  #include <grace/system/kokkos_runtime.hh>
  #include <grace/system/p4est_runtime.hh>
  #include <grace/system/runtime_functions.hh>
+ #include <grace/system/checkpoint_schedule.hh>
 
  #include <grace/config/config_parser.hh>
 
@@ -97,22 +98,23 @@ double get_timestep() {
 bool check_termination_condition()
 {
     auto& runtime = grace::runtime::get() ;
-    if (runtime.user_termination_requested()) return true ;
+    bool scheduled=false;
     auto term_cnd = runtime.termination_condition() ;
     switch (term_cnd) {
         case terminate::ITERATION:
-        return runtime.iteration() >= runtime.max_iteration() ;
+        scheduled=runtime.iteration() >= runtime.max_iteration(); break;
         case terminate::TIME:
-        return runtime.time() > runtime.max_time() ;
+        scheduled=runtime.time() > runtime.max_time(); break;
         case terminate::WALLTIME:
-        return runtime.total_elapsed()/3600 > runtime.max_walltime() ;
+        scheduled=runtime.total_elapsed()/3600 > runtime.max_walltime(); break;
         default:
         ERROR("Unrecognized termination condition.") ;
     }
+    return collective_termination_due(scheduled,runtime.user_termination_requested());
 }
 
 void request_termination()
 {
     grace::runtime::get().request_termination() ;
 }
-} /* namespace */ 
+} /* namespace */

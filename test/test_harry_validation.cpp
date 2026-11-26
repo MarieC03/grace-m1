@@ -47,6 +47,20 @@ int main(int argc,char** argv) {
 }
 namespace {
 struct state { double rho,T,ye,ymu; };
+TEST_CASE("Loaded provider survives an unavailable rate file until teardown", "[.][provider_lifetime]") {
+    auto& config=config_parser::get();
+    REQUIRE(get_param<std::string>("m1","eas","weakhub_format")=="auto");
+    bool const harry_expected=!weakhub::get_device_handle().valid;
+    REQUIRE(get_harry_table_mode()==harry_expected);
+    auto const original=get_param<std::string>("m1","eas","weakhub_table");
+    config["m1"]["eas"]["weakhub_table"]=original+".deliberately-absent";
+    REQUIRE(get_harry_table_mode()==harry_expected);
+    weakhub::finalize_weakhub();
+    REQUIRE_THROWS_AS(get_harry_table_mode(),std::runtime_error);
+    config["m1"]["eas"]["weakhub_table"]=original;
+    weakhub::initialize_weakhub_from_params();
+    REQUIRE(get_harry_table_mode()==harry_expected);
+}
 bool potentials(leptonic_eos_4d_t const& e,state s,double& mue,double& mumu) {
     auto initial=s; double mup,mun,Xa,Xh,Xn,Xp,A,Z; eos_err_t err{};
     mue=e.mue_mumu_mup_mun_Xa_Xh_Xn_Xp_Abar_Zbar__temp_rho_ye_ymu(

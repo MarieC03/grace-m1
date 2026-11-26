@@ -32,8 +32,14 @@ struct tensor {
             if(!Kokkos::isfinite(x[d])||below(d,x[d])||above(d,x[d])) return false;
         return true;
     }
-    KOKKOS_INLINE_FUNCTION double interpolate(int channel,double const* x) const {
-        if(rank<1 || channel<0 || channel>=channels) Kokkos::abort("Invalid Harry tensor lookup");
+    struct stencil {
+        std::size_t offset[16], channel_stride;
+        double weight[16];
+        int count;
+    };
+    KOKKOS_INLINE_FUNCTION stencil locate(double const* x) const {
+        if(rank<1 || rank>4) Kokkos::abort("Invalid Harry tensor rank");
+        stencil s{};
         int lo[4]={0,0,0,0}; double w[4]={0,0,0,0};
         std::size_t stride[4]={1,1,1,1}, total=1;
         for(int d=0;d<rank;++d) {
@@ -44,13 +50,23 @@ struct tensor {
             w[d]=(x[d]-axes[d](a))/(axes[d](a+1)-axes[d](a));
             w[d]=w[d]<0?0:(w[d]>1?1:w[d]);
         }
-        double result=0;
-        for(int c=0;c<(1<<rank);++c) {
-            double weight=1; std::size_t offset=std::size_t(channel)*total;
+        s.count=1<<rank; s.channel_stride=total;
+        for(int c=0;c<s.count;++c) {
+            double weight=1; std::size_t offset=0;
             for(int d=0;d<rank;++d) {int hi=(c>>d)&1;weight*=hi?w[d]:1-w[d];offset+=(lo[d]+hi)*stride[d];}
-            result+=weight*values(offset);
+            s.weight[c]=weight; s.offset[c]=offset;
         }
+        return s;
+    }
+    KOKKOS_INLINE_FUNCTION double interpolate(int channel,stencil const& s) const {
+        if(channel<0 || channel>=channels) Kokkos::abort("Invalid Harry tensor channel");
+        auto const base=std::size_t(channel)*s.channel_stride;
+        double result=0;
+        for(int c=0;c<s.count;++c) result+=s.weight[c]*values(base+s.offset[c]);
         return result;
+    }
+    KOKKOS_INLINE_FUNCTION double interpolate(int channel,double const* x) const {
+        return interpolate(channel,locate(x));
     }
 };
 // Prefix sums of E^2 dE and E^3 dE for the fixed collision quadrature.
@@ -79,7 +95,7 @@ struct device_handle {
     bool ild_available=false;
     Kokkos::View<double*> energies, widths;
     moment_envelope envelope;
-    tensor cc[4], scattering, pair0,pair1,ild0,ild1;
+    tensor cc[4], scattering, pair0,ild0;
     KOKKOS_INLINE_FUNCTION static double log_positive(double x) {return Kokkos::log(x>1e-300?x:1e-300);}
     KOKKOS_INLINE_FUNCTION double cc_log(int species,int energy,double rho_code,double T,double Ye,double Ymu) const {
         double x[4]={log_positive(rho_code),log_positive(T),Ye,log_positive(Ymu)};

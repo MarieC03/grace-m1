@@ -12,4 +12,7 @@ TEST_CASE("Walltime checkpoint decisions agree despite rank-local clock skew", "
     // Subsequent deadlines can differ because ranks finish I/O at different times.
     REQUIRE_FALSE(grace::checkpoint_walltime_due(200., rank == 0 ? 201. : 199.));
     REQUIRE(grace::checkpoint_walltime_due(200., rank == 0 ? 199. : 201.));
+    REQUIRE_FALSE(grace::collective_termination_due(rank!=0,false));
+    REQUIRE(grace::collective_termination_due(rank==0,false));
+    REQUIRE(grace::collective_termination_due(false,rank==1));
 }

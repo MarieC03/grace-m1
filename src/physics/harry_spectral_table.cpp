@@ -80,14 +80,14 @@ void initialize_harry_table(std::string const& path,bool require_ild) {
     for(int s=0;s<4;++s)h.cc[s]=s<2?load(f.id,names[s],h.n_groups,{"logrho_IVetable","logtemp_IVetable","ye_IVetable","logymu_IVetable"}):load(f.id,names[s],h.n_groups,{"logrho_IVmutable","logtemp_IVmutable","ye_IVmutable","logymu_IVmutable"});
     h.scattering=load(f.id,"kappa_s_table_nu",6*h.n_groups,{"logrho_IIItable","logtemp_IIItable","yp_IIItable"});
     h.pair0=load(f.id,"PP_Phi0_ann_table",6*h.n_groups*h.n_groups,{"logtemp_IItable","logeta_e_IItable"});
-    h.pair1=load(f.id,"PP_Phi1_ann_table",6*h.n_groups*h.n_groups,{"logtemp_IItable","logeta_e_IItable"});
+    if(!shape(f.id,"PP_Phi1_ann_table",{hsize_t(h.pair0.channels),hsize_t(h.pair0.size[1]),hsize_t(h.pair0.size[0])}))
+        throw std::runtime_error("Harry table: invalid shape for PP_Phi1_ann_table");
     int n=h.n_groups*(h.n_groups+1);
     std::vector<hsize_t> dims={hsize_t(n),hsize_t(scalar(f.id,"IIIeta_mu")),hsize_t(scalar(f.id,"IIIeta_e")),hsize_t(scalar(f.id,"IIItemp_mu"))};
     h.ild_available=shape(f.id,"ILD_Phi0_out_table",dims)&&shape(f.id,"ILD_Phi1_out_table",dims);
     if(require_ild&&!h.ild_available)throw std::runtime_error("Harry ILD table is malformed: expected full energy-pair and three thermodynamic dimensions; cannot use tabulated muon decay");
     if(h.ild_available) {
         h.ild0=load(f.id,"ILD_Phi0_out_table",n,{"logtemp_IIItable_mu","logeta_e_IIItable","logeta_mu_IIItable"});
-        h.ild1=load(f.id,"ILD_Phi1_out_table",n,{"logtemp_IIItable_mu","logeta_e_IIItable","logeta_mu_IIItable"});
     }
     handle=h;initialized=true;
 }

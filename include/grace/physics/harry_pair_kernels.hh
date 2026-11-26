@@ -43,12 +43,14 @@ KOKKOS_INLINE_FUNCTION bool init_harry_pair_kernel(kernel& k,
     double x[2]={Kokkos::log(m.T),below?h.pair0.axes[1](0):logeta};
     if(!h.pair0.contains(x) || !harry_grid(h,k.g)) return false;
     if(eta_clamped) *eta_clamped=below;
+    double const lookup[2]={x[0],harry::device_handle::log_positive(eta_lookup)};
+    auto const stencil=h.pair0.locate(lookup);
     for(int i=0;i<k.g.n;++i) {
         // Only the kernel amplitude uses the table-edge eta. Pair DB depends
         // on actual T alone (mu_e + mu_positron = 0), preserving LTE exactly.
         k.boltz[i]=Kokkos::exp(-k.g.e[i]/m.T);
         for(int j=0;j<k.g.n;++j) {
-            double const r=phi0_to_average*Kokkos::exp(h.pair_log_ann(m.T,eta_lookup,species,i,j));
+            double const r=phi0_to_average*Kokkos::exp(h.pair0.interpolate((species*k.g.n+i)*k.g.n+j,stencil));
             if(!(r>=0) || !Kokkos::isfinite(r)) return false;
             k.a[i][j]=r;
         }
@@ -85,9 +87,10 @@ KOKKOS_INLINE_FUNCTION bool init_harry_decay_kernel(decay_kernel& k,
     // Apply the same T and chemical degeneracies to interpolation and DB.
     k.T=state[0]; k.delta=clamped?k.T*(state[2]-state[1]):mumu-mue;
     double const log_scale=Kokkos::log(phi0_to_average);
+    auto const stencil=h.ild0.locate(x);
     for(int c=0;c<2;++c) for(int i=0;i<k.g.n;++i) for(int j=0;j<=i;++j) {
         int const channel=c*k.g.n*(k.g.n+1)/2+i*(i+1)/2+j;
-        double const loga=log_scale+h.ild0.interpolate(channel,x);
+        double const loga=log_scale+h.ild0.interpolate(channel,stencil);
         double const exponent=((c==0?k.delta:-k.delta)-k.g.e[i]-k.g.e[j])/k.T;
         // Store p+a: existing bounded rates() recovers both orientations,
         // including strongly degenerate cases without exp(+large)*tiny.

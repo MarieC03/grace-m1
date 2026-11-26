@@ -30,6 +30,7 @@
 #include <grace/physics/guo_nnbrem.hh>
 
 #include <stdexcept>
+#include <optional>
 #include <string>
 #include <vector>
 #include <grace/config/config_parser.hh>
@@ -41,22 +42,27 @@
 #include <hdf5.h>
 
 namespace grace {
+namespace {
+// Configured on the host before launching the radiation kernels, and reset
+// with the tables. Once loaded, every dispatcher sees the same provider.
+std::optional<bool> loaded_harry_mode;
+std::string probed_path;
+bool probed_harry_mode=false;
+}
 bool get_harry_table_mode() {
+    if(loaded_harry_mode.has_value()) return *loaded_harry_mode;
     if(!get_eas_selection().contains(eas_kind_t::neutrino_weakhub)) return false;
     auto const format=detail::get_eas_param_or("auto","weakhub_format");
     if(format=="grey") return false;
     if(format=="harry") return true;
     if(format!="auto") ERROR("weakhub_format must be auto, grey or harry");
     auto const path=detail::get_eas_param_or("","weakhub_table");
-    if(path.empty()) return false;
-    // Setup-only validation may intentionally supply no readable table yet.
-    // The selected loader reports missing files at initialization, as before.
-    std::ifstream available(path,std::ios::binary);
-    if(!available) return false;
-    static std::string previous;
-    static bool result=false;
-    if(previous!=path) { result=harry::is_harry_table(path); previous=path; }
-    return result;
+    if(path.empty()) throw std::runtime_error("Automatic WeakHub selection requires a table path");
+    if(probed_path!=path) {
+        probed_harry_mode=harry::is_harry_table(path);
+        probed_path=path;
+    }
+    return probed_harry_mode;
 }
 namespace weakhub {
 namespace {
@@ -92,6 +98,7 @@ void initialize_weakhub_from_params() {
         if(get_param<bool>("m1","eas","bremsstrahlung"))
             guo_nnbrem::initialize(get_param<std::string>("m1","eas","guo_response_table"));
         g_initialized=true;
+        loaded_harry_mode=true;
         return;
     }
 
@@ -197,6 +204,7 @@ void initialize_weakhub_from_params() {
     GRACE_INFO("Weakhub table loaded successfully");
     g_handle.valid = true;
     g_initialized = true;
+    loaded_harry_mode=false;
     // The table Views live in namespace-scope statics; their destructors run
     // at program exit, after Kokkos::finalize, which aborts.  Release them
     // from a finalize hook instead — safe to double-call (finalize_weakhub
@@ -208,6 +216,8 @@ const device_handle& get_device_handle() { return g_handle; }
 bool is_initialized() { return g_initialized && g_handle.valid; }
 
 void finalize_weakhub() {
+    loaded_harry_mode.reset();
+    probed_path.clear();
     harry::finalize_harry_table();
     guo_nnbrem::finalize();
     if (!g_initialized) return;

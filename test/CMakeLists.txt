@@ -647,6 +647,16 @@ if(NOT TARGET grace_rate_tables)
 endif()
 add_test(NAME harry_spectral_table_test COMMAND mpirun -n 1 ./harry_spectral_table_test)
 set_tests_properties(harry_spectral_table_test PROPERTIES LABELS "m1;physics;harry" TIMEOUT 120)
+set(GRACE_HARRY_RELEASE_DIR "" CACHE PATH "Directory containing both 20261123 WeakHub releases for release validation")
+if(GRACE_HARRY_RELEASE_DIR)
+    foreach(model IN ITEMS SFHo DD2)
+        add_test(NAME harry_release_${model} COMMAND ${CMAKE_COMMAND}
+            -DMODEL=${model} -DDATA_DIR=${GRACE_HARRY_RELEASE_DIR}
+            -DREADER=$<TARGET_FILE:harry_spectral_table_test>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/check_harry_release.cmake)
+        set_tests_properties(harry_release_${model} PROPERTIES LABELS "release;harry" TIMEOUT 300 RUN_SERIAL TRUE)
+    endforeach()
+endif()
 add_kokkos_test(guo_nnbrem_test test_guo_nnbrem.cpp)
 add_test(NAME guo_nnbrem_test COMMAND mpirun -n 1 ./guo_nnbrem_test)
 set_tests_properties(guo_nnbrem_test PROPERTIES LABELS "m1;physics;harry" TIMEOUT 120)

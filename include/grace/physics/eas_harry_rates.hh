@@ -19,6 +19,11 @@ GRACE_HOST_DEVICE inline nu_rates_all_out compute_all_species_harry(
     nu_rates_all_out out{};
     double const pref=4*nu_constants::pi*nu_constants::clight/
         (nu_constants::hc_mevcm*nu_constants::hc_mevcm*nu_constants::hc_mevcm);
+    double const lrho=Kokkos::log(F.rho_code),lT=Kokkos::log(F.temp_mev);
+    double const xs[]={lrho,lT,F.ye+F.ymu};
+    bool const scatter=!h.scattering.below(0,lrho) && !h.scattering.below(1,lT);
+    harry::tensor::stencil es_stencil;
+    if(scatter) es_stencil=h.scattering.locate(xs);
     for(int s=0;s<5;++s) {
         double eta=0;
         if(s<2) eta=(F.mu_e+F.mu_p-F.mu_n-nu_constants::Qnp)/F.temp_mev;
@@ -32,7 +37,6 @@ GRACE_HOST_DEVICE inline nu_rates_all_out compute_all_species_harry(
         double Tnu=F.temp_mev;
         if(eps_rad && eps_rad[s]>0) Tnu=eps_rad[s]*moments.f2/moments.f3;
         if(!(Tnu>0) || !Kokkos::isfinite(Tnu)) Kokkos::abort("Invalid Harry grey spectrum");
-        double const lrho=Kokkos::log(F.rho_code),lT=Kokkos::log(F.temp_mev);
         // Harry's spectral CC reader rejects upper rho/T excursions and
         // disables each flavor separately below its own rho/T domain.
         if(s<4 && (h.cc[s].above(0,lrho)||h.cc[s].above(1,lT)))
@@ -40,9 +44,12 @@ GRACE_HOST_DEVICE inline nu_rates_all_out compute_all_species_harry(
         // Unlike Harry's EOS-aware clamped DB helper, this first adapter
         // has no per-flavor EOS reevaluation. Reject composition excursions
         // instead of mixing a clamped opacity with an unclamped chemical potential.
-        if(s<4 && !h.cc[s].below(0,lrho) && !h.cc[s].below(1,lT)) {
+        bool const cc=s<4 && !h.cc[s].below(0,lrho) && !h.cc[s].below(1,lT);
+        harry::tensor::stencil cc_stencil;
+        if(cc) {
             double x[4]={lrho,lT,F.ye,harry::device_handle::log_positive(F.ymu)};
             if(!h.cc[s].contains(x)) Kokkos::abort("Harry CC composition outside table domain; EOS-consistent boundary state required");
+            cc_stencil=h.cc[s].locate(x);
         }
         double J0=0,J1=0,A0=0,A1=0,S1=0;
         for(int i=0;i<h.n_groups;++i) {
@@ -52,16 +59,16 @@ GRACE_HOST_DEVICE inline nu_rates_all_out compute_all_species_harry(
             double f=eta<=0 ? Kokkos::exp(-e/Tnu)/(1+Kokkos::exp(eta-e/Tnu))
                             : harry_fd(e/Tnu-eta);
             double j=0,a=0;
-            if(s<4 && !h.cc[s].below(0,lrho) && !h.cc[s].below(1,lT)) {
-                double l=h.cc_log(s,i,F.rho_code,F.temp_mev,F.ye,F.ymu);
+            if(cc) {
+                double l=h.cc[s].interpolate(i,cc_stencil);
                 double x=eta-e/F.temp_mev;
                 j=Kokkos::exp(l+x);
                 a=Kokkos::exp(l+harry_log1pexp(x));
             }
             double ks=0;
-            if(!h.scattering.below(0,lrho) && !h.scattering.below(1,lT)) {
-                ks=Kokkos::exp(h.scatter_log(s,i,F.rho_code,F.temp_mev,F.ye+F.ymu));
-                if(s==4) ks=.5*(ks+Kokkos::exp(h.scatter_log(5,i,F.rho_code,F.temp_mev,F.ye+F.ymu)));
+            if(scatter) {
+                ks=Kokkos::exp(h.scattering.interpolate(s*h.n_groups+i,es_stencil));
+                if(s==4) ks=.5*(ks+Kokkos::exp(h.scattering.interpolate(5*h.n_groups+i,es_stencil)));
             }
             J0+=w*j; J1+=w*e*j; A0+=w*a*f; A1+=w*e*a*f; S1+=w*e*ks*f;
         }

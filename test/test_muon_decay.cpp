@@ -511,6 +511,7 @@ TEST_CASE("Muon decay setup is opt-in and accepts both explicit partner modes", 
     config_parser::get()["m1"]["eas"]["pair_treatment"]="equilibrium";
     REQUIRE(get_pair_treatment()==pair_treatment_t::equilibrium);
     config_parser::get()["m1"]["eas"]["kind"]="neutrino_weakhub";
+    config_parser::get()["m1"]["eas"]["weakhub_format"]="grey";
     config_parser::get()["m1"]["eas"]["weakhub_table_content"]="none";
     (void)get_weakhub_table_content(true);
     REQUIRE(get_pair_treatment()==pair_treatment_t::equilibrium);
@@ -578,7 +579,10 @@ TEST_CASE("Muon decay rejects incompatible setup", "[.][decay-invalid]") {
     if(mode=="eos") c["eos"]["eos_type"]="ideal";
     else if(mode=="dilute") c["eos"]["leptonic"]["dilute_muon_suppression"]=true;
     else if(mode=="electrons") c["eos"]["leptonic"]["add_ele_contribution"]=false;
-    else if(mode=="table") c["m1"]["eas"]["kind"]="neutrino_weakhub";
+    else if(mode=="table") {
+        c["m1"]["eas"]["kind"]="neutrino_weakhub";
+        c["m1"]["eas"]["weakhub_format"]="grey";
+    }
     else if(mode=="betaeq") c["m1"]["eas"]["betaeq_policy"]="gieg";
     else if(mode=="order") c["m1"]["eas"]["muon_decay_kernel_order"]=65;
     else if(mode=="vacuum_dilute") c["m1"]["eas"]["muon_decay_treatment"]="vacuum";
