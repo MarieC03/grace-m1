@@ -33,8 +33,10 @@
 #include "grace/utils/inline.h"
 #include "grace/utils/math.hh"
 #include "grace/utils/metric_utils.hh"
+#include <array>
 #include <grace_config.h>
 #include <grace/config/config_parser.hh>
+#include <grace/physics/resistive/resistive_subexpressions.hh>
 /**
  * @brief Resistive parameters
  *
@@ -123,7 +125,6 @@ compute_edge_metric(View const& state,
             {interp(BETAX_), interp(BETAY_), interp(BETAZ_)}, 
             interp(ALP_));
 #else
-    // Resistivity currently only implemented for Cowling, but the option for Z4c is here anyway.
     return grace::metric_array_t(
             {interp(GTXX_), interp(GTXY_), interp(GTXZ_), interp(GTYY_), interp(GTYZ_), interp(GTZZ_)}, 
             interp(CHI_),
@@ -213,6 +214,19 @@ get_x_face_edges(View const& view,
         (*edge_E)[0] = edge_interp_2(view, i, j+1, k, ivar_x, q, Z_EDGE_INTERP_);
         (*edge_E)[1] = edge_interp_2(view, i, j+1, k, ivar_y, q, Z_EDGE_INTERP_);
         (*edge_E)[2] = edge_interp_2(view, i, j+1, k, ivar_z, q, Z_EDGE_INTERP_);
+}
+
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
+compute_sqrtgF(const metric_array_t& gdd, const double (*Bu)[4], const double (*zvec_u)[3], double (*sqrtgF)[6]) {
+        const std::array<double, 4> Bd = gdd.lower_4vec(std::to_array(*Bu));
+
+        const std::array<double, 3> zvec_d = gdd.lower(std::to_array(*zvec_u));
+
+        const double W_inv = Kokkos::sqrt(gdd.square_vec(std::to_array(*zvec_u)) + 1);
+
+        const double wd[4] = {gdd._alp, zvec_d[0] * W_inv, zvec_d[1] * W_inv, zvec_d[2] * W_inv};
+
+        resistive_get_sqrtgF(gdd._alp, Bd.data(), wd, sqrtgF);
 }
 
 }

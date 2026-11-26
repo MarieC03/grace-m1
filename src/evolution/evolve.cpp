@@ -1843,34 +1843,15 @@ void update_CT(
         double Bu_N[4], Bu_W[4], Bu_S[4], Bu_E[4];
         get_x_face_edges(aux, VEC(i, j, k), BX_, BY_, BZ_, q, &Bu_N, &Bu_W, &Bu_S, &Bu_E);
         
-        const std::array<double, 4> Bd_N = gdd_N.lower_4vec(std::to_array(Bu_N));
-        const std::array<double, 4> Bd_W = gdd_N.lower_4vec(std::to_array(Bu_W));
-        const std::array<double, 4> Bd_S = gdd_N.lower_4vec(std::to_array(Bu_S));
-        const std::array<double, 4> Bd_E = gdd_N.lower_4vec(std::to_array(Bu_E));
-
         double zvec_u_N[3], zvec_u_W[3], zvec_u_S[3], zvec_u_E[3];
         get_x_face_edges(state, VEC(i, j, k), ZVECX_, ZVECY_, ZVECZ_, q, &zvec_u_N, &zvec_u_W, &zvec_u_S, &zvec_u_E);
-        const std::array<double, 3> zvec_d_N = gdd_N.lower(std::to_array(zvec_u_N));
-        const std::array<double, 3> zvec_d_W = gdd_W.lower(std::to_array(zvec_u_W));
-        const std::array<double, 3> zvec_d_S = gdd_S.lower(std::to_array(zvec_u_S));
-        const std::array<double, 3> zvec_d_E = gdd_E.lower(std::to_array(zvec_u_E));
-
-        const double W_N_inv = Kokkos::sqrt(gdd_N.square_vec(std::to_array(zvec_u_N)) + 1);
-        const double W_W_inv = Kokkos::sqrt(gdd_W.square_vec(std::to_array(zvec_u_W)) + 1);
-        const double W_S_inv = Kokkos::sqrt(gdd_S.square_vec(std::to_array(zvec_u_S)) + 1);
-        const double W_E_inv = Kokkos::sqrt(gdd_E.square_vec(std::to_array(zvec_u_E)) + 1);
-
-        const double wd_N[4] = {gdd_N._alp, zvec_d_N[0] * W_N_inv, zvec_d_N[1] * W_N_inv, zvec_d_N[2] * W_N_inv};
-        const double wd_W[4] = {gdd_W._alp, zvec_d_W[0] * W_W_inv, zvec_d_W[1] * W_W_inv, zvec_d_W[2] * W_W_inv};
-        const double wd_S[4] = {gdd_S._alp, zvec_d_S[0] * W_S_inv, zvec_d_S[1] * W_S_inv, zvec_d_S[2] * W_S_inv};
-        const double wd_E[4] = {gdd_E._alp, zvec_d_E[0] * W_E_inv, zvec_d_E[1] * W_E_inv, zvec_d_E[2] * W_E_inv};
-
+ 
         double sqrtgF_N[6], sqrtgF_W[6], sqrtgF_S[6], sqrtgF_E[6];
-        resistive_get_sqrtgF(gdd_N._alp, Bd_N.data(), wd_N, &sqrtgF_N);
-        resistive_get_sqrtgF(gdd_W._alp, Bd_W.data(), wd_W, &sqrtgF_W);
-        resistive_get_sqrtgF(gdd_S._alp, Bd_S.data(), wd_S, &sqrtgF_S);
-        resistive_get_sqrtgF(gdd_E._alp, Bd_E.data(), wd_E, &sqrtgF_E);
-        
+        compute_sqrtgF(gdd_N, &Bu_N, &zvec_u_N, &sqrtgF_N);
+        compute_sqrtgF(gdd_W, &Bu_W, &zvec_u_W, &sqrtgF_W);
+        compute_sqrtgF(gdd_S, &Bu_S, &zvec_u_S, &sqrtgF_S);
+        compute_sqrtgF(gdd_N, &Bu_N, &zvec_u_N, &sqrtgF_N);
+
         const double sqrtg_N = gdd_N.sqrtg();
         const double sqrtg_W = gdd_W.sqrtg();
         const double sqrtg_S = gdd_S.sqrtg();
