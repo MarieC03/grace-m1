@@ -1835,7 +1835,6 @@ void update_CT(
 //#ifdef GRACE_ENABLE_RESISTIVE
         // It seems like at least some of the code below should become subexpressions.
 
-        // Spatial metrics on edges.
         metric_array_t gdd_N = compute_edge_metric(state, VEC(i, j, k+1), q, Y_EDGE_INTERP_);
         metric_array_t gdd_W = compute_edge_metric(state, VEC(i, j, k), q, Z_EDGE_INTERP_);
         metric_array_t gdd_S = compute_edge_metric(state, VEC(i, j, k), q, Y_EDGE_INTERP_);
@@ -1871,6 +1870,11 @@ void update_CT(
         resistive_get_sqrtgF(gdd_W._alp, Bd_W.data(), wd_W, &sqrtgF_W);
         resistive_get_sqrtgF(gdd_S._alp, Bd_S.data(), wd_S, &sqrtgF_S);
         resistive_get_sqrtgF(gdd_E._alp, Bd_E.data(), wd_E, &sqrtgF_E);
+        
+        const double sqrtg_N = gdd_N.sqrtg();
+        const double sqrtg_W = gdd_W.sqrtg();
+        const double sqrtg_S = gdd_S.sqrtg();
+        const double sqrtg_E = gdd_E.sqrtg();
 
         // resistive_get_divF(double sqrtg, const double *dsqrtgF_dx, double (*divF)[4])
 //#endif //GRACE_ENABLE_RESISTIVE
