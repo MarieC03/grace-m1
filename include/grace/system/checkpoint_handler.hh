@@ -79,7 +79,9 @@ class checkpoint_handler_impl_t
      * @brief Detect whether a checkpoint should be saved now
      * 
      * This function checks if either walltime, simulation time, or 
-     * iteration interval has elapsed since last checkpoint
+     * iteration interval has elapsed since last checkpoint.
+     * Must be called by every rank: walltime scheduling broadcasts rank zero's
+     * decision so all ranks enter the collective checkpoint write together.
      * 
      * @return true If a checkpoint is needed
      * @return false If a checkpoint is not needed

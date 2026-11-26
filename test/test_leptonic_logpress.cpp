@@ -144,14 +144,16 @@ Kokkos::View<double****> copy_of(Kokkos::View<double****> const& v) {
     return c ;
 }
 
-E make_eos(tables_t const& t, Kokkos::View<double****> const& bar, bool add_ele, bool log_press) {
+E make_eos(tables_t const& t, Kokkos::View<double****> const& bar, bool add_ele, bool log_press,
+           Kokkos::View<double*> ele_axis = {}) {
+    if (ele_axis.size()==0) ele_axis=t.yq;
     return E( bar, t.lr, t.lt, t.yq,
-              t.ele, t.yq,
+              t.ele, ele_axis,
               t.mu,  t.lm,
               t.cold, t.cold_lr,
               std::exp(lr_(NR-1)), std::exp(lr_(0)),
               std::exp(lt_(NT-1)), std::exp(lt_(0)),
-              yq_(NY-1), yq_(0),
+              grace::detail::host_read(ele_axis,NY-1), grace::detail::host_read(ele_axis,0),
               std::exp(lm_(NM-1)), std::exp(lm_(0)),
               /*baryon_mass*/ 1.0, /*energy_shift*/ 0.0,
               /*epsmin,max*/ 0.0, 10.0, /*hmin,max*/ 1.0, 10.0,
@@ -231,6 +233,62 @@ constexpr double K_S = 1.0, C_S = 2.0 ;
 double s_power(double rho, double T, double y) { return K_S*rho*rho*std::sqrt(T)*std::exp(C_S*y) ; }
 
 } // namespace
+
+#ifdef GRACE_ENABLE_MUONS
+TEST_CASE("leptonic EOS: separate electron and proton domains report all corrections",
+          "[leptonic][composition]") {
+    auto t=make_tables([](double,double,double,double){return 1e-9;},false);
+    auto eos=make_eos(t,t.bar,true,false);
+    eos.dilute_muon_suppression=false;
+    // Previously Ye=max with a positive Ymu floor still exceeded Yp=max,
+    // and the charge correction did not set any error flag.
+    double rho=std::exp(lr_(2)),temp=std::exp(lt_(1)),ye=yq_(NY-1),ymu=0.02;
+    eos_err_t err;
+    eos.press__temp_rho_ye_ymu(temp,rho,ye,ymu,err);
+    REQUIRE(err.test(EOS_YE_TOO_HIGH));
+    REQUIRE(err.test(EOS_YMU_TOO_HIGH));
+    REQUIRE(ye+ymu<=eos.get_c2p_yp_max());
+    REQUIRE(ymu>=eos.get_c2p_ymu_min());
+    REQUIRE(eos.composition_in_domain(ye,ymu));
+
+    ye=0.43; ymu=0.05; err=eos_err_t{};
+    eos.press__temp_rho_ye_ymu(temp,rho,ye,ymu,err);
+    REQUIRE(err.test(EOS_YMU_TOO_HIGH));
+    REQUIRE(std::abs(ymu-0.02)<1e-15);
+
+    Kokkos::View<double*> axis("distinct_electron_axis",NY);
+    auto h=Kokkos::create_mirror_view(axis);
+    for(int k=0;k<NY;++k) h(k)=0.01+0.085*k;
+    Kokkos::deep_copy(axis,h);
+    auto distinct=make_eos(t,t.bar,true,false,axis);
+    distinct.dilute_muon_suppression=false;
+    REQUIRE(distinct.get_c2p_ye_max()==h(NY-1));
+    REQUIRE(distinct.get_c2p_yp_max()==yq_(NY-1));
+    ye=0.34; ymu=0.05; err=eos_err_t{};
+    distinct.press__temp_rho_ye_ymu(temp,rho,ye,ymu,err);
+    REQUIRE(ye==0.34); REQUIRE(ymu==0.05);
+    REQUIRE_FALSE(err.test(EOS_YMU_TOO_HIGH));
+    REQUIRE(distinct.composition_in_domain(ye,ymu));
+    // At the lower charge boundary, return the correction through references
+    // and flag it instead of silently evaluating baryons at a different Yp.
+    ye=0.01; ymu=0.01; err=eos_err_t{};
+    distinct.press__temp_rho_ye_ymu(temp,rho,ye,ymu,err);
+    REQUIRE(err.test(EOS_YMU_TOO_LOW));
+    REQUIRE(std::abs(ymu-0.04)<1e-15);
+    REQUIRE(distinct.composition_in_domain(ye,ymu));
+    REQUIRE_FALSE(distinct.composition_in_domain(0.4,0.01));
+    REQUIRE_FALSE(distinct.composition_in_domain(0.3,0.2));
+    // The auxiliary electron-pressure shift must cancel even when the
+    // baryonic charge endpoint lies beyond the electron axis.
+    auto blog=copy_of(t.bar);
+    auto shifted=make_eos(t,blog,true,true,axis);
+    shifted.dilute_muon_suppression=false;
+    REQUIRE(convert_baryon_press_to_log(shifted.baryon_table,shifted.ele_table,true).n_bad==0);
+    std::vector<query_t> const edge={{rho,temp,h(NY-1),yq_(NY-1)-h(NY-1)}};
+    auto const plin=eval(distinct,edge,press_f{}),plog=eval(shifted,edge,press_f{});
+    REQUIRE(std::abs(plin[0]-plog[0])<1e-13*std::abs(plin[0]));
+}
+#endif
 
 TEST_CASE("leptonic EOS: decay compatibility restores dilute muon thermodynamics",
           "[leptonic][decay]") {

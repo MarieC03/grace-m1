@@ -326,11 +326,17 @@ KOKKOS_INLINE_FUNCTION bool equilibrium_decay_rates(decay_kernel const& k,
 // these reactions. Inputs are individual-species comoving CGS/MeV moments.
 KOKKOS_INLINE_FUNCTION bool leptonic_transport_opacities(kernel const& thermal,
     decay_kernel const* decay,bool thermal_active,double const (&n)[4],
-    double const (&J)[4],double (&opacity)[4],diagnostic* diag=nullptr) {
+    double const (&J)[4],double (&opacity)[4],diagnostic* diag=nullptr,kernel const* electron=nullptr) {
+    if(electron) {
+        bool same=electron->g.n==thermal.g.n;
+        for(int i=0;same && i<thermal.g.n;++i)
+            same=electron->g.e[i]==thermal.g.e[i] && electron->g.w[i]==thermal.g.w[i];
+        if(!same) { if(diag) diag->code=failure_code::kernel_input; return false; }
+    }
     double f[4][max_order],shape[4][2];
     for(int s=0;s<4;++s) {
         opacity[s]=0;
-        if(!decay && s<2) continue;
+        if(!decay && !electron && s<2) continue;
         if(!reconstruct(thermal.g,n[s],J[s],f[s],diag,shape[s])) {
             if(diag) diag->species=s;
             return false;
@@ -341,6 +347,7 @@ KOKKOS_INLINE_FUNCTION bool leptonic_transport_opacities(kernel const& thermal,
         if(J[b]>0) opacity[b]+=src.loss[1]/J[b]/time_unit;
     };
     if(thermal_active) add(evaluate(thermal,f[2],f[3]),2,3);
+    if(electron) add(evaluate(*electron,f[0],f[1]),0,1);
     if(decay) {
         add(evaluate_decay(*decay,0,f[2],f[1],shape[2],shape[1]),2,1);
         add(evaluate_decay(*decay,1,f[3],f[0],shape[3],shape[0]),3,0);

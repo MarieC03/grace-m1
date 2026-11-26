@@ -684,9 +684,9 @@ void add_charged_current_absorption_opacity(const fugacity_state& F, rates_accum
     constexpr double abs_const = 0.25 * (1.0 + 3.0 * alpha * alpha) * sigma_0;
     std::array<double, NUMSPECIES> zeta{{0,0,0,0,0}};
 
-    //KEN SHOULD BE ETA_NP here TODO
+    // nu_e + n -> p + e-: neutron availability (the inverse uses protons).
     const double block_n = 1.0 + Kokkos::exp(F.eta_e - fermi::FDR<5,4>::get(F.eta_nu[NUE]));
-    const double absorb_e = (block_n > 0.0) ? (F.eta_pn * abs_const / block_n) : 0.0;
+    const double absorb_e = (block_n > 0.0) ? (F.eta_np * abs_const / block_n) : 0.0;
     if (finite_pos(absorb_e)) zeta[NUE] += absorb_e;
 
     const double block_p = 1.0 + Kokkos::exp(-F.eta_e - fermi::FDR<5,4>::get(F.eta_nu[NUEBAR]));

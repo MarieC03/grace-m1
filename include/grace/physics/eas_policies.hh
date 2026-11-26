@@ -33,6 +33,7 @@
 #include <grace/physics/m1_helpers.hh>
 #include <grace/physics/m1.hh>
 #include <grace/physics/eas_neutrino_rates_analytic.hh>
+#include <grace/physics/eas_harry_rates.hh>
 #include <grace/physics/m1_trigger.hh>
 #include <grace/physics/eas_optical_depth.hh>
 
@@ -610,7 +611,7 @@ struct neutrinos_eas_op
     // 4x in 3-species), as in the reference get_neutrino_density.  The
     // exp(-rho_lim/rho) factor is the reference's low-density cutoff.
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double eq_nu_number_fraction(fugacity_state const& Ft, int s) const {
+    static double eq_nu_number_fraction(fugacity_state const& Ft, int s) {
         using namespace nu_constants ;
         const double n_cm3 =
             4.0*pi/(hc_mevcm*hc_mevcm*hc_mevcm) * ipow<3>(Ft.temp_mev)
@@ -619,7 +620,7 @@ struct neutrinos_eas_op
         return mnuc_cgs * n_cm3 / Ft.rho_cgs ;
     }
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE
-    double eq_nu_energy_code(fugacity_state const& Ft, int s) const {
+    static double eq_nu_energy_code(fugacity_state const& Ft, int s) {
         using namespace nu_constants ;
         const double z_mev_cm3 =
             4.0*pi/(hc_mevcm*hc_mevcm*hc_mevcm) * ipow<4>(Ft.temp_mev)
@@ -648,6 +649,19 @@ struct neutrinos_eas_op
         double Yle, double Ylmu, double u,
         double* f, beq_mode_t mode = beq_mode_t::FULL) const
     {
+        return betaeq_residuals(eos, mass_scale, dilute_cc_target, rho_code, xyz, tauf,
+                               Ye_t, Ymu_t, T_t, Yle, Ylmu, u, f, mode) ;
+    }
+
+    // Pure residual evaluation, also usable without a grid or runtime EOS singleton.
+    GRACE_HOST_DEVICE
+    static bool betaeq_residuals(
+        eos_t const& eos, double mass_scale, bool dilute_cc_target,
+        double rho_code, const double* xyz, tau_policy_fixed const& tauf,
+        double Ye_t, double Ymu_t, double T_t,
+        double Yle, double Ylmu, double u,
+        double* f, beq_mode_t mode = beq_mode_t::FULL)
+    {
         eos_err_t err{} ;
         double T_loc = T_t, rho_loc = rho_code ;
         double ye_loc = Ye_t, ymu_loc = Ymu_t ;
@@ -658,10 +672,12 @@ struct neutrinos_eas_op
 
         fugacity_state Ft = make_fugacity_state(
             eos, rho_code, T_t, Ye_t, Ymu_t, mass_scale, xyz, tauf) ;
-        // Same muon target as the rates pass, or the equilibrium and the emission would disagree.
+        // Match the UNCLAMPED WeakHub CC emission target. These trapped-gas
+        // moments never divide by B; the +/-5 bound is only needed by the
+        // standard thermal-rate Kirchhoff inversions, not this closure.
         if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>) {
             if ( dilute_cc_target )
-                set_dilute_muon_target(Ft, eos.raw_mumu__temp_rho_ye_ymu(T_t, rho_code, Ye_t, Ymu_t), true, false) ;
+                set_dilute_muon_target(Ft, eos.raw_mumu__temp_rho_ye_ymu(T_t, rho_code, Ye_t, Ymu_t), true, true) ;
         }
 
         f[0] = Ye_t + eq_nu_number_fraction(Ft, NUE)
@@ -1037,7 +1053,7 @@ struct neutrinos_eas_op
         double n[4]={},J[4]={},opacity[4];
         pair_fluid_moments<2>(VEC(i,j,k),q,1,n[2],J[2]);
         pair_fluid_moments<3>(VEC(i,j,k),q,1,n[3],J[3]);
-        if(muon_decay) {
+        if(muon_decay || harry_table.n_groups) {
             pair_fluid_moments<0>(VEC(i,j,k),q,1,n[0],J[0]);
             pair_fluid_moments<1>(VEC(i,j,k),q,1,n[1],J[1]);
         }
@@ -1052,14 +1068,20 @@ struct neutrinos_eas_op
         }
         pairs::kernel thermal; pairs::decay_kernel decay;
         pairs::diagnostic diag;
-        bool ok=pairs::init_thermal_kernel(thermal,m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag,&pair_grid_rule,thermal_cache);
-        if(ok && muon_decay && !pairs::init_decay_kernel(decay,thermal.g,m.T,m.mu_e,mumu,decay_order,decay_cache,grey_decay)) {
+        bool ok=(harry_table.n_groups?pairs::init_harry_thermal(thermal,harry_table,harry_guo,m,{pair_annihilation,bremsstrahlung,plasmon_decay},2):pairs::init_thermal_kernel(thermal,m,{pair_annihilation,bremsstrahlung,plasmon_decay},pair_order,scale,false,&diag,&pair_grid_rule,thermal_cache));
+        if(ok && muon_decay && !(harry_table.n_groups && !harry_spectral_decay?pairs::init_harry_decay_kernel(decay,harry_table,m.T,m.mu_e,mumu,0.5):pairs::init_decay_kernel(decay,thermal.g,m.T,m.mu_e,mumu,decay_order,decay_cache,grey_decay))) {
             diag.code=pairs::failure_code::decay_kernel;
             ok=false;
         }
+        pairs::kernel electron; pairs::kernel const* ep=nullptr;
+        if(ok && harry_table.n_groups && active!=0) {
+            ok=pairs::init_harry_thermal(electron,harry_table,harry_guo,m,{pair_annihilation,bremsstrahlung,plasmon_decay},0);
+            ep=&electron;
+        }
         if(ok) ok=pairs::leptonic_transport_opacities(thermal,muon_decay?&decay:nullptr,
-                                                     active!=0,n,J,opacity,&diag);
+                                                     active!=0,n,J,opacity,&diag,ep);
         if(!ok) {
+            if(diag.code==pairs::failure_code::none) diag.code=pairs::failure_code::kernel_input;
             int const sa=diag.species>=0?diag.species:2;
             int const sb=muon_decay?(sa==0?3:sa==1?2:sa==2?1:0):(sa==2?3:2);
             save_pair_transport_failure(m,mumu,diag,active,scale,sa,sb,1,VEC(i,j,k),q);
@@ -1075,6 +1097,7 @@ struct neutrinos_eas_op
             #if GRACE_M1_NU_SPECIES >= 5
             constexpr int sp=4,multiplicity=2;
             double const n=n4,J=J4,kscale=scale;
+            if(harry_table.n_groups && !pairs::init_harry_thermal(thermal,harry_table,harry_guo,m,{pair_annihilation,bremsstrahlung,plasmon_decay},4,true)) Kokkos::abort("Invalid Harry tau pair kernel");
             thermal.symmetrize();                    // one build per cell: the pair's grid, symmetrized
             pairs::kernel const& kpair=thermal;
             if(!pairs::reconstruct(kpair.g,n,J,f,&aggregate_diag)) {
@@ -1300,10 +1323,10 @@ struct neutrinos_eas_op
 
         // Fluid-frame mean neutrino energy per species [MeV], used to drive the
         // T_nu spectral correction off the actual radiation field (FIL parity).
-        // Only needed when the correction is on; left at 0 otherwise so the
-        // correction stays inert (matches it=0 / no-radiation -> fact = 1).
+        // Harry tables integrate against the reconstructed radiation spectrum
+        // directly, even when the historical temperature correction is off.
         double eps_rad[NUMSPECIES] = {0.0} ;
-        if (apply_temp_correction) {
+        if (apply_temp_correction || harry_table.n_groups>0) {
             metric_array_t metric ;
             FILL_METRIC_ARRAY(metric, state, q, VEC(i,j,k)) ;
             const double r = Kokkos::sqrt(SQR(xyz[0]) + SQR(xyz[1]) + SQR(xyz[2])) ;
@@ -1359,6 +1382,7 @@ struct neutrinos_eas_op
             // Vacuum emission stays in ordinary EAS even with spectral thermal pairs.
             // The spectral decay, if selected, belongs to the connected source solve.
             bool const muon_decay_sink=vacuum_muon_decay;
+            if(harry_table.n_groups) return compute_all_species_harry(harry_table,F,eps_rad);
             return (use_weakhub && weakhub.valid)
                 ? compute_all_species_weakhub(weakhub, F, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt)
                 : compute_all_species(F, beta_decay, standard && plasmon_decay, standard && bremsstrahlung, standard && pair_annihilation, xyz, tau_policy, apply_temp_correction, eps_rad, temp_correction_emission, apply_muon_gate, muon_decay_sink, dt);
@@ -1641,6 +1665,7 @@ struct neutrinos_eas_op
   bool temp_correction_emission;   // also scale nue/nuebar Q,R by the T_nu factor (FIL Weakhub)
   m1_atmo_params_t atmo;           // M1 floors, to recognise floor-reset cells in fluid_frame_eps_mev
   bool use_weakhub;
+  harry::device_handle harry_table = get_harry_table_mode()?harry::get_harry_device_handle():harry::device_handle{};
   betaeq_mode_t betaeq_mode;
   pair_treatment_t pair_treatment;   // standard in every build without GRACE_M1_PAIR_KERNELS
   bool dilute_cc_target;
@@ -1653,6 +1678,8 @@ struct neutrinos_eas_op
   bool grey_decay;
   bool decay_cache;
   bool thermal_cache;
+  guo_nnbrem::device_handle harry_guo = get_harry_table_mode()?guo_nnbrem::get_device_handle():guo_nnbrem::device_handle{};
+  bool harry_spectral_decay = get_harry_spectral_decay();
   pairs::grid_rule pair_grid_rule{};
   #endif
   bool betaeq_e_fallback;   // timescale policy: retry a failed joint solve with Ymu held

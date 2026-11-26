@@ -678,6 +678,10 @@ void flag_fofc_cells(
     #ifdef GRACE_ENABLE_M1
     auto m1_atmo  = get_m1_atmo_params() ;   // radiation floor scale for the FOFC positivity test
     bool const fermi_fofc=get_param<bool>("m1","eas","fermi_fofc");
+    #ifdef GRACE_M1_PAIR_KERNELS
+    auto const moment_envelope=fermi_fofc && get_harry_table_mode()
+        ? harry::get_harry_device_handle().envelope : harry::moment_envelope{};
+    #endif
     #endif
     // Force c2p_is_lenient = true everywhere during the dry-run: a
     // Kokkos::abort would defeat FOFC's purpose, which is precisely to
@@ -905,7 +909,7 @@ void flag_fofc_cells(
                         predicted[FXL+component]=(new_state(VEC(i,j,k),field,q)+dt*dtfact*flux_update)/metric.sqrtg();
                     }
                     double const multiplicity=GRACE_M1_NU_SPECIES==5 ? (s==4?2:1) : (s==2?4:1);
-                    needs_correction=!pairs::fermi_moments_admissible(predicted,metric,multiplicity);
+                    needs_correction=!pairs::fermi_moments_admissible(predicted,metric,multiplicity,moment_envelope);
                 }
                 #endif
                 if (needs_correction) {
@@ -2120,7 +2124,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
     m1_equations_system_t m1_eq_system(old_state,old_stag_state,aux) ;
     #ifdef GRACE_M1_PAIR_KERNELS
     bool const evolved_pairs=get_pair_treatment()==pair_treatment_t::evolved;
-    bool const coupled_leptons=evolved_pairs && get_spectral_muon_decay();
+    bool const coupled_leptons=evolved_pairs && (get_spectral_muon_decay() || get_harry_table_mode());
     bool const lagged_leptons=get_muon_decay_treatment()==muon_decay_treatment_t::lagged;
     bool const singlepass_leptons=get_muon_decay_treatment()==muon_decay_treatment_t::singlepass;
     int const pair_order=get_pair_quadrature_order();
@@ -2148,7 +2152,7 @@ void advance_implicit_substep( double const t, double const dt, double const dtf
                 // tau aggregate share its quadrature grid; the aggregate takes the symmetrized matrix.
                 int const bits=m1_eq_system.pair_active(q,VEC(i,j,k));
                 pairs::kernel shared; bool have=false;
-                if(bits&7) {
+                if((bits&7) && !m1_eq_system.harry_table.n_groups) {
                     auto const mat=m1_eq_system.pair_material(q,VEC(i,j,k));
                     double const scale=m1_eq_system.pair_scale(q,VEC(i,j,k),mat.T,coupled_leptons&&(bits&8));
                     have=pairs::init_thermal_kernel(shared,mat,{bool(bits&1),bool(bits&2),bool(bits&4)},pair_order,scale,

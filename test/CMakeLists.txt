@@ -67,6 +67,9 @@ spdlog::spdlog )
 # the functions ensure that the correct libraries
 # are linked and keep this file relatively tidy 
 add_mpi_test(parallel_test test_parallel.cc )
+add_mpi_test(checkpoint_schedule_test test_checkpoint_schedule.cc)
+add_test(NAME checkpoint_schedule_test COMMAND mpirun -n 2 ./checkpoint_schedule_test)
+set_tests_properties(checkpoint_schedule_test PROPERTIES LABELS "mpi;io" TIMEOUT 30)
 add_parser_test(parser_test test_parser.cpp )
 add_grace_test(connectivity_test test_connectivities.cpp)
 add_grace_test(sc_wrappers_test test_sc_wrappers.cpp)
@@ -145,6 +148,8 @@ if(GRACE_M1_PAIR_KERNELS)   # implies >= 3 species and the bns_nurates submodule
         # Explicit, archived EOS-domain experiments; not part of routine CTest.
         add_grace_test(grey_decay_validation test_grey_decay_validation.cpp)
         add_grace_test(cc_target_validation test_cc_target_validation.cpp)
+        add_grace_test(harry_validation test_harry_validation.cpp)
+        add_grace_test(harry_cc_reference test_harry_cc_reference.cpp)
         add_test(NAME muon_decay_setup_rejection COMMAND ${CMAKE_COMMAND}
             -DTEST_PROGRAM=$<TARGET_FILE:muon_decay_test>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/check_muon_decay_setup.cmake)
@@ -634,3 +639,14 @@ if( GRACE_ENABLE_PARTICLES )
                          particle_advance_test
                          PROPERTIES LABELS "mpi;particles")
 endif()
+
+# Spectral Harry-table reader: isolated synthetic schemas and optional real-file audit.
+add_kokkos_test(harry_spectral_table_test test_harry_spectral_table.cpp)
+if(NOT TARGET grace_rate_tables)
+    target_sources(harry_spectral_table_test PRIVATE ../src/physics/harry_spectral_table.cpp)
+endif()
+add_test(NAME harry_spectral_table_test COMMAND mpirun -n 1 ./harry_spectral_table_test)
+set_tests_properties(harry_spectral_table_test PROPERTIES LABELS "m1;physics;harry" TIMEOUT 120)
+add_kokkos_test(guo_nnbrem_test test_guo_nnbrem.cpp)
+add_test(NAME guo_nnbrem_test COMMAND mpirun -n 1 ./guo_nnbrem_test)
+set_tests_properties(guo_nnbrem_test PROPERTIES LABELS "m1;physics;harry" TIMEOUT 120)

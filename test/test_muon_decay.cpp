@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
+#include "leptonic_source_replay.hh"
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <grace/physics/neutrino_muon_decay.hh>
+#include <grace/physics/harry_pair_kernels.hh>
 #include <grace/physics/neutrino_leptonic_update.hh>
 #include <grace/physics/m1.hh>
 #include <grace/physics/eas_kinds.hh>
@@ -874,4 +876,178 @@ TEST_CASE("Grey transport damping and chemical LTE use the same reaction", "[dec
             REQUIRE_THAT(out[5*s+4],WithinRel(old[5*s+4],1e-8));
         }
     }
+}
+
+TEST_CASE("Optional electron pair channel preserves LTE and charge in the coupled network", "[decay][harry]") {
+    kernel thermal; REQUIRE(thermal.init({15,70,6e37,0.8,0.2},{true,true,false},8,35));
+    kernel electron=thermal;
+    for(int i=0;i<electron.g.n;++i) for(int j=0;j<electron.g.n;++j) electron.a[i][j]*=3;
+    decay_kernel decay; REQUIRE(decay.init(thermal.g,15,70,110,16));
+    metric_array_t metric({1,0,0,1,0,1},{0,0,0},1);
+    m1_prims_array_t base[4]{}; m1_eas_array_t eas[4]{};
+    double old[20]={},out[20],reference[20],res;
+    double const eta[4]={-0.3,0.3,40./15-0.3,-40./15+0.3};
+    for(int s=0;s<4;++s) set_radiation(thermal.g,15,eta[s],s,base,old);
+    REQUIRE(leptonic_implicit_update(thermal,decay,true,metric,base,eas,old,out,10,res,nullptr,false,true,&electron));
+    for(int a=0;a<20;++a) REQUIRE_THAT(out[a],WithinAbs(old[a],1e-8*std::max(old[0],old[4])));
+    REQUIRE(leptonic_lagged_update(thermal,decay,true,metric,base,eas,old,out,10,res,nullptr,nullptr,nullptr,true,&electron));
+    for(int a=0;a<20;++a) REQUIRE_THAT(out[a],WithinAbs(old[a],1e-8*std::max(old[0],old[4])));
+    // Audit the existing single-pass muon block at this deliberately stiff step.
+    // Its acceptance threshold remains unchanged; production preferred mode is coupled.
+    int failure_stage=0,legacy_stage=0; double stiff_res=0,legacy_res=0;
+    bool const stiff_ok=leptonic_singlepass_update(thermal,decay,true,metric,base,eas,old,out,10,stiff_res,nullptr,&electron,&failure_stage);
+    bool const legacy_ok=leptonic_singlepass_update(thermal,decay,true,metric,base,eas,old,out,10,legacy_res,nullptr,nullptr,&legacy_stage);
+    std::cout << "HARRY_SINGLEPASS_AUDIT h=10 new_ok=" << stiff_ok << " new_stage=" << failure_stage << " new_residual=" << stiff_res
+              << " legacy_ok=" << legacy_ok << " legacy_stage=" << legacy_stage << " legacy_residual=" << legacy_res << "\n";
+    REQUIRE(stiff_ok==legacy_ok);
+    if(!stiff_ok) { REQUIRE(failure_stage==legacy_stage); REQUIRE_THAT(stiff_res,WithinRel(legacy_res,1e-10)); }
+    bool const singlepass_ok=leptonic_singlepass_update(thermal,decay,true,metric,base,eas,old,out,1,res,nullptr,&electron,&failure_stage);
+    INFO("singlepass stage=" << failure_stage << " residual=" << res);
+    REQUIRE(singlepass_ok);
+    for(int a=0;a<20;++a) REQUIRE_THAT(out[a],WithinAbs(old[a],1e-8*std::max(old[0],old[4])));
+    set_radiation(thermal.g,19,-0.3,0,base,old);
+    REQUIRE(leptonic_implicit_update(thermal,decay,true,metric,base,eas,old,out,0.01,res,nullptr,false,true,&electron));
+    REQUIRE(leptonic_implicit_update(thermal,decay,true,metric,base,eas,old,reference,0.01,res,nullptr,false,false,&electron));
+    for(int a=0;a<20;++a) REQUIRE_THAT(out[a],WithinAbs(reference[a],1e-8*std::max(reference[0],reference[4])));
+    double const initial=old[4]-old[9]+old[14]-old[19], final=out[4]-out[9]+out[14]-out[19];
+    REQUIRE_THAT(final,WithinAbs(initial,1e-12*(old[4]+old[9]+old[14]+old[19])));
+    electron.g.e[0]*=1.01;
+    REQUIRE_FALSE(leptonic_implicit_update(thermal,decay,true,metric,base,eas,old,out,0.01,res,nullptr,false,true,&electron));
+}
+
+TEST_CASE("Harry kernel adapter uses log storage and reversible ILD balance", "[decay][harry]") {
+    harry::device_handle h; h.n_groups=8;
+    h.energies=Kokkos::View<double*>("test energies",8);
+    h.widths=Kokkos::View<double*>("test widths",8);
+    auto en=Kokkos::create_mirror_view(h.energies),de=Kokkos::create_mirror_view(h.widths);
+    for(int i=0;i<8;++i) {en(i)=5+10*i;de(i)=10;}
+    Kokkos::deep_copy(h.energies,en); Kokkos::deep_copy(h.widths,de);
+    auto tensor=[](int rank,int channels) {
+        harry::tensor t;t.rank=rank;t.channels=channels;
+        for(int d=0;d<rank;++d) {
+            t.size[d]=2;t.axes[d]=Kokkos::View<double*>("test axis",2);
+            auto a=Kokkos::create_mirror_view(t.axes[d]);a(0)=-10;a(1)=10;Kokkos::deep_copy(t.axes[d],a);
+        }
+        t.values=Kokkos::View<double*>("test log kernel",channels*(1<<rank));
+        Kokkos::deep_copy(t.values,std::log(1e-38));return t;
+    };
+    h.pair0=tensor(2,6*64);h.ild0=tensor(3,2*36);h.ild_available=true;
+    kernel pair; REQUIRE(init_harry_pair_kernel(pair,h,{15,70,0,0,0},0,0.5));
+    REQUIRE_THAT(pair.a[3][4],WithinRel(0.5e-38,1e-13));
+    decay_kernel decay;REQUIRE(init_harry_decay_kernel(decay,h,15,70,110,0.5));
+    for(int c=0;c<2;++c) for(int i=0;i<8;++i) for(int j=0;j<8;++j) {
+        double p,a;decay.rates(c,i,j,p,a);
+        REQUIRE_THAT(a,WithinRel(0.5e-38,1e-13));
+        REQUIRE_THAT(p/a,WithinRel(std::exp(((c==0?40.:-40.)-pair.g.e[i]-pair.g.e[j])/15),1e-13));
+    }
+    // Exercise Harry's two distinct ILD boundary prescriptions on a reused kernel.
+    for(int d=0;d<3;++d) {
+        auto limits=Kokkos::create_mirror_view(h.ild0.axes[d]);
+        limits(0)=std::log(d==0?1.:.1); limits(1)=std::log(d==0?20.:8.);
+        Kokkos::deep_copy(h.ild0.axes[d],limits);
+    }
+    REQUIRE(init_harry_decay_kernel(decay,h,40,40,400,0.5));
+    REQUIRE_THAT(decay.T,WithinRel(20.));
+    REQUIRE_THAT(decay.delta,WithinRel(140.));
+    for(int c=0;c<2;++c) {
+        double p,a; decay.rates(c,6,2,p,a);
+        REQUIRE_THAT(a,WithinRel(.5e-38,1e-13));
+        REQUIRE_THAT(p/a,WithinRel(std::exp(((c==0?140.:-140.)-90.)/20.),1e-13));
+    }
+    for(auto state: {std::array<double,3>{.5,1.,2.},{10.,0.,20.},{10.,20.,-.1}}) {
+        REQUIRE(init_harry_decay_kernel(decay,h,state[0],state[1],state[2],.5));
+        for(int c=0;c<2;++c) for(int i=0;i<8;++i) for(int j=0;j<8;++j) {
+            double p,a; decay.rates(c,i,j,p,a); REQUIRE(p==0);REQUIRE(a==0);
+        }
+    }
+    h.ild_available=false;REQUIRE_FALSE(init_harry_decay_kernel(decay,h,15,70,110,0.5));
+    REQUIRE_FALSE(init_harry_pair_kernel(pair,h,{15,-70,0,0,0},0,0.5));
+    // Deliberately eta-dependent table: clamping must select the edge matrix,
+    // not extrapolate a logarithmic kernel or alter its temperature.
+    auto axis=Kokkos::create_mirror_view(h.pair0.axes[1]);
+    axis(0)=std::log(.05);axis(1)=std::log(100.);Kokkos::deep_copy(h.pair0.axes[1],axis);
+    auto vals=Kokkos::create_mirror_view(h.pair0.values);
+    for(std::size_t a=0;a<vals.extent(0);++a) vals(a)=std::log(1e-38)+(a%4>=2?.8:0.);
+    Kokkos::deep_copy(h.pair0.values,vals);
+    kernel edge,low,near;bool clamped=true;
+    REQUIRE(init_harry_pair_kernel(edge,h,{15,.75,0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+    REQUIRE_FALSE(clamped);
+    for(double mue: {0.,.375}) {
+        REQUIRE(init_harry_pair_kernel(low,h,{15,mue,0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+        REQUIRE(clamped);
+        for(int i=0;i<8;++i) for(int j=0;j<8;++j) REQUIRE(low.a[i][j]==edge.a[i][j]);
+        REQUIRE_FALSE(init_harry_pair_kernel(low,h,{15,mue,0,0,0},0,.5,false,harry_pair_boundary_policy::strict,&clamped));
+    }
+    REQUIRE(init_harry_pair_kernel(near,h,{15,.75*(1+1e-8),0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+    REQUIRE_FALSE(clamped);
+    REQUIRE_THAT(near.a[3][4],WithinRel(edge.a[3][4],2e-9));
+    REQUIRE_FALSE(init_harry_pair_kernel(near,h,{15,1501,0,0,0},0,.5)); // upper eta remains a failure
+    REQUIRE_FALSE(init_harry_pair_kernel(near,h,{1e8,0,0,0,0},0,.5)); // temperature is never clamped
+    REQUIRE(init_harry_pair_kernel(low,h,{15,0,0,0,0},0,.5));
+    double f[8],fb[8];
+    for(int i=0;i<8;++i) {f[i]=occupation(low.g.e[i]/15-.3);fb[i]=occupation(low.g.e[i]/15+.3);}
+    auto lte=evaluate(low,f,fb);
+    REQUIRE(std::abs(lte.number)<1e-13*lte.emission_n[0]);
+    for(int i=0;i<8;++i) {f[i]*=.2;fb[i]*=.7;}
+    auto off=evaluate(low,f,fb);REQUIRE(off.number>0);
+    for(int side=0;side<2;++side)
+        REQUIRE_THAT(off.emission_n[side]-off.loss_n[side],WithinRel(off.number,1e-13));
+}
+
+TEST_CASE("Newton iteration cap applies the existing final residual acceptance", "[decay][solver]") {
+    auto residual=[](double const* x,double* r){r[0]=x[0]*x[0]-1;return true;};
+    double x[1]={1.0001},norm=0;newton_diagnostic d;
+    REQUIRE(newton<1>(residual,x,norm,&d,1));
+    REQUIRE(norm>newton_target*residual_scale(x));
+    REQUIRE(norm<newton_accept*residual_scale(x));
+    REQUIRE(d.stage==0);
+    double checked[1];REQUIRE(residual(x,checked));REQUIRE(norm==std::abs(checked[0]));
+    x[0]=2;
+    REQUIRE_FALSE(newton<1>(residual,x,norm,&d,1));
+    REQUIRE(norm>newton_accept*residual_scale(x));
+    REQUIRE(d.stage==5);
+    REQUIRE(residual(x,checked));REQUIRE(norm==std::abs(checked[0]));
+}
+
+TEST_CASE("Leptonic conservation projection respects unequal number scales", "[decay][solver]") {
+    // Cold captured cells span six orders in neutrino/antineutrino N.
+    // The small accepted Newton error in the abundant population must not
+    // become a large relative change in the nearly empty antineutrinos.
+    double const scale[4]={1e-6,3e-11,1.3e-6,1.4e-13};
+    double const d[4]={1,2,3,4};double weight[4];
+    double const initial[4]={1e-17,2e-25,-2e-18,3e-27};
+    for(int s=0;s<4;++s)weight[s]=d[s]*scale[s];
+    double const defect=initial[0]-initial[1]+initial[2]-initial[3];
+    REQUIRE(std::abs(defect)/(4*d[3]*scale[3])>newton_accept);
+    for(bool connected:{false,true}) {
+        double q[4];for(int s=0;s<4;++s)q[s]=initial[s];
+        project_leptonic_number_increments(q,weight,connected);
+        for(int s=0;s<4;++s) {
+            double const relative_correction=(q[s]-initial[s])/(d[s]*scale[s]);
+            REQUIRE(std::abs(relative_correction)<newton_target);
+            REQUIRE(scale[s]+(q[s]-initial[s])/d[s]>0);
+        }
+        if(connected) REQUIRE(std::abs(q[0]-q[1]+q[2]-q[3])<1e-15*std::abs(defect));
+        else { REQUIRE(q[0]==q[3]);REQUIRE(q[1]==q[2]); }
+    }
+}
+
+TEST_CASE("Leptonic projection preserves the discrete Fermi boundary", "[decay][solver]") {
+    grid g;g.n=3;g.e[0]=1;g.e[1]=2;g.e[2]=4;
+    for(int i=0;i<3;++i)g.w[i]=1;
+    double lo,hi;discrete_number_bounds(g,2.5,lo,hi);
+    REQUIRE_THAT(lo,WithinRel(7.5/7,1e-14));REQUIRE(hi==1.75);
+    double q[4]={-8e-18,0,0,0},w[4]={1e-6,3e-11,1.3e-6,1.4e-13};
+    double lower[4]={-1e-10,-1e-10,-1e-10,-1e-10};
+    double upper[4]={q[0],1e-10,1e-10,1e-10};
+    REQUIRE(project_leptonic_number_increments(q,w,true,lower,upper));
+    REQUIRE(q[0]==upper[0]); // already saturated species receives no added N
+    REQUIRE(std::abs(q[0]-q[1]+q[2]-q[3])<1e-31);
+    for(int s=0;s<4;++s)REQUIRE(std::abs(q[s]/w[s])<newton_target);
+    double impossible[4]={1,0,0,0},fixed[4]={1,0,0,0};
+    REQUIRE_FALSE(project_leptonic_number_increments(impossible,w,true,fixed,fixed));
+}
+
+TEST_CASE("Replay captured source without EOS startup", "[.][leptonic_replay]") {
+    grace::test::replay_captured_leptonic_source();
 }

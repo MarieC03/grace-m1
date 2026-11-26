@@ -23,6 +23,9 @@ endfunction()
 # Define a function to add test targets and associated tests
 function(add_kokkos_test target_name source_file)
     add_executable(${target_name} ${source_file})
+    if(TARGET grace_rate_tables)
+        target_link_libraries(${target_name} PRIVATE $<TARGET_OBJECTS:grace_rate_tables>)
+    endif()
 
 
     # Set common target properties

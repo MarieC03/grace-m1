@@ -42,7 +42,8 @@ checkpoints:
     default: 12 
     range: "(0,*)" 
     description: >
-      If interval_kind is walltime, how often to checkpoint (in hours)? 
+      If interval_kind is walltime, how often to checkpoint (in hours)?
+      Rank zero's elapsed-time decision is broadcast to all ranks.
   
   checkpoint_at_startup: 
     type: bool 

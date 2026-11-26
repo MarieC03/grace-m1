@@ -248,8 +248,27 @@ inline bool tableinfo_flag(std::string const& text, char const* word_a, char con
 // Resolved once from m1.eas.weakhub_table_content; "auto" reads Weakhub's companion file
 // <weakhub_table minus .h5>_tableinfo.log, which is shipped next to every table.  Only meaningful
 // with a Weakhub table selected.  refresh re-reads the parfile (tests).
+// Implemented by the host table loader; auto detects the spectral HDF5 schema.
+#ifdef GRACE_ENABLE_M1
+bool get_harry_table_mode();
+#else
+inline bool get_harry_table_mode() { return false; }
+#endif
+inline bool get_harry_spectral_decay() {
+    return detail::get_eas_param_or("table","harry_decay_source")=="spectral";
+}
+
+inline std::string resolved_pair_treatment_name()
+{
+    auto name=detail::get_eas_param_or("auto","pair_treatment");
+    if(name=="auto") return get_harry_table_mode() ? "evolved" : "standard";
+    return name;
+}
+
 inline weakhub_content_t get_weakhub_table_content(bool refresh=false)
 {
+    // Spectral kernels are separate from CC opacity, never folded grey extras.
+    if(get_harry_table_mode()) return weakhub_content_t::none;
     static bool resolved=false;
     static weakhub_content_t cached=weakhub_content_t::none;
     if(resolved && !refresh) return cached;
@@ -299,7 +318,7 @@ inline muon_decay_treatment_t get_muon_decay_treatment()
     if(mode!="auto" && mode!="vacuum" && mode!="spectral" && mode!="lagged" && mode!="singlepass" && mode!="grey_decay")
         ERROR("m1.eas.muon_decay_treatment must be auto, vacuum, spectral, lagged, singlepass or grey_decay");
     if(!get_muon_decay()) return muon_decay_treatment_t::none;
-    auto const pairs=detail::get_eas_param_or("standard","pair_treatment");
+    auto const pairs=resolved_pair_treatment_name();
     bool const standard=pairs=="standard" || pairs=="legacy";
     if(mode=="grey_decay") {
         if(pairs!="evolved") ERROR("grey_decay requires evolved partners for shared reaction counts");
@@ -368,7 +387,7 @@ inline bool get_thermal_pair_kernel_cache()
 
 inline pair_treatment_t get_pair_treatment()
 {
-    auto name=detail::get_eas_param_or("standard", "pair_treatment");
+    auto name=resolved_pair_treatment_name();
     if(name=="legacy") name="standard";
     if(name!="standard" && name!="equilibrium" && name!="evolved")
         ERROR("m1.eas.pair_treatment must be standard, equilibrium or evolved");
@@ -436,6 +455,21 @@ inline int get_pair_quadrature_order()
 // check themselves in get_pair_treatment().
 inline void check_m1_setup()
 {
+    if(get_harry_table_mode()) {
+#if GRACE_M1_NU_SPECIES != 5 || !defined(GRACE_M1_PAIR_KERNELS)
+        ERROR("Harry tables require five-species M1 and GRACE_M1_PAIR_KERNELS=ON");
+#endif
+        if(resolved_pair_treatment_name()!="evolved")
+            ERROR("Harry tables currently require evolved pair partners");
+        if(get_param<std::string>("eos","eos_type")!="leptonic"
+           || !get_param<bool>("eos","leptonic","add_ele_contribution")
+           || get_param<bool>("eos","leptonic","dilute_muon_suppression"))
+            ERROR("Harry tables require electron-free baryonic EOS plus explicit unsuppressed leptons");
+        if(!get_param<bool>("m1","eas","dilute_muon_cc_target"))
+            ERROR("Harry table validation requires dilute_muon_cc_target=true");
+        if(get_vacuum_muon_decay() || get_grey_muon_decay())
+            ERROR("Harry table mode uses reversible spectral decay; select the historical provider for vacuum/grey_decay");
+    }
 #if !defined(GRACE_ENABLE_FOFC) || !defined(GRACE_M1_PAIR_KERNELS)
     if(get_param<bool>("m1","eas","fermi_fofc"))
         ERROR("fermi_fofc requires GRACE_ENABLE_FOFC and GRACE_M1_PAIR_KERNELS");
