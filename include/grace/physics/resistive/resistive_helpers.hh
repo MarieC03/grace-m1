@@ -134,95 +134,45 @@ compute_edge_metric(View const& state,
 }
 
 /** 
- * @brief C-like wrapper to interp spatial four vectors onto face edges.
+ * @brief Wrapper to interp spatial four vectors onto face edges.
  * */
 template<typename View>
-GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
-get_x_face_edges(View const& view,
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE std::array<double, 4>
+get_face_edge_4vec(View const& view,
                 VEC(int const i, int const j, int const k),
                 int const ivar_x, int const ivar_y, int const ivar_z,
-                int const q,
-                double (*edge_N)[4],
-                double (*edge_W)[4],
-                double (*edge_S)[4],
-                double (*edge_E)[4]) {
-        (*edge_N)[0] = 0.0;
-        (*edge_N)[1] = edge_interp_2(view, i, j, k+1, ivar_x, q, Y_EDGE_INTERP_);
-        (*edge_N)[2] = edge_interp_2(view, i, j, k+1, ivar_y, q, Y_EDGE_INTERP_);
-        (*edge_N)[3] = edge_interp_2(view, i, j, k+1, ivar_z, q, Y_EDGE_INTERP_);
-
-        (*edge_W)[0] = 0.0;
-        (*edge_W)[1] = edge_interp_2(view, i, j, k, ivar_x, q, Z_EDGE_INTERP_);
-        (*edge_W)[2] = edge_interp_2(view, i, j, k, ivar_y, q, Z_EDGE_INTERP_);
-        (*edge_W)[3] = edge_interp_2(view, i, j, k, ivar_z, q, Z_EDGE_INTERP_);
-
-        (*edge_S)[0] = 0.0;
-        (*edge_S)[1] = edge_interp_2(view, i, j, k, ivar_x, q, Y_EDGE_INTERP_);
-        (*edge_S)[2] = edge_interp_2(view, i, j, k, ivar_y, q, Y_EDGE_INTERP_);
-        (*edge_S)[3] = edge_interp_2(view, i, j, k, ivar_z, q, Y_EDGE_INTERP_);
-
-        (*edge_E)[0] = 0.0;
-        (*edge_E)[1] = edge_interp_2(view, i, j+1, k, ivar_x, q, Z_EDGE_INTERP_);
-        (*edge_E)[2] = edge_interp_2(view, i, j+1, k, ivar_y, q, Z_EDGE_INTERP_);
-        (*edge_E)[3] = edge_interp_2(view, i, j+1, k, ivar_z, q, Z_EDGE_INTERP_);
+                int const q, int const idir) {
+        return std::array<double, 4>{0.0,
+                                    edge_interp_2(view, i, j, k, ivar_x, q, idir),
+                                    edge_interp_2(view, i, j, k, ivar_y, q, idir),
+                                    edge_interp_2(view, i, j, k, ivar_z, q, idir)};
 }
 
 /** 
- * @brief C-like wrapper to interp scalars onto face edges.
+ * @brief Wrapper to interp spatial three vectors onto face edges.
  * */
 template<typename View>
-GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
-get_x_face_edges(View const& view,
-                VEC(int const i, int const j, int const k),
-                int const ivar,
-                int const q,
-                double (*edge_N),
-                double (*edge_W),
-                double (*edge_S),
-                double (*edge_E)) {
-        (*edge_N) = edge_interp_2(view, i, j, k+1, ivar, q, Y_EDGE_INTERP_);
-        (*edge_W) = edge_interp_2(view, i, j, k, ivar, q, Z_EDGE_INTERP_);
-        (*edge_S) = edge_interp_2(view, i, j, k, ivar, q, Y_EDGE_INTERP_);
-        (*edge_E) = edge_interp_2(view, i, j+1, k, ivar, q, Z_EDGE_INTERP_);
-}
-
-/** 
- * @brief C-like wrapper to interp three vectors onto face edges.
- * */
-template<typename View>
-GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
-get_x_face_edges(View const& view,
+GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE std::array<double, 3>
+get_face_edge_3vec(View const& view,
                 VEC(int const i, int const j, int const k),
                 int const ivar_x, int const ivar_y, int const ivar_z,
-                int const q,
-                double (*edge_N)[3],
-                double (*edge_W)[3],
-                double (*edge_S)[3],
-                double (*edge_E)[3]) {
-        (*edge_N)[0] = edge_interp_2(view, i, j, k+1, ivar_x, q, Y_EDGE_INTERP_);
-        (*edge_N)[1] = edge_interp_2(view, i, j, k+1, ivar_y, q, Y_EDGE_INTERP_);
-        (*edge_N)[2] = edge_interp_2(view, i, j, k+1, ivar_z, q, Y_EDGE_INTERP_);
-
-        (*edge_W)[0] = edge_interp_2(view, i, j, k, ivar_x, q, Z_EDGE_INTERP_);
-        (*edge_W)[1] = edge_interp_2(view, i, j, k, ivar_y, q, Z_EDGE_INTERP_);
-        (*edge_W)[2] = edge_interp_2(view, i, j, k, ivar_z, q, Z_EDGE_INTERP_);
-
-        (*edge_S)[0] = edge_interp_2(view, i, j, k, ivar_x, q, Y_EDGE_INTERP_);
-        (*edge_S)[1] = edge_interp_2(view, i, j, k, ivar_y, q, Y_EDGE_INTERP_);
-        (*edge_S)[2] = edge_interp_2(view, i, j, k, ivar_z, q, Y_EDGE_INTERP_);
-
-        (*edge_E)[0] = edge_interp_2(view, i, j+1, k, ivar_x, q, Z_EDGE_INTERP_);
-        (*edge_E)[1] = edge_interp_2(view, i, j+1, k, ivar_y, q, Z_EDGE_INTERP_);
-        (*edge_E)[2] = edge_interp_2(view, i, j+1, k, ivar_z, q, Z_EDGE_INTERP_);
+                int const q, int const idir) {
+        return std::array<double, 3>{
+                                    edge_interp_2(view, i, j, k, ivar_x, q, idir),
+                                    edge_interp_2(view, i, j, k, ivar_y, q, idir),
+                                    edge_interp_2(view, i, j, k, ivar_z, q, idir)};
 }
 
+/**
+ * @brief Helper to get sqrtgF from state and aux provided quantities.
+ * */
 GRACE_ALWAYS_INLINE GRACE_HOST_DEVICE void
-compute_sqrtgF(const metric_array_t& gdd, const double (*Bu)[4], const double (*zvec_u)[3], double (*sqrtgF)[6]) {
-        const std::array<double, 4> Bd = gdd.lower_4vec(std::to_array(*Bu));
+compute_sqrtgF(const metric_array_t& gdd, const std::array<double, 4>& Bu, const std::array<double, 3>& zvec_u, double (*sqrtgF)[6]) {
+        const std::array<double, 4> Bd = gdd.lower_4vec(Bu);
 
-        const std::array<double, 3> zvec_d = gdd.lower(std::to_array(*zvec_u));
+        const std::array<double, 3> zvec_d = gdd.lower(zvec_u);
 
-        const double W_inv = Kokkos::sqrt(gdd.square_vec(std::to_array(*zvec_u)) + 1);
+        const double W_inv = Kokkos::sqrt(gdd.square_vec(zvec_u) + 1);
 
         const double wd[4] = {gdd._alp, zvec_d[0] * W_inv, zvec_d[1] * W_inv, zvec_d[2] * W_inv};
 

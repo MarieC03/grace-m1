@@ -1833,24 +1833,31 @@ void update_CT(
                 , KOKKOS_LAMBDA (VEC(int const& i, int const& j, int const& k), int const& q)
     {
 //#ifdef GRACE_ENABLE_RESISTIVE
-        // It seems like at least some of the code below should become subexpressions.
+        auto assign_sqrtgF = [](const metric_array_t &gdd, const std::array<double, 4>& Bu, const std::array<double, 3>& zvec_u){
+            double out[6];
+            compute_sqrtgF(gdd, Bu, zvec_u, &out);
+            return std::to_array(out);
+        };
 
         metric_array_t gdd_N = compute_edge_metric(state, VEC(i, j, k+1), q, Y_EDGE_INTERP_);
         metric_array_t gdd_W = compute_edge_metric(state, VEC(i, j, k), q, Z_EDGE_INTERP_);
         metric_array_t gdd_S = compute_edge_metric(state, VEC(i, j, k), q, Y_EDGE_INTERP_);
         metric_array_t gdd_E = compute_edge_metric(state, VEC(i, j+1, k), q, Z_EDGE_INTERP_);
 
-        double Bu_N[4], Bu_W[4], Bu_S[4], Bu_E[4];
-        get_x_face_edges(aux, VEC(i, j, k), BX_, BY_, BZ_, q, &Bu_N, &Bu_W, &Bu_S, &Bu_E);
+        const auto Bu_N = get_face_edge_4vec(aux, VEC(i, j, k+1), BX_, BY_, BZ_, q, Y_EDGE_INTERP_);
+        const auto Bu_W = get_face_edge_4vec(aux, VEC(i, j, k), BX_, BY_, BZ_, q, Z_EDGE_INTERP_);
+        const auto Bu_S = get_face_edge_4vec(aux, VEC(i, j, k), BX_, BY_, BZ_, q, Y_EDGE_INTERP_);
+        const auto Bu_E = get_face_edge_4vec(aux, VEC(i, j+1, k), BX_, BY_, BZ_, q, Z_EDGE_INTERP_);
         
-        double zvec_u_N[3], zvec_u_W[3], zvec_u_S[3], zvec_u_E[3];
-        get_x_face_edges(state, VEC(i, j, k), ZVECX_, ZVECY_, ZVECZ_, q, &zvec_u_N, &zvec_u_W, &zvec_u_S, &zvec_u_E);
+        const auto zvec_u_N = get_face_edge_3vec(aux, VEC(i, j, k+1), ZVECX_, ZVECY_, ZVECZ_, q, Y_EDGE_INTERP_);
+        const auto zvec_u_W = get_face_edge_3vec(aux, VEC(i, j, k), ZVECX_, ZVECY_, ZVECZ_, q, Z_EDGE_INTERP_);
+        const auto zvec_u_S = get_face_edge_3vec(aux, VEC(i, j, k), ZVECX_, ZVECY_, ZVECZ_, q, Y_EDGE_INTERP_);
+        const auto zvec_u_E = get_face_edge_3vec(aux, VEC(i, j+1, k), ZVECX_, ZVECY_, ZVECZ_, q, Z_EDGE_INTERP_);
  
-        double sqrtgF_N[6], sqrtgF_W[6], sqrtgF_S[6], sqrtgF_E[6];
-        compute_sqrtgF(gdd_N, &Bu_N, &zvec_u_N, &sqrtgF_N);
-        compute_sqrtgF(gdd_W, &Bu_W, &zvec_u_W, &sqrtgF_W);
-        compute_sqrtgF(gdd_S, &Bu_S, &zvec_u_S, &sqrtgF_S);
-        compute_sqrtgF(gdd_N, &Bu_N, &zvec_u_N, &sqrtgF_N);
+        const auto sqrtgF_N = assign_sqrtgF(gdd_N, Bu_N, zvec_u_N);
+        const auto sqrtgF_W = assign_sqrtgF(gdd_W, Bu_W, zvec_u_W);
+        const auto sqrtgF_S = assign_sqrtgF(gdd_S, Bu_S, zvec_u_S);
+        const auto sqrtgF_E = assign_sqrtgF(gdd_E, Bu_E, zvec_u_E);
 
         const double sqrtg_N = gdd_N.sqrtg();
         const double sqrtg_W = gdd_W.sqrtg();
