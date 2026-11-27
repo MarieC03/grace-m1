@@ -19,7 +19,7 @@ GRACE_HOST_DEVICE inline nu_rates_all_out compute_all_species_harry(
     nu_rates_all_out out{};
     double const pref=4*nu_constants::pi*nu_constants::clight/
         (nu_constants::hc_mevcm*nu_constants::hc_mevcm*nu_constants::hc_mevcm);
-    double const lrho=Kokkos::log(F.rho_code),lT=Kokkos::log(F.temp_mev);
+    double const lrho=Kokkos::log(F.rho_code*F.harry_density_factor),lT=Kokkos::log(F.temp_mev);
     double const xs[]={lrho,lT,F.ye+F.ymu};
     bool const scatter=!h.scattering.below(0,lrho) && !h.scattering.below(1,lT);
     harry::tensor::stencil es_stencil;

@@ -58,8 +58,9 @@ TEST_CASE("Export Harry CC states for an independent raw-table reference", "[.][
         auto changed=[](double a,double b){return std::abs(a-b)>32*2.2204460492503131e-16*std::max(std::abs(a),std::abs(b));};
         if(changed(rho,rc*nu_constants::RHOGF)||changed(T,temp)||changed(Y,ye)||changed(M,ymu)||!std::isfinite(mue+mumu+mup+mun)) {skip("EOS_adjusted_or_nonfinite");continue;}
         bool domain=true;
+        double const table_rho=rho*harry_density_ratio(e.get_baryon_mass());
         for(int s:{0,2}) {
-            auto const& a=h.cc[s];double x[4]={std::log(rho),std::log(T),Y,std::log(M)};
+            auto const& a=h.cc[s];double x[4]={std::log(table_rho),std::log(T),Y,std::log(M)};
             if(a.above(0,x[0])||a.above(1,x[1]))domain=false;
             if(!a.below(0,x[0])&&!a.below(1,x[1])&&!a.contains(x))domain=false;
         }
@@ -73,9 +74,9 @@ TEST_CASE("Export Harry CC states for an independent raw-table reference", "[.][
         auto prefix=[&](std::ostream& stream) {stream<<id<<','<<rc<<','<<T<<','<<Y<<','<<M<<','<<F.mu_e<<','<<F.mu_mu<<','<<raw_mu_mu<<','<<F.mu_mu_reaction<<','<<F.mu_p<<','<<F.mu_n<<','<<F.Xn<<','<<F.Xp<<','<<eta_e<<','<<F.eta_cc_mu;};
         bool safe=true;
         for(int s=0;s<4;++s)for(int i=0;i<h.n_groups;++i) {
-            auto const& a=h.cc[s];bool const active=!a.below(0,std::log(rho))&&!a.below(1,std::log(T));
+            auto const& a=h.cc[s];bool const active=!a.below(0,std::log(table_rho))&&!a.below(1,std::log(T));
             double const eta=(s<2?eta_e:F.eta_cc_mu)*(s%2?-1:1);
-            double l=active?h.cc_log(s,i,rho,T,Y,M):-INFINITY;
+            double l=active?h.cc_log(s,i,table_rho,T,Y,M):-INFINITY;
             prefix(spectra);spectra<<','<<s<<','<<i<<','<<h.energies(i)<<','<<h.widths(i)<<','<<l<<'\n';
             // Leave headroom for phase-space weights and the physical-unit
             // prefactor before production converts the result to code units.

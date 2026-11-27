@@ -63,7 +63,7 @@ struct device_handle {
         double s=response(l,omega,out.state);if(out.state!=status::ok)return out;
         // Harry's normalized Legendre coefficients in cm^3/s. Phase-space
         // (2*pi)^-3 and angular factors belong to the collision integrator.
-        constexpr double ga=1.27,gf=1.1663787e-11,hc=1.973269804e-11,hbar=6.582119569e-22;
+        constexpr double ga=1.27641,gf=1.1663787e-11,hc=1.973269804e-11,hbar=6.582119569e-22;
         constexpr double hcfm=hc*1e13;
         double a=ga*ga*gf*gf*nfree*hcfm*hcfm*hcfm*s*.25*hc*hc*hc/hbar;
         out.annihilation0=6*a;out.annihilation1=-2*a/3;

@@ -974,18 +974,22 @@ TEST_CASE("Harry kernel adapter uses log storage and reversible ILD balance", "[
     for(std::size_t a=0;a<vals.extent(0);++a) vals(a)=std::log(1e-38)+(a%4>=2?.8:0.);
     Kokkos::deep_copy(h.pair0.values,vals);
     kernel edge,low,near;bool clamped=true;
-    REQUIRE(init_harry_pair_kernel(edge,h,{15,.75,0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+    REQUIRE(init_harry_pair_kernel(edge,h,{15,.75,0,0,0},0,.5,false,harry_pair_boundary_policy::clamp_eta,&clamped));
     REQUIRE_FALSE(clamped);
     for(double mue: {0.,.375}) {
-        REQUIRE(init_harry_pair_kernel(low,h,{15,mue,0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+        REQUIRE(init_harry_pair_kernel(low,h,{15,mue,0,0,0},0,.5,false,harry_pair_boundary_policy::clamp_eta,&clamped));
         REQUIRE(clamped);
         for(int i=0;i<8;++i) for(int j=0;j<8;++j) REQUIRE(low.a[i][j]==edge.a[i][j]);
         REQUIRE_FALSE(init_harry_pair_kernel(low,h,{15,mue,0,0,0},0,.5,false,harry_pair_boundary_policy::strict,&clamped));
     }
-    REQUIRE(init_harry_pair_kernel(near,h,{15,.75*(1+1e-8),0,0,0},0,.5,false,harry_pair_boundary_policy::lower_eta_clamp,&clamped));
+    REQUIRE(init_harry_pair_kernel(near,h,{15,.75*(1+1e-8),0,0,0},0,.5,false,harry_pair_boundary_policy::clamp_eta,&clamped));
     REQUIRE_FALSE(clamped);
     REQUIRE_THAT(near.a[3][4],WithinRel(edge.a[3][4],2e-9));
-    REQUIRE_FALSE(init_harry_pair_kernel(near,h,{15,1501,0,0,0},0,.5)); // upper eta remains a failure
+    REQUIRE(init_harry_pair_kernel(edge,h,{15,1500,0,0,0},0,.5));
+    REQUIRE(init_harry_pair_kernel(near,h,{15,3000,0,0,0},0,.5,false,harry_pair_boundary_policy::clamp_eta,&clamped));
+    REQUIRE(clamped);
+    REQUIRE_FALSE(init_harry_pair_kernel(low,h,{15,3000,0,0,0},0,.5,false,harry_pair_boundary_policy::strict));
+    for(int i=0;i<8;++i) for(int j=0;j<8;++j) REQUIRE(near.a[i][j]==edge.a[i][j]);
     REQUIRE_FALSE(init_harry_pair_kernel(near,h,{1e8,0,0,0,0},0,.5)); // temperature is never clamped
     REQUIRE(init_harry_pair_kernel(low,h,{15,0,0,0,0},0,.5));
     double f[8],fb[8];

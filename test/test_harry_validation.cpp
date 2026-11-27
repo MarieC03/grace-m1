@@ -1,6 +1,7 @@
 // Explicit validation experiments, using the production EOS and source solver.
 // All scientific failures are recorded; no rates or populations are clipped.
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_message.hpp>
 #include "leptonic_source_replay.hh"
 #include <catch2/catch_session.hpp>
 #include <grace/system/mpi_runtime.hh>
@@ -116,7 +117,8 @@ m1_eas_array_t rate_array(nu_rates_out const& r,double multiplicity=1) {
 bool table_inside(state s) {
     if(get_harry_table_mode()) {
         auto const& h=harry::get_harry_device_handle();
-        double x[4]={std::log(s.rho),std::log(s.T),s.ye,std::log(s.ymu)};
+        auto const& e=eos::get().get_eos<leptonic_eos_4d_t>();
+        double x[4]={std::log(s.rho*harry_density_ratio(e.get_baryon_mass())),std::log(s.T),s.ye,std::log(s.ymu)};
         return h.cc[0].contains(x)&&h.cc[2].contains(x);
     }
     auto const& h=weakhub::get_device_handle();
@@ -171,6 +173,49 @@ TEST_CASE("Lepton chemical potentials use their native EOS grid", "[.][native_le
         auto host=Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(),result);
         REQUIRE(std::isfinite(host(0)));
         REQUIRE(std::abs(host(0)-host(1))<1e-11*std::max(1.,std::abs(host(1))));
+    }
+}
+TEST_CASE("Cold released pair kernels and thermal photon EOS", "[.][cold_harry_photons]") {
+    auto eos4=eos::get().get_eos<leptonic_eos_4d_t>();
+    auto bare=eos4;
+    REQUIRE(eos4.photon_pressure_at_1MeV>0);
+    REQUIRE(eos4.get_c2p_eps_max()==get_param<double>("eos","eps_maximum"));
+    bare.photon_pressure_at_1MeV=0;
+    auto const& h=harry::get_harry_device_handle();
+    REQUIRE_FALSE(table_inside({1.e14*nu_constants::RHOGF,149.,.1,.01}));
+    REQUIRE_FALSE(table_inside({1.e14*nu_constants::RHOGF,20.,.005,.01}));
+    REQUIRE_FALSE(table_inside({1.e14*nu_constants::RHOGF,20.,.1,.13}));
+    for(double density:{1.e14,6.e14}) {
+        state s{density*nu_constants::RHOGF,.2,.1,.01};
+        auto F=rate_state(eos4,s,true);
+        REQUIRE(std::abs(F.harry_density_factor-939.56542052/931.49410242)<1e-12);
+        REQUIRE(F.mu_e/s.T>100);
+        material m{s.T,F.mu_e,F.nb,F.Xn,F.Xp};
+        for(int species:{0,2,4}) {
+            kernel k; bool clamped=false;
+            REQUIRE(init_harry_thermal(k,h,guo_nnbrem::get_device_handle(),m,{true,true,false},
+                                       species,species==4,&clamped));
+            REQUIRE(clamped);
+            REQUIRE(std::isfinite(k.a[0][0]));
+        }
+        decay_kernel decay;
+        REQUIRE(init_harry_decay_kernel(decay,h,s.T,F.mu_e,F.mu_mu_reaction,.5));
+    }
+    for(double T:{5.,20.}) {
+        double rho=1e11*nu_constants::RHOGF,ye=.1,ymu=.0005,cs,cs0,eps,eps0,s,s0;
+        eos_err_t err{};
+        double p=eos4.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(eps,cs,s,T,rho,ye,ymu,err);
+        double p0=bare.press_eps_csnd2_entropy__temp_rho_ye_ymu_impl(eps0,cs0,s0,T,rho,ye,ymu,err);
+        double pg=7.56573325e-15*std::pow(T*1.160451812e10,4)/3*(CGS_units/GEOM_units).pressure;
+        REQUIRE(std::abs((p-p0)/pg-1)<1e-6);
+        REQUIRE(std::abs((eps-eps0)*rho/(3*pg)-1)<1e-6);
+        REQUIRE(std::abs((s-s0)*rho*T/(4*pg*eos4.photon_mb_MeV)-1)<1e-6);
+        REQUIRE((cs>0 && cs<1));
+        double recovered=0;
+        eos4.press_temp__eps_rho_ye_ymu_impl(recovered,eps,rho,ye,ymu,err);
+        CAPTURE(T, recovered, eps, rho, ye, ymu);
+        REQUIRE(std::abs(recovered-T)<1e-7);
+        std::cout<<"PHOTON_TEST T="<<T<<" P_fraction="<<pg/p<<" cs2="<<cs<<" T_recovered="<<recovered<<"\n";
     }
 }
 TEST_CASE("Audit released ILD emission at matched matter states", "[.][released_ild_emission]") {
@@ -304,7 +349,7 @@ TEST_CASE("Harry versus historical rates closed-box evolution", "[.][harry_boxes
                         auto build_thermal=[&](kernel& k,int species,bool symmetric=false) {
                             bool clamped=false;
                             bool const ok=init_harry_thermal(k,hh,gg,mat,{true,true,false},species,symmetric,&clamped);
-                            low_eta_clamped_kernel_builds+=clamped?1:0;
+                            if (clamped && mat.mu_e < mat.T*std::exp(hh.pair0.axes[1](0))) ++low_eta_clamped_kernel_builds;
                             return ok;
                         };
                         // Count clamped kernel constructions including subsequently rejected timesteps.
@@ -509,7 +554,7 @@ std::string ablation_bounds(leptonic_eos_4d_t const& eos,state s,
     if(new_rates) {
         for(int species:{0,2}) {
             auto const& t=h.cc[species]; std::string const p=species==0?"CCe_":"CCmu_";
-            bound(std::log(s.rho),t.axes[0](0),t.axes[0](t.size[0]-1),p+"lnrho");
+            bound(std::log(s.rho*harry_density_ratio(eos.get_baryon_mass())),t.axes[0](0),t.axes[0](t.size[0]-1),p+"lnrho");
             bound(std::log(s.T),t.axes[1](0),t.axes[1](t.size[1]-1),p+"lnT");
             bound(s.ye,t.axes[2](0),t.axes[2](t.size[2]-1),p+"Ye");
             bound(std::log(s.ymu),t.axes[3](0),t.axes[3](t.size[3]-1),p+"lnYmu");
@@ -647,7 +692,8 @@ TEST_CASE("Focused Harry rate ablations", "[.][harry_ablations]") {
                 } else {
                     auto build=[&](kernel& k,int spec,bool symmetric=false) {
                         bool clamped=false;bool const ok=init_harry_thermal(k,hh,gg,mat,{true,true,false},spec,symmetric,&clamped);
-                        clamped_builds+=clamped?1:0;return ok;
+                        if (clamped && mat.mu_e < mat.T*std::exp(hh.pair0.axes[1](0))) ++clamped_builds;
+                        return ok;
                     };
                     valid=build(thermal,2)&&build(tau,4,true);
                     if(mode==4){valid=valid&&build(electron,0);ep=&electron;}

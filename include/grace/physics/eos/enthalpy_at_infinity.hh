@@ -133,6 +133,7 @@ inline enthalpy_at_infinity_t enthalpy_at_infinity_from(leptonic_eos_4d_t const&
     double const shift     = eos.energy_shift ;
     bool   const add_ele   = eos.add_ele_contribution ;
     bool   const log_press = eos.log_baryon_press ;
+    double const photon_coefficient = eos.photon_pressure_at_1MeV ;
     int const nrho = static_cast<int>(bt._logrho.extent(0)) ;
     int const nyp  = static_cast<int>(bt._ye.extent(0)) ;
     // Electron-table nodes j0, j1 and weight w bracketing each Y_p node (load time only).
@@ -170,7 +171,8 @@ inline enthalpy_at_infinity_t enthalpy_at_infinity_from(leptonic_eos_4d_t const&
                 eps += ele(L::TABEPS_E_MINUS) + ele(L::TABEPS_E_PLUS) ;
                 if ( !log_press ) press += ele(L::TABPRESS_E_MINUS) + ele(L::TABPRESS_E_PLUS) ;
             }
-            hs(i,k) = 1.0 + eps + press / rho ;
+            double const pgamma = photon_coefficient * Kokkos::exp(4 * bt._logT(0));
+            hs(i,k) = 1.0 + eps + (press + 4*pgamma) / rho ;
         }) ;
     return detail::hinf_minimum_over_density(hs, bt._ye) ;
 }

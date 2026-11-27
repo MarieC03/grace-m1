@@ -397,11 +397,18 @@ GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double dilute_muon_cc_potential(
     return electron+(raw-electron)*Kokkos::tanh(Kokkos::fmax(ymu-6e-4,0.0)/5e-5);
 }
 
+// November WeakHub density coordinate is n_b*m_n. The hydro EOS exposes
+// its rest mass per baryon in geometric units, including the m_u convention.
+GRACE_HOST_DEVICE inline double harry_density_ratio(double hydro_baryon_mass) {
+    constexpr double neutron_mass = physical_constants::mn_MeV*(COMPOSE_units.mass/GEOM_units.mass);
+    return neutron_mass/hydro_baryon_mass;
+}
 struct fugacity_state {
     bool dilute_cc_target = false;
     double eta_cc_mu = 0.0;
     double mu_mu_reaction = 0.0;
     double rho_code{0.0};
+    double harry_density_factor{1.0};
     double temp_code{0.0};
     double ye{0.0};
     double ymu{0.0};
@@ -489,6 +496,8 @@ fugacity_state make_fugacity_state(
     using namespace nu_constants;
     fugacity_state F;
     F.rho_code = rho_code;
+    if constexpr (std::is_same_v<eos_t, leptonic_eos_4d_t>)
+        F.harry_density_factor = harry_density_ratio(eos.get_baryon_mass());
     F.temp_code = temp_code;
     F.ye = ye;
     F.ymu = ymu;

@@ -210,6 +210,14 @@ eos:
         Format: header line, nrows line, then nrows lines each containing
         log(rho) temp ye ymu press eps cs2 entropy (8 columns).
 
+    add_photon_gas:
+      type: bool
+      default: false
+      description: >
+        Add equilibrium blackbody photons to the leptonic matter EOS. Enable
+        only when neither component already includes photons, for example the
+        electron-free SFHo baryon and 13 November 2026 lepton tables.
+
     add_ele_contribution:
       type: bool
       default: false

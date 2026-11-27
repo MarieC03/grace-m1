@@ -11,7 +11,8 @@ TEST_CASE("Guo response has explicit domain status and detailed balance", "[guo]
     for(int i=0;i<nw;++i)l.log_s[i]=std::log(2.);
     auto k=device_handle::kernel(l,20,10,.01);
     REQUIRE(k.state==status::ok);
-    REQUIRE(k.annihilation0>0);
+    // Constant response S=2, n_free=0.01 fm^-3, |g_A|=1.27641.
+    REQUIRE(k.annihilation0/5.9639482239343745e-28==Catch::Approx(1.).epsilon(1e-12));
     REQUIRE(k.production0/k.annihilation0==Catch::Approx(std::exp(-2.)).epsilon(1e-13));
     REQUIRE(k.annihilation1/k.annihilation0==Catch::Approx(-1./9).epsilon(1e-13));
     REQUIRE(device_handle::kernel(l,800,10,.01).state==status::energy_outside);

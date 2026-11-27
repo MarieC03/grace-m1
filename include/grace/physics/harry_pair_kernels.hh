@@ -7,8 +7,7 @@
 namespace grace::pairs {
 // Phi0 is an angular integral, whereas a is an angular average. The caller
 // supplies its verified normalization explicitly; no hidden unit conversion.
-// Temperature/upper-degeneracy excursions are rejected. The explicit lower
-// electron-degeneracy boundary policy below follows Harry's pair reader.
+// The pair amplitude uses the nearest tabulated electron degeneracy.
 KOKKOS_INLINE_FUNCTION bool harry_grid(harry::device_handle const& h,grid& g) {
     if(h.n_groups<2 || h.n_groups>max_order) return false;
     g.n=h.n_groups; g.scale=0;
@@ -24,26 +23,24 @@ KOKKOS_INLINE_FUNCTION bool harry_grid(harry::device_handle const& h,grid& g) {
 
 // Species is 0=nue, 2=numu, 4=nutau. The opposite orientation is transposed
 // by the common event contraction. The tau aggregate is explicitly symmetric.
-enum class harry_pair_boundary_policy { lower_eta_clamp, strict };
+enum class harry_pair_boundary_policy { clamp_eta, strict };
 KOKKOS_INLINE_FUNCTION bool init_harry_pair_kernel(kernel& k,
     harry::device_handle const& h,material const& m,int species,
     double phi0_to_average,bool symmetric=false,
-    harry_pair_boundary_policy boundary=harry_pair_boundary_policy::lower_eta_clamp,
+    harry_pair_boundary_policy boundary=harry_pair_boundary_policy::clamp_eta,
     bool* eta_clamped=nullptr) {
     if(eta_clamped) *eta_clamped=false;
     if(!(m.T>0 && m.mu_e>=0 && phi0_to_average>0) || !Kokkos::isfinite(m.T)
         || !Kokkos::isfinite(m.mu_e) || h.pair0.rank!=2
         || species<0 || species>4 || species%2) return false;
     double const eta=m.mu_e/m.T;
-    double const eta_min=Kokkos::exp(h.pair0.axes[1](0));
-    double const logeta=eta>0?Kokkos::log(eta):h.pair0.axes[1](0)-1;
-    bool const below=eta==0 || logeta<h.pair0.axes[1](0);
-    if(below && boundary==harry_pair_boundary_policy::strict) return false;
-    double const eta_lookup=below?eta_min:eta;
-    double x[2]={Kokkos::log(m.T),below?h.pair0.axes[1](0):logeta};
-    if(!h.pair0.contains(x) || !harry_grid(h,k.g)) return false;
-    if(eta_clamped) *eta_clamped=below;
-    double const lookup[2]={x[0],harry::device_handle::log_positive(eta_lookup)};
+    double const lo=h.pair0.axes[1](0), hi=h.pair0.axes[1](h.pair0.size[1]-1);
+    double const logeta=eta>0?Kokkos::log(eta):lo;
+    bool const outside=eta==0 || h.pair0.below(1,logeta) || h.pair0.above(1,logeta);
+    if(outside && boundary==harry_pair_boundary_policy::strict) return false;
+    double const lookup[2]={Kokkos::log(m.T),Kokkos::fmin(hi,Kokkos::fmax(lo,logeta))};
+    if(!h.pair0.contains(lookup) || !harry_grid(h,k.g)) return false;
+    if(eta_clamped) *eta_clamped=outside;
     auto const stencil=h.pair0.locate(lookup);
     for(int i=0;i<k.g.n;++i) {
         // Only the kernel amplitude uses the table-edge eta. Pair DB depends
@@ -105,7 +102,7 @@ KOKKOS_INLINE_FUNCTION bool init_harry_decay_kernel(decay_kernel& k,
 KOKKOS_INLINE_FUNCTION bool init_harry_thermal(kernel& k,harry::device_handle const& h,
     guo_nnbrem::device_handle const& guo,material const& m,channels c,int species,bool symmetric=false,
     bool* eta_clamped=nullptr,
-    harry_pair_boundary_policy boundary=harry_pair_boundary_policy::lower_eta_clamp) {
+    harry_pair_boundary_policy boundary=harry_pair_boundary_policy::clamp_eta) {
     if(eta_clamped) *eta_clamped=false;
     if(c.ee) { if(!init_harry_pair_kernel(k,h,m,species,0.5,symmetric,boundary,eta_clamped)) return false; }
     else {

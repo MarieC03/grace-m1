@@ -930,6 +930,11 @@ class leptonic_eos_4d_t
     // contains the electron contribution (the usual case for SFHo,
     // DD2, etc.).  Mirrors Margherita's add_ele_contribution flag.
     bool add_ele_contribution = false ;
+    double photon_pressure_at_1MeV = 0.0 ;
+    double photon_mb_MeV = 0.0 ;
+    KOKKOS_INLINE_FUNCTION double photon_pressure(double ltemp) const {
+        return photon_pressure_at_1MeV == 0.0 ? 0.0 : photon_pressure_at_1MeV*Kokkos::exp(4*ltemp);
+    }
     bool dilute_muon_suppression = true ;
     // The dilute-Ymu band (see dilute_ymu0_): muon-free for the EOS, kept by the vacuum decay sink.
     static constexpr double dilute_ymu0() { return dilute_ymu0_ ; }
@@ -1086,7 +1091,7 @@ class leptonic_eos_4d_t
             double const dpe = add_ele_contribution
                 ? ele_press(ele_table, lrho, ltemp, ye) - ele_press(ele_table, lrho, ltemp, yp)
                 : 0.0 ;
-            return pbe + dpe + pmu ;
+            return pbe + dpe + pmu + photon_pressure(ltemp) ;
         }
         // linear_pressure=true: TABPRESS is the SIGNED linear pressure, negative in
         // the nuclear spinodal; the positive lepton pressures make the total positive.
@@ -1095,7 +1100,7 @@ class leptonic_eos_4d_t
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABPRESS_E_PLUS)
             : 0.0 ;
-        return pb + pmu + pe ;
+        return pb + pmu + pe + photon_pressure(ltemp) ;
     }
 
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
@@ -1113,7 +1118,9 @@ class leptonic_eos_4d_t
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABEPS_E_PLUS)
             : 0.0 ;
-        return eb + emu + ee ;
+        double const thermal = eb + emu + ee ;
+        if (photon_pressure_at_1MeV == 0.0) return thermal;
+        return thermal + 3*photon_pressure_at_1MeV*Kokkos::exp(4*ltemp-lrho);
     }
 
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
@@ -1131,7 +1138,9 @@ class leptonic_eos_4d_t
             ? ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_MINUS)
             + ele_table.interp(lrho, ltemp, ye, ELE_VIDX::TABS_E_PLUS)
             : 0.0 ;
-        return sb + smu + se ;
+        double const thermal = sb + smu + se ;
+        if (photon_pressure_at_1MeV == 0.0) return thermal;
+        return thermal + 4*photon_mb_MeV*photon_pressure_at_1MeV*Kokkos::exp(3*ltemp-lrho);
     }
 
     // TOTAL sound speed.
@@ -1158,7 +1167,7 @@ class leptonic_eos_4d_t
     GRACE_HOST_DEVICE GRACE_ALWAYS_INLINE double
     total_csnd2(double lrho, double ltemp, double ye, double ymu) const
     {
-        if ( !add_ele_contribution ) {
+        if ( !add_ele_contribution && photon_pressure_at_1MeV == 0.0 ) {
             return clamp_csnd2(
                 baryon_table.interp(lrho, ltemp, table_yp(ye, ymu), TABCSND2) ) ;
         }
@@ -1425,6 +1434,11 @@ class leptonic_eos_4d_t
         tabeos_free_energy_t::derivs_t c ;
         if ( muons_resolved(ymu) ) { fe_mu.eval(lrho, ltemp, Kokkos::log(ymu), c) ; fe_add(d, c) ; }
         if ( add_ele_contribution ) { fe_ele.eval(lrho, ltemp, ye, c) ; fe_add(d, c) ; }
+        if (photon_pressure_at_1MeV != 0.0) {
+            // Specific photon Helmholtz energy f = -P/rho. Coordinates are ln rho, ln T.
+            double const f = -photon_pressure_at_1MeV*Kokkos::exp(4*ltemp-lrho);
+            fe_add(d, {f, -f, 4*f, f, -4*f, 16*f});
+        }
     }
 
     // P (returned), eps, entropy and cs2 = [(dP/drho)_s]/h; cs2 falls back to the linear

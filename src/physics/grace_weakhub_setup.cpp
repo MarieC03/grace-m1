@@ -94,7 +94,7 @@ void initialize_weakhub_from_params() {
         Kokkos::push_finalize_hook([](){ finalize_weakhub(); });
         harry::initialize_harry_table(path,get_spectral_muon_decay()
             && detail::get_eas_param_or("table","harry_decay_source")=="table");
-        GRACE_WARN("Harry e+e- kernels hold eta_e below the table minimum at the boundary: detailed balance uses the actual temperature and preserves the LTE fixed point, but the rate magnitude is a boundary approximation.");
+        GRACE_WARN("Harry e+e- kernels hold out-of-range nonnegative eta_e at the nearest table boundary: detailed balance uses the actual temperature and preserves the LTE fixed point, but the rate magnitude is a boundary approximation.");
         if(get_param<bool>("m1","eas","bremsstrahlung"))
             guo_nnbrem::initialize(get_param<std::string>("m1","eas","guo_response_table"));
         g_initialized=true;

@@ -933,7 +933,11 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
     double const ymumax = std::min(ymumax_f, std::exp(ymu.back()))  ;
 
     double const epsmin = baryon_eos.get_c2p_eps_min() ;
-    double const epsmax = baryon_eos.get_c2p_eps_max() ;
+    bool const add_photons = grace::get_param<bool>("eos","leptonic","add_photon_gas");
+    // The local temperature bracket already bounds the total EOS energy.
+    // A baryons-only maximum would clip physical radiation-dominated states.
+    double const epsmax = add_photons ? grace::get_param<double>("eos","eps_maximum")
+                                      : baryon_eos.get_c2p_eps_max() ;
     double const hmin   = baryon_eos.enthalpy_minimum() ;
     double const hmax   = baryon_eos.get_c2p_h_max() ;
 
@@ -1084,6 +1088,14 @@ grace::leptonic_eos_4d_t read_leptonic_4d_table()
 
     eos.dilute_muon_suppression = grace::get_param<bool>(
         "eos","leptonic","dilute_muon_suppression");
+    if (add_photons) {
+        constexpr double hbarc_MeV_fm = 197.3269804;
+        double const pi = std::acos(-1.);
+        auto const units = COMPOSE_units / GEOM_units;
+        eos.photon_pressure_at_1MeV = units.pressure*pi*pi/(45*std::pow(hbarc_MeV_fm,3));
+        eos.photon_mb_MeV = baryon_eos.get_baryon_mass()/units.mass;
+        GRACE_INFO("Including equilibrium photons in leptonic EOS pressure, energy and entropy.");
+    }
 
     // -------------------------------------------------------
     //  8) Resolve the working temperature floor, then generate the cold

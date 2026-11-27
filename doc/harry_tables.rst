@@ -22,6 +22,19 @@ For these releases use the corresponding
 ``sfho_compose_noele_0-5ye.h5`` or ``dd2_compose_noele_0-5ye.h5`` with
 the matching November lepton file. Harry used the electron-inclusive
 CompOSE files to obtain nuclear quantities during rate generation.
+With the 13 November lepton tables and the electron-free baryon tables,
+set ``eos.leptonic.add_photon_gas: true`` for LTE photon pressure,
+specific energy and entropy. The option defaults to false for existing
+EOS combinations, which can already contain photons. The photon free
+energy is independent of charge and leaves the lepton chemical potentials
+unchanged. Use ``eos.tabulated_eos.interpolation: linear`` with the
+13 November SFHo lepton file. At 1e11 g/cm3, 20 MeV, Ye = 0.1 and
+Ymu = 0.0005 its Hermite free-energy interpolant yields a nonmonotonic
+specific energy and an ambiguous temperature. The native muon entropy
+also disagrees with the ideal-gas reference in this regime. The linear
+interpolant still uses the supplied entropy and chemical potentials.
+CC and ES lookups convert the evolved rest-mass density to the
+release convention at fixed baryon number, using the loaded EOS baryon mass.
 GRACE reads each rate process on its own axes. For different baryon and
 lepton resolutions the EOS uses native, regular logarithmic density and
 temperature coordinates for each component. The lepton axes must cover the
@@ -104,14 +117,12 @@ synthetic reader tests run independently of the availability of these files.
 Pair and atmosphere boundary policy
 ----------------------------------
 
-For the electron-positron pair kernel this implementation rejects out-of-domain states except for
-nonnegative electron degeneracy below the electron-positron pair table minimum:
-that pair kernel is evaluated at the lowest tabulated degeneracy, following
-Harry's lower-bound prescription. Temperature is not changed. Pair production
-uses exp[-(E+Eprime)/T] with the actual temperature, so the forward/inverse
-ratio and LTE fixed point are preserved; the absolute rate remains a boundary
-approximation and startup reports it. Negative degeneracy, out-of-range
-temperature, and upper degeneracy excursions are still rejected. The reader
+For electron-positron pairs, GRACE holds the amplitude at the nearest
+tabulated electron degeneracy when the nonnegative physical value lies
+outside the grid (0.05 to 100 in this release). The inverse/forward ratio
+uses exp[-(E+Eprime)/T] at the actual matter temperature. This preserves the
+LTE fixed point. The absolute rate beyond either face is an approximation.
+Negative degeneracy and out-of-range matter temperature are rejected. The reader
 does not reproduce every boundary approximation in Harry's supplied reader.
 For electron-positron pairs, his non-debug reader sets the kernel to zero
 below its temperature minimum, clamps higher temperature and electron
